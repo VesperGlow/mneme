@@ -79,6 +79,13 @@ class Settings(BaseSettings):
     memory_history_messages: int = Field(default=16, ge=0, le=100)
     memory_duplicate_threshold: float = Field(default=0.995, ge=0.8, le=1)
 
+    # 时序加权检索：在向量相似度之上叠加新近度、重要性与访问强化。
+    # 相似度仍是主导，其余为小幅加成；全设 0 即退回纯相似度排序。
+    memory_similarity_weight: float = Field(default=1.0, ge=0)
+    memory_recency_weight: float = Field(default=0.15, ge=0)
+    memory_importance_weight: float = Field(default=0.10, ge=0)
+    memory_recency_halflife_days: float = Field(default=30.0, gt=0)
+
     @field_validator("ai_base_url", "embedding_base_url", "neo4j_uri")
     @classmethod
     def trim_url(cls, value: str) -> str:

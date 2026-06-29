@@ -24,6 +24,11 @@ def clean_relation(value: str) -> str:
     return cleaned[:80] or "related"
 
 
+def _strip_internal(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    # final_score is only for ordering; it never reaches the public schema (MemoryView keeps score).
+    return [{k: v for k, v in record.items() if k != "final_score"} for record in records]
+
+
 class MemoryStore:
     def __init__(self, settings: Settings):
         self.settings = settings
@@ -31,6 +36,8 @@ class MemoryStore:
             settings.neo4j_uri,
             auth=(settings.neo4j_user, settings.neo4j_password),
         )
+        # SEARCH 查询失败时一次性翻转为 True，改用 legacy proc 查询。
+        self._use_legacy_vector = False
 
     async def close(self) -> None:
         await self.driver.close()
@@ -143,10 +150,95 @@ class MemoryStore:
         embedding: list[float],
         limit: int | None = None,
         min_score: float | None = None,
+        temporal_ranking: bool = True,
     ) -> list[dict[str, Any]]:
         limit = limit or self.settings.memory_search_limit
         min_score = self.settings.memory_min_score if min_score is None else min_score
         candidate_limit = min(max(limit * 5, limit), 250)
+        params: dict[str, Any] = {
+            "candidate_limit": candidate_limit,
+            "embedding": embedding,
+            "user_id": user_id,
+            "min_score": min_score,
+            "limit": limit,
+            "now": utc_now(),
+        }
+        # 优先用 CYPHER 25 的 SEARCH + 时序加权；若该 Neo4j 构建不支持，则一次性回退到
+        # 旧 proc，保证检索可用（过渡保险，待确认线上稳定后可移除 legacy 分支）。
+        if not self._use_legacy_vector:
+            try:
+                records = await self._run_vector_search(params, temporal_ranking)
+                return _strip_internal(records)
+            except Exception as exc:
+                if "POPULATING" in str(exc).upper():
+                    logger.warning("Vector index is still populating; returning no memories")
+                    return []
+                logger.warning("SEARCH 向量查询不可用，已回退到 legacy 查询：%s", exc)
+                self._use_legacy_vector = True
+        try:
+            records = await self._run_legacy_vector_search(params)
+        except Exception as exc:
+            if "POPULATING" in str(exc).upper():
+                logger.warning("Vector index is still populating; returning no memories")
+                return []
+            raise
+        return _strip_internal(records)
+
+    async def _run_vector_search(
+        self, params: dict[str, Any], temporal_ranking: bool
+    ) -> list[dict[str, Any]]:
+        # 去重等场景只看相似度，把时序权重清零即可退回纯向量排序。
+        recency_weight = self.settings.memory_recency_weight if temporal_ranking else 0.0
+        importance_weight = (
+            self.settings.memory_importance_weight if temporal_ranking else 0.0
+        )
+        # CYPHER 25 的 SEARCH 子句取代了已弃用的 db.index.vector.queryNodes。
+        # 向量召回后在图内叠加新近度/重要性，得到时序加权的综合排序。
+        query = """CYPHER 25
+        MATCH (node:Memory)
+          SEARCH node IN (
+            VECTOR INDEX memory_embedding
+            FOR $embedding
+            LIMIT $candidate_limit
+          ) SCORE AS score
+        MATCH (u:User {id: $user_id})-[:HAS_MEMORY]->(node)
+        WHERE coalesce(node.active, true) = true AND score >= $min_score
+        WITH node, score,
+             (datetime($now).epochSeconds
+              - datetime(coalesce(node.last_seen_at, node.created_at, $now)).epochSeconds)
+             / 86400.0 AS age_days
+        WITH node, score,
+             1.0 / (1.0 + (CASE WHEN age_days < 0 THEN 0.0 ELSE age_days END)
+                          / $recency_halflife_days) AS recency
+        OPTIONAL MATCH (node)-[:MENTIONS]->(e:Entity)
+        WITH node, score, recency,
+             collect(DISTINCT {name: e.name, type: e.type}) AS raw_entities
+        SET node.access_count = coalesce(node.access_count, 0) + 1,
+            node.last_accessed_at = $now
+        RETURN node.id AS id, node.text AS text, node.kind AS kind,
+               node.importance AS importance, node.created_at AS created_at,
+               score, [entity IN raw_entities WHERE entity.name IS NOT NULL] AS entities,
+               score * $similarity_weight
+                 + recency * $recency_weight
+                 + ((coalesce(node.importance, 3) - 1) / 4.0) * $importance_weight
+                 AS final_score
+        ORDER BY final_score DESC
+        LIMIT $limit
+        """
+        records, _, _ = await self.driver.execute_query(
+            query,
+            recency_halflife_days=self.settings.memory_recency_halflife_days,
+            similarity_weight=self.settings.memory_similarity_weight,
+            recency_weight=recency_weight,
+            importance_weight=importance_weight,
+            database_=self.settings.neo4j_database,
+            **params,
+        )
+        return [dict(record) for record in records]
+
+    async def _run_legacy_vector_search(
+        self, params: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         query = """
         CALL db.index.vector.queryNodes('memory_embedding', $candidate_limit, $embedding)
         YIELD node, score
@@ -162,22 +254,9 @@ class MemoryStore:
         ORDER BY score DESC
         LIMIT $limit
         """
-        try:
-            records, _, _ = await self.driver.execute_query(
-                query,
-                candidate_limit=candidate_limit,
-                embedding=embedding,
-                user_id=user_id,
-                min_score=min_score,
-                limit=limit,
-                now=utc_now(),
-                database_=self.settings.neo4j_database,
-            )
-        except Exception as exc:
-            if "POPULATING" in str(exc).upper():
-                logger.warning("Vector index is still populating; returning no memories")
-                return []
-            raise
+        records, _, _ = await self.driver.execute_query(
+            query, database_=self.settings.neo4j_database, **params
+        )
         return [dict(record) for record in records]
 
     async def recent_memories(self, user_id: str, limit: int = 10) -> list[dict[str, Any]]:
@@ -246,6 +325,7 @@ class MemoryStore:
                 embedding,
                 limit=1,
                 min_score=self.settings.memory_duplicate_threshold,
+                temporal_ranking=False,
             )
         except Exception:
             candidates = []
