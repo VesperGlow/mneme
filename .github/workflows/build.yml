@@ -64,10 +64,10 @@ jobs:
       matrix:
         include:
           - service: app
-            image: ghcr.io/vesperglow/qq-agent-app
+            image: git.suzuka-chan.moe/vesperglow/qq-agent-app
             build_args: ""
           - service: qqbot
-            image: ghcr.io/vesperglow/qq-agent-qqbot
+            image: git.suzuka-chan.moe/vesperglow/qq-agent-qqbot
             build_args: GOPROXY=https://proxy.golang.org,direct
     steps:
       - name: Check out repository
@@ -80,7 +80,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: git.suzuka-chan.moe
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
