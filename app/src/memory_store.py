@@ -451,6 +451,77 @@ class MemoryStore:
         )
         return bool(records and records[0]["changed"])
 
+    async def supersede_memory(
+        self,
+        *,
+        user_id: str,
+        old_memory_id: str,
+        text: str,
+        kind: str,
+        importance: int,
+        entities: list[dict[str, str]],
+        embedding: list[float],
+    ) -> dict[str, Any]:
+        """用新内容取代一条旧记忆：新建（或复用）新记忆，建 SUPERSEDES 关系，软停用旧记忆。
+
+        旧记忆保留在图里（active=false + superseded_by/at），可经 memory_history 回溯时间线。
+        """
+        created = await self.create_memory(
+            user_id=user_id,
+            text=text,
+            kind=kind,
+            importance=importance,
+            entities=entities,
+            embedding=embedding,
+            source="memory_update",
+        )
+        now = utc_now()
+        link_query = """
+        MATCH (u:User {id: $user_id})-[:HAS_MEMORY]->(old:Memory {id: $old_id})
+        MATCH (u)-[:HAS_MEMORY]->(new:Memory {id: $new_id})
+        WHERE old.id <> new.id
+        MERGE (new)-[r:SUPERSEDES]->(old)
+          ON CREATE SET r.at = $now
+        SET old.active = false, old.superseded_by = $new_id, old.superseded_at = $now
+        RETURN old.id AS old_id
+        """
+        records, _, _ = await self.driver.execute_query(
+            link_query,
+            user_id=user_id,
+            old_id=old_memory_id,
+            new_id=created["id"],
+            now=now,
+            database_=self.settings.neo4j_database,
+        )
+        created["superseded"] = bool(records)
+        created["superseded_memory_id"] = old_memory_id if records else None
+        return created
+
+    async def memory_history(
+        self, user_id: str, memory_id: str
+    ) -> list[dict[str, Any]]:
+        """沿 SUPERSEDES 链返回一条记忆的完整演变时间线（含已停用的历史版本）。"""
+        query = """
+        MATCH (u:User {id: $user_id})-[:HAS_MEMORY]->(m:Memory {id: $memory_id})
+        OPTIONAL MATCH (m)-[:SUPERSEDES*0..]->(older:Memory)
+        OPTIONAL MATCH (newer:Memory)-[:SUPERSEDES*0..]->(m)
+        WITH collect(DISTINCT older) + collect(DISTINCT newer) AS nodes
+        UNWIND nodes AS node
+        WITH DISTINCT node
+        WHERE node IS NOT NULL
+        RETURN node.id AS id, node.text AS text, node.kind AS kind,
+               node.importance AS importance, node.created_at AS created_at,
+               coalesce(node.active, true) AS active, node.superseded_at AS superseded_at
+        ORDER BY created_at
+        """
+        records, _, _ = await self.driver.execute_query(
+            query,
+            user_id=user_id,
+            memory_id=memory_id,
+            database_=self.settings.neo4j_database,
+        )
+        return [dict(record) for record in records]
+
     async def link_memories(
         self, user_id: str, from_id: str, to_id: str, relation: str
     ) -> bool:

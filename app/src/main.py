@@ -203,6 +203,15 @@ async def forget_memory(
     return {"forgotten": True}
 
 
+@app.get("/v1/memories/{memory_id}/history", dependencies=[Depends(require_api_key)])
+async def memory_history(
+    memory_id: str,
+    user_id: str = Query(min_length=1, max_length=128),
+    store: MemoryStore = Depends(get_store),
+) -> list[dict[str, object]]:
+    return await store.memory_history(user_id, memory_id)
+
+
 @app.post("/v1/memories/link", dependencies=[Depends(require_api_key)])
 async def link_memories(
     body: LinkMemoryRequest, store: MemoryStore = Depends(get_store)

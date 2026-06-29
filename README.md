@@ -121,6 +121,7 @@ curl http://127.0.0.1:8000/v1/chat \
 - `GET /v1/memories/search`：语义搜索；
 - `GET /v1/memories/recent`：最近记忆；
 - `DELETE /v1/memories/{id}`：软删除/遗忘；
+- `GET /v1/memories/{id}/history`：沿 SUPERSEDES 链回溯一条记忆的演变时间线；
 - `POST /v1/memories/link`：建立记忆关系；
 - `GET /v1/graph/{user_id}`：导出小型图谱快照；
 - `GET /health`：检查三项依赖。
@@ -151,7 +152,8 @@ MCP_SERVERS_JSON=[{"name":"tavily","url":"https://mcp.tavily.com/mcp/?tavilyApiK
 - `(User)-[:HAS_CONVERSATION]->(Conversation)-[:HAS_MESSAGE]->(Message)` 保存短期对话历史；
 - `(User)-[:HAS_MEMORY]->(Memory)` 保存长期记忆和向量；
 - `(Memory)-[:MENTIONS]->(Entity)` 形成实体图谱；
-- `(Memory)-[:RELATED_TO {kind}]->(Memory)` 保存主模型建立的记忆关系。
+- `(Memory)-[:RELATED_TO {kind}]->(Memory)` 保存主模型建立的记忆关系；
+- `(Memory)-[:SUPERSEDES {at}]->(Memory)` 记录记忆演变：用户情况变化时新记忆取代旧记忆，旧的软停用但保留在图里，可经 `/history` 回溯时间线。
 
 所有记忆操作都按 `user_id` 隔离。遗忘采用软删除，节点仍可审计但不会再被检索。
 
