@@ -2,7 +2,7 @@
 
 [![Build and test](https://github.com/VesperGlow/QQ-agent/actions/workflows/build.yml/badge.svg)](https://github.com/VesperGlow/QQ-agent/actions/workflows/build.yml)
 
-这是一个可直接容器化部署的原型：本地 `Qwen3-Embedding-0.6B` 负责向量化，Neo4j 同时保存向量、记忆节点和图谱关系；便宜模型筛选长期记忆，主模型负责对话与工具调用；腾讯官方 BotGo 桥接容器负责与 QQ 单聊、群聊和频道通信。
+这是一个可直接容器化部署的个人情感陪伴助手：本地 `Qwen3-Embedding-0.6B` 负责向量化，Neo4j 同时保存向量、记忆节点和图谱关系；便宜模型筛选长期记忆、抽取情绪，主模型负责对话与工具调用；腾讯官方 BotGo 桥接容器负责与 QQ 私聊（C2C）通信。
 
 ```mermaid
 flowchart LR
@@ -11,13 +11,27 @@ flowchart LR
     E -->|1024 维向量| N[(Neo4j)]
     A -->|筛选记忆| S[便宜模型]
     A -->|对话 + 工具| L[主模型]
-    S -->|结构化记忆| A
-    L -->|搜索 / 记住 / 遗忘 / 关联| A
-    N -->|相似记忆 + 图谱| A
+    S -->|结构化记忆 + 情绪| A
+    L -->|记忆工具 + MCP 外部工具| A
+    M["远程 MCP: Tavily/Firecrawl"] <-->|联网搜索/抓取| L
+    N -->|时序加权检索 + 图谱| A
     Q[QQ 用户] <-->|WebSocket / HTTPS Webhook| B[BotGo 桥接]
     B -->|内部 /v1/chat| A
     B -->|被动回复| Q
 ```
+
+## 功能总览
+
+- **双模型记忆**：便宜模型自动筛选值得长期记住的内容，主模型对话并按需调用记忆工具。
+- **图谱 + 向量记忆**：Neo4j 同时存 1024 维向量与图谱关系，所有记忆按 `user_id` 隔离。
+- **时序加权检索**：Cypher 25 `SEARCH` 子句向量召回，叠加新近度、重要性、访问强化排序（见[数据结构](#数据结构)）。
+- **记忆演变（SUPERSEDES）**：用户情况变化时新记忆取代旧记忆并保留可回溯的时间线。
+- **记忆主体（subject）**：区分“关于用户”与“助手自己的承诺 / 人设”，检索时分组呈现、互不混淆。
+- **情绪时间线**：从对话抽取情绪成链（`HAS_MOOD`/`NEXT_MOOD`），让助手感知跨会话情绪趋势。
+- **自定义人设**：`QQ_SYSTEM_PROMPT` 全局替换助手口吻，安全与工具规则始终保留。
+- **MCP 工具**：通过 `MCP_SERVERS_JSON` 接入 Tavily 联网搜索、Firecrawl 网页抓取等远程 MCP 服务器（见 [MCP 工具](#mcp-工具联网搜索--网页抓取)）。
+- **纯私聊定位**：个人情感陪伴，只处理 QQ 私聊（C2C），不支持群聊与频道。
+- **零本地依赖部署**：宿主机仅需 Docker，镜像由 GitHub Actions 编译并发布到 GHCR。
 
 ## 最快启动
 
