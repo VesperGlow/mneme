@@ -73,10 +73,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry
+      - name: Log in to container registry
         if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
@@ -84,19 +81,30 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish image
-        uses: docker/build-push-action@v6
-        with:
-          context: ./${{ matrix.service }}
-          platforms: linux/amd64
-          push: ${{ github.event_name != 'pull_request' }}
-          tags: |
-            ${{ matrix.image }}:latest
-            ${{ matrix.image }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.title=QQ Agent ${{ matrix.service }}
-          build-args: ${{ matrix.build_args }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+      - name: Build image
+        shell: bash
+        env:
+          IMAGE: ${{ matrix.image }}
+          BUILD_ARGS: ${{ matrix.build_args }}
+        run: |
+          build_args=()
+          while IFS= read -r build_arg; do
+            [[ -n "$build_arg" ]] && build_args+=(--build-arg "$build_arg")
+          done <<< "$BUILD_ARGS"
+
+          docker build \
+            --tag "$IMAGE:latest" \
+            --tag "$IMAGE:sha-${{ github.sha }}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            --label "org.opencontainers.image.title=QQ Agent ${{ matrix.service }}" \
+            "${build_args[@]}" \
+            "./${{ matrix.service }}"
+
+      - name: Push image
+        if: github.event_name != 'pull_request'
+        env:
+          IMAGE: ${{ matrix.image }}
+        run: |
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:sha-${{ github.sha }}"
