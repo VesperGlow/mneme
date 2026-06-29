@@ -99,11 +99,12 @@ class MemoryStore:
         WITH u, c
         WHERE c.user_id = $user_id
         MERGE (u)-[:HAS_CONVERSATION]->(c)
+        SET c.message_count = coalesce(c.message_count, 0) + 1, c.updated_at = $now
         CREATE (m:Message {
-          id: $message_id, role: $role, content: $content, created_at: $now
+          id: $message_id, role: $role, content: $content,
+          created_at: $now, seq: c.message_count
         })
         MERGE (c)-[:HAS_MESSAGE]->(m)
-        SET c.updated_at = $now
         RETURN m.id AS id
         """
         records, _, _ = await self.driver.execute_query(
@@ -129,7 +130,7 @@ class MemoryStore:
         MATCH (:User {id: $user_id})-[:HAS_CONVERSATION]->
               (:Conversation {id: $conversation_id})-[:HAS_MESSAGE]->(m:Message)
         RETURN m.role AS role, m.content AS content, m.created_at AS created_at
-        ORDER BY m.created_at DESC
+        ORDER BY coalesce(m.seq, 0) DESC, m.created_at DESC
         LIMIT $limit
         """
         records, _, _ = await self.driver.execute_query(
