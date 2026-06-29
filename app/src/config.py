@@ -39,6 +39,9 @@ class Settings(BaseSettings):
 
     app_api_key: str = ""
     log_level: str = "INFO"
+    # 默认人设（只写性格/口吻）。请求未带 system_prompt 时用它；留空则用内置默认人设。
+    # 系统指令层（输出格式/记忆工具/安全）始终生效、与此无关。
+    persona_prompt: str = ""
 
     ai_base_url: str = ""
     ai_api_key: str = ""

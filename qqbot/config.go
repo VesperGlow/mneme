@@ -21,7 +21,6 @@ type Config struct {
 	WebhookPath     string
 	AIURL           string
 	AIAPIKey        string
-	SystemPrompt    string
 	AITimeout       time.Duration
 	OpenAPITimeout  time.Duration
 	Debug           bool
@@ -42,7 +41,6 @@ func LoadConfig() (Config, error) {
 		WebhookPath:     envString("QQ_WEBHOOK_PATH", "/qqbot"),
 		AIURL:           envString("QQ_AI_URL", "http://app:8000/v1/chat"),
 		AIAPIKey:        strings.TrimSpace(os.Getenv("APP_API_KEY")),
-		SystemPrompt:    strings.TrimSpace(os.Getenv("QQ_SYSTEM_PROMPT")),
 		AITimeout:       time.Duration(envInt("QQ_AI_TIMEOUT_SECONDS", 180, 5, 600)) * time.Second,
 		OpenAPITimeout:  time.Duration(envInt("QQ_OPENAPI_TIMEOUT_SECONDS", 15, 5, 60)) * time.Second,
 		Debug:           envBool("QQ_BOT_DEBUG", false),

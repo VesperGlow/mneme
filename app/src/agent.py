@@ -31,7 +31,7 @@ def contains_sensitive_secret(text: str) -> bool:
     return any(pattern.search(text) for pattern in _SENSITIVE_PATTERNS)
 
 # —— 人设层 ——
-# 只放性格/口吻，可被 system_prompt（QQ_SYSTEM_PROMPT）整体替换。
+# 只放性格/口吻。可被请求的 system_prompt 或配置 PERSONA_PROMPT 整体替换。
 DEFAULT_PERSONA = "你是一个有长期记忆、懂得陪伴的私人 AI 助手，自然、温暖、真诚地与用户交流。"
 
 # —— 系统指令层 ——
@@ -269,8 +269,13 @@ class MemoryAgent:
         retrieved = await self.store.search_memories(user_id, query_vectors[0])
 
         memory_context = self._format_memory_context(retrieved)
-        # 人设层（可被 QQ_SYSTEM_PROMPT 替换）在前，系统指令层在后并优先生效。
-        persona = (custom_system_prompt or "").strip() or DEFAULT_PERSONA
+        # 人设层在前、系统指令层在后并优先生效。
+        # 人设取值优先级：请求 system_prompt > 配置 PERSONA_PROMPT > 内置默认人设。
+        persona = (
+            (custom_system_prompt or "").strip()
+            or self.settings.persona_prompt.strip()
+            or DEFAULT_PERSONA
+        )
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": persona},
             {"role": "system", "content": SYSTEM_INSTRUCTIONS},

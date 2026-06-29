@@ -41,7 +41,7 @@ type Processor struct {
 func NewProcessor(api openapi.OpenAPI, cfg Config) *Processor {
 	p := &Processor{
 		api:     api,
-		ai:      NewAIClient(cfg.AIURL, cfg.AIAPIKey, cfg.SystemPrompt, cfg.AITimeout),
+		ai:      NewAIClient(cfg.AIURL, cfg.AIAPIKey, cfg.AITimeout),
 		cfg:     cfg,
 		jobs:    make(chan MessageJob, cfg.QueueSize),
 		deduper: NewDeduper(cfg.DedupTTL),

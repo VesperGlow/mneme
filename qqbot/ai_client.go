@@ -12,36 +12,32 @@ import (
 )
 
 type AIClient struct {
-	url          string
-	apiKey       string
-	systemPrompt string
-	http         *http.Client
+	url    string
+	apiKey string
+	http   *http.Client
 }
 
 type aiChatRequest struct {
 	UserID         string `json:"user_id"`
 	Message        string `json:"message"`
 	ConversationID string `json:"conversation_id"`
-	SystemPrompt   string `json:"system_prompt,omitempty"`
 }
 
 type aiChatResponse struct {
 	Message string `json:"message"`
 }
 
-func NewAIClient(url, apiKey, systemPrompt string, timeout time.Duration) *AIClient {
+func NewAIClient(url, apiKey string, timeout time.Duration) *AIClient {
 	return &AIClient{
-		url:          strings.TrimRight(url, "/"),
-		apiKey:       apiKey,
-		systemPrompt: systemPrompt,
-		http:         &http.Client{Timeout: timeout},
+		url:    strings.TrimRight(url, "/"),
+		apiKey: apiKey,
+		http:   &http.Client{Timeout: timeout},
 	}
 }
 
 func (c *AIClient) Chat(ctx context.Context, userID, conversationID, message string) (string, error) {
 	payload, err := json.Marshal(aiChatRequest{
 		UserID: userID, Message: message, ConversationID: conversationID,
-		SystemPrompt: c.systemPrompt,
 	})
 	if err != nil {
 		return "", err
