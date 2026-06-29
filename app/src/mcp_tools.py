@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Any
@@ -11,6 +12,21 @@ logger = logging.getLogger(__name__)
 
 # 内置工具一律无前缀；MCP 工具统一加这个前缀，避免与内置工具或彼此重名。
 MCP_TOOL_PREFIX = "mcp__"
+
+# MCP 的 key 常嵌在 URL（Tavily 在查询串、Firecrawl 在路径），出错时异常文本会带出来。
+# 写日志或回传错误前先脱敏，避免密钥落到日志、模型上下文或 API 响应里。
+_REDACT_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?i)([?&][\w-]*(?:key|token|secret|password)=)[^&\s\"']+"), r"\1***"),
+    (re.compile(r"\b((?:fc|tvly|sk)-)[A-Za-z0-9._-]{6,}"), r"\1***"),
+    (re.compile(r"(?i)(bearer\s+)[A-Za-z0-9._\-]{6,}"), r"\1***"),
+    (re.compile(r"(https?://)[^/@\s]+@"), r"\1***@"),
+]
+
+
+def redact_secret(text: str) -> str:
+    for pattern, repl in _REDACT_PATTERNS:
+        text = pattern.sub(repl, text)
+    return text
 
 
 @dataclass
@@ -72,7 +88,11 @@ class MCPManager:
             try:
                 tools = await self._list_tools(server)
             except Exception as exc:  # noqa: BLE001 - 启动期降级，不让单个 MCP 拖垮服务
-                logger.warning("加载 MCP 服务器 %s 的工具失败，已跳过：%s", server.name, exc)
+                logger.warning(
+                    "加载 MCP 服务器 %s 的工具失败，已跳过：%s",
+                    server.name,
+                    redact_secret(str(exc)),
+                )
                 continue
             available = {tool.name for tool in tools}
             for missing in [name for name in server.include if name not in available]:
@@ -108,9 +128,11 @@ class MCPManager:
         if entry is None:
             raise ValueError(f"未知的 MCP 工具：{name}")
         server, tool_name = entry
-        from mcp.types import CallToolResult  # 局部导入，缺依赖时给清晰错误
-
-        result: CallToolResult = await self._call_tool(server, tool_name, arguments)
+        try:
+            result = await self._call_tool(server, tool_name, arguments)
+        except Exception as exc:
+            # 脱敏后再抛出：上层会把它写进 tool_events、回传给模型与 API 响应。
+            raise RuntimeError(f"调用 MCP 工具 {name} 失败：{redact_secret(str(exc))}") from None
         return _serialize_result(result, self.settings.mcp_result_max_chars)
 
     # ---- 内部：每次新建连接 ----

@@ -26,6 +26,11 @@ logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
 )
+# Neo4j 把 db.index.vector.queryNodes 的弃用提醒按 WARNING 刷屏，但功能正常，先压成 ERROR。
+logging.getLogger("neo4j.notifications").setLevel(logging.ERROR)
+# httpx/httpcore 在 DEBUG 下会打印完整请求 URL（含 MCP key），兜底不低于 WARNING，避免泄露。
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
