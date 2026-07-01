@@ -50,7 +50,7 @@ def test_format_time_context_includes_beijing_time_and_weekday():
     context = format_time_context(None)
     assert "北京时间" in context
     assert "星期" in context
-    assert "不要调用搜索" in context
+    assert "无需搜索核实" in context
 
 
 def test_format_time_context_mentions_gap_when_significant():
