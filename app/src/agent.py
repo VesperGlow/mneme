@@ -6,6 +6,7 @@ import logging
 import re
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .config import Settings
@@ -61,6 +62,49 @@ _TRIVIAL_MESSAGE = re.compile(
 
 def is_trivial_message(text: str) -> bool:
     return bool(_TRIVIAL_MESSAGE.match(text.strip()))
+
+# —— 时间感知 ——
+# 全国统一按北京时间（UTC+8，无夏令时）计算，与是否部署在境外服务器无关。
+_BEIJING_TZ = timezone(timedelta(hours=8))
+_WEEKDAY_CN = "一二三四五六日"
+
+
+def _now_beijing() -> datetime:
+    return datetime.now(_BEIJING_TZ)
+
+
+def format_gap(gap: timedelta) -> str:
+    """把时间差格式化成中文描述；差距太小（<10 分钟）不值得提及则返回空字符串。"""
+    seconds = gap.total_seconds()
+    if seconds < 600:
+        return ""
+    days, remainder = divmod(int(seconds), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes = remainder // 60
+    if days > 0:
+        return f"{days} 天 {hours} 小时" if hours else f"{days} 天"
+    if hours > 0:
+        return f"{hours} 小时 {minutes} 分钟" if minutes else f"{hours} 小时"
+    return f"{minutes} 分钟"
+
+
+def format_time_context(last_message_at: str | None) -> str:
+    now = _now_beijing()
+    weekday = _WEEKDAY_CN[now.weekday()]
+    line = f"当前北京时间：{now.strftime('%Y-%m-%d %H:%M')}，星期{weekday}。"
+    if last_message_at:
+        try:
+            last = datetime.fromisoformat(last_message_at).astimezone(_BEIJING_TZ)
+        except ValueError:
+            last = None
+        if last:
+            gap_desc = format_gap(now - last)
+            if gap_desc:
+                line += (
+                    f"距离上一条消息已过 {gap_desc}，请据此自然地问候或衔接语气，"
+                    "不要生硬报出具体时长。"
+                )
+    return line
 
 MEMORY_JUDGE_PROMPT = """你是私人助手的长期记忆筛选器。只判断用户消息中是否包含未来多轮对话仍有价值、且与用户本人相关的信息。
 
@@ -280,8 +324,9 @@ class MemoryAgent:
         query_vector_task = self.embedding.embed([message], is_query=True)
         mood_task = self._mood_trend(user_id)
         summary_task = self._conversation_summary(user_id, conversation_id)
-        history, query_vectors, mood_trend, summary = await asyncio.gather(
-            history_task, query_vector_task, mood_task, summary_task
+        last_message_task = self._last_message_at(user_id, conversation_id)
+        history, query_vectors, mood_trend, summary, last_message_at = await asyncio.gather(
+            history_task, query_vector_task, mood_task, summary_task, last_message_task
         )
         retrieved = await self.store.search_memories(user_id, query_vectors[0])
 
@@ -298,6 +343,10 @@ class MemoryAgent:
             {"role": "system", "content": self._system_instructions()},
             {"role": "system", "content": memory_context},
         ]
+        if self.settings.time_awareness_enabled:
+            messages.append(
+                {"role": "system", "content": format_time_context(last_message_at)}
+            )
         if summary:
             messages.append(
                 {"role": "system", "content": f"早前对话要点（滚动摘要，仅作背景）：\n{summary}"}
@@ -409,6 +458,16 @@ class MemoryAgent:
             f"（valence 均值 {avg:.1f}，共 {count} 条记录，最近一次：{latest}）。"
             "请在语气与关心程度上自然体察，但不要生硬复述这些统计或提及'情绪记录'。"
         )
+
+    async def _last_message_at(self, user_id: str, conversation_id: str) -> str | None:
+        # 时间感知只是上下文加成，查询失败不应中断对话。
+        if not self.settings.time_awareness_enabled:
+            return None
+        try:
+            return await self.store.get_last_message_at(user_id, conversation_id)
+        except Exception as exc:
+            logger.warning("Last message time lookup failed", exc_info=exc)
+            return None
 
     async def _conversation_summary(self, user_id: str, conversation_id: str) -> str:
         # 摘要只是背景加成，读取失败不应中断对话。

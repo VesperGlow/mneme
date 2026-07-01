@@ -105,6 +105,9 @@ class Settings(BaseSettings):
     mood_trend_days: int = Field(default=7, ge=1, le=90)
     mood_recent_limit: int = Field(default=50, ge=1, le=500)
 
+    # 时间感知：每轮注入当前北京时间及与上一条消息的间隔，让助手能自然问候/衔接语气。
+    time_awareness_enabled: bool = True
+
     @field_validator("ai_base_url", "embedding_base_url", "neo4j_uri")
     @classmethod
     def trim_url(cls, value: str) -> str:

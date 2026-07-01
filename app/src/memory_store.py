@@ -146,6 +146,22 @@ class MemoryStore:
             if record["role"] in {"user", "assistant"}
         ]
 
+    async def get_last_message_at(self, user_id: str, conversation_id: str) -> str | None:
+        query = """
+        MATCH (:User {id: $user_id})-[:HAS_CONVERSATION]->
+              (:Conversation {id: $conversation_id})-[:HAS_MESSAGE]->(m:Message)
+        RETURN m.created_at AS created_at
+        ORDER BY coalesce(m.seq, 0) DESC
+        LIMIT 1
+        """
+        records, _, _ = await self.driver.execute_query(
+            query,
+            user_id=user_id,
+            conversation_id=conversation_id,
+            database_=self.settings.neo4j_database,
+        )
+        return records[0]["created_at"] if records else None
+
     async def get_conversation_summary(self, user_id: str, conversation_id: str) -> str:
         query = """
         MATCH (:User {id: $user_id})-[:HAS_CONVERSATION]->(c:Conversation {id: $conversation_id})
