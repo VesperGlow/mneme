@@ -333,7 +333,7 @@ class MemoryAgent:
         )
         retrieved = await self.store.search_memories(user_id, query_vectors[0])
 
-        memory_context = self._format_memory_context(retrieved)
+        background = self._format_background(retrieved, summary)
         # 人设层在前、系统指令层在后并优先生效。
         # 人设取值优先级：请求 system_prompt > 配置 PERSONA_PROMPT > 内置默认人设。
         persona = (
@@ -344,15 +344,11 @@ class MemoryAgent:
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": persona},
             {"role": "system", "content": self._system_instructions()},
-            {"role": "system", "content": memory_context},
+            {"role": "system", "content": background},
         ]
         if self.settings.time_awareness_enabled:
             messages.append(
                 {"role": "system", "content": format_time_context(last_message_at)}
-            )
-        if summary:
-            messages.append(
-                {"role": "system", "content": f"早前对话要点（滚动摘要，仅作背景）：\n{summary}"}
             )
         mood_context = self._format_mood_context(mood_trend)
         if mood_context:
@@ -375,6 +371,7 @@ class MemoryAgent:
 
         warnings: list[str] = []
         saved: list[dict[str, Any]] = []
+        judge_mood: dict[str, Any] | None = None
         if isinstance(judged, Exception):
             logger.warning("Memory judge failed", exc_info=judged)
             warnings.append(f"记忆筛选失败：{judged}")
@@ -384,20 +381,17 @@ class MemoryAgent:
             except Exception as exc:
                 logger.warning("Saving judged memories failed", exc_info=exc)
                 warnings.append(f"自动保存记忆失败：{exc}")
-            if self.settings.mood_tracking_enabled and judged.mood:
-                try:
-                    await self.store.record_mood(user_id, **judged.mood)
-                except Exception as exc:
-                    logger.warning("Recording mood failed", exc_info=exc)
-                    warnings.append(f"记录情绪失败：{exc}")
+            judge_mood = judged.mood
 
         if isinstance(chat_result, Exception):
             raise chat_result
         content, tool_events, tool_warnings = chat_result
         warnings.extend(tool_warnings)
-        # 仅在本轮成功生成回复后才落库，避免失败时留下没有助手回复的悬空消息。
-        await self.store.save_message(user_id, conversation_id, "user", message)
-        await self.store.save_message(user_id, conversation_id, "assistant", content)
+        # 历史落库、情绪记录不影响本轮回复内容，放后台执行以缩短响应延迟；
+        # 仅在本轮成功生成回复后才调度落库，避免失败时留下没有助手回复的悬空消息。
+        self._spawn_bg(self._save_turn(user_id, conversation_id, message, content))
+        if self.settings.mood_tracking_enabled and judge_mood:
+            self._spawn_bg(self._record_mood_bg(user_id, judge_mood))
         # 滚动摘要在后台更新，不阻塞本轮回复返回。
         if self.settings.conversation_summary_enabled:
             self._spawn_bg(self._maybe_update_summary(user_id, conversation_id))
@@ -412,26 +406,39 @@ class MemoryAgent:
 
     @staticmethod
     def _format_memory_context(memories: list[dict[str, Any]]) -> str:
+        """把检索到的长期记忆连成自然叙述，而不是带 id/分数的卡片式条目。
+        id/score 仍在 search_memories 工具的返回值里，不影响模型按需精确操作某条记忆。
+        """
         if not memories:
-            return "本轮没有检索到可用的长期记忆。"
+            return ""
 
-        def render(items: list[dict[str, Any]]) -> list[str]:
-            return [
-                f"- [id={item['id']}; 相似度={item.get('score', 0):.3f}; "
-                f"类型={item.get('kind', 'other')}] {item['text']}"
-                for item in items
-            ]
+        def render(items: list[dict[str, Any]]) -> str:
+            return "；".join(item["text"].rstrip("。") for item in items) + "。"
 
         user_items = [m for m in memories if m.get("subject", "user") != "assistant"]
         self_items = [m for m in memories if m.get("subject", "user") == "assistant"]
         lines: list[str] = []
         if user_items:
-            lines.append("【关于用户的记忆（仅作参考，不等于用户本轮明确说过的话）】")
-            lines += render(user_items)
+            lines.append(f"关于用户，你记得：{render(user_items)}")
         if self_items:
-            lines.append("【我自己的记录：对用户的承诺、约定或人设设定】")
-            lines += render(self_items)
+            lines.append(f"你自己对用户的承诺或设定：{render(self_items)}")
         return "\n".join(lines)
+
+    def _format_background(self, memories: list[dict[str, Any]], summary: str) -> str:
+        """把长期记忆和最近对话摘要合成一段连续的背景印象，代替原来分散的卡片式记忆
+        + 独立摘要两段系统消息，让模型读起来更像自然回想，而不是翻查笔记。"""
+        parts: list[str] = []
+        if summary:
+            parts.append(f"你们最近聊过：{summary}")
+        memory_text = self._format_memory_context(memories)
+        if memory_text:
+            parts.append(memory_text)
+        if not parts:
+            return "你对这位用户还没有长期记忆或早前对话背景，这大概是你们第一次深入交流。"
+        return (
+            "以下是你对这段关系的背景印象，帮助你更自然地衔接对话；"
+            "仅供参考，不等于用户本轮明确说过的话，不要生硬复述：\n\n" + "\n\n".join(parts)
+        )
 
     async def _mood_trend(self, user_id: str) -> dict[str, Any]:
         # 情绪趋势只是上下文加成，查询失败不应中断对话。
@@ -481,6 +488,22 @@ class MemoryAgent:
         except Exception as exc:
             logger.warning("Conversation summary lookup failed", exc_info=exc)
             return ""
+
+    async def _save_turn(
+        self, user_id: str, conversation_id: str, user_message: str, assistant_message: str
+    ) -> None:
+        """把本轮用户消息、助手回复落库。后台调用，顺序写入以保证 seq 正确。"""
+        try:
+            await self.store.save_message(user_id, conversation_id, "user", user_message)
+            await self.store.save_message(user_id, conversation_id, "assistant", assistant_message)
+        except Exception as exc:
+            logger.warning("Saving conversation turn failed", exc_info=exc)
+
+    async def _record_mood_bg(self, user_id: str, mood: dict[str, Any]) -> None:
+        try:
+            await self.store.record_mood(user_id, **mood)
+        except Exception as exc:
+            logger.warning("Recording mood failed", exc_info=exc)
 
     async def _maybe_update_summary(self, user_id: str, conversation_id: str) -> None:
         """把滑出短期窗口、且尚未摘要的旧消息批量压缩进会话摘要。后台调用。"""
