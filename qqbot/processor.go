@@ -35,7 +35,7 @@ type Processor struct {
 	cfg     Config
 	jobs    chan MessageJob
 	deduper *Deduper
-	locks   sync.Map
+	locks   *keyedMutex
 }
 
 func NewProcessor(api openapi.OpenAPI, cfg Config) *Processor {
@@ -45,11 +45,50 @@ func NewProcessor(api openapi.OpenAPI, cfg Config) *Processor {
 		cfg:     cfg,
 		jobs:    make(chan MessageJob, cfg.QueueSize),
 		deduper: NewDeduper(cfg.DedupTTL),
+		locks:   newKeyedMutex(),
 	}
 	for i := 0; i < cfg.Workers; i++ {
 		go p.worker(i + 1)
 	}
 	return p
+}
+
+// keyedMutex 按 key（会话 ID）互斥，只在有并发等待者时才保留 map 条目；
+// 释放后引用计数归零即从 map 删除，避免每个历史会话永久占一个 Mutex。
+type keyedMutex struct {
+	mu    sync.Mutex
+	locks map[string]*refMutex
+}
+
+type refMutex struct {
+	mu  sync.Mutex
+	ref int
+}
+
+func newKeyedMutex() *keyedMutex {
+	return &keyedMutex{locks: make(map[string]*refMutex)}
+}
+
+func (k *keyedMutex) Lock(key string) (unlock func()) {
+	k.mu.Lock()
+	entry, ok := k.locks[key]
+	if !ok {
+		entry = &refMutex{}
+		k.locks[key] = entry
+	}
+	entry.ref++
+	k.mu.Unlock()
+
+	entry.mu.Lock()
+	return func() {
+		entry.mu.Unlock()
+		k.mu.Lock()
+		entry.ref--
+		if entry.ref == 0 {
+			delete(k.locks, key)
+		}
+		k.mu.Unlock()
+	}
 }
 
 func (p *Processor) Submit(job MessageJob) {
@@ -70,11 +109,9 @@ func (p *Processor) Submit(job MessageJob) {
 
 func (p *Processor) worker(id int) {
 	for job := range p.jobs {
-		lockValue, _ := p.locks.LoadOrStore(job.ConversationID, &sync.Mutex{})
-		lock := lockValue.(*sync.Mutex)
-		lock.Lock()
+		unlock := p.locks.Lock(job.ConversationID)
 		p.process(job)
-		lock.Unlock()
+		unlock()
 	}
 }
 
