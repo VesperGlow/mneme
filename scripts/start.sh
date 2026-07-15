@@ -12,8 +12,5 @@ if [ ! -f .env ]; then
   exit 0
 fi
 
-if [ "${1:-}" = "--gpu" ]; then
-  exec docker compose -f compose.yaml -f compose.gpu.yaml up -d --build
-fi
 exec docker compose -f compose.yaml up -d --build
 

@@ -1,8 +1,6 @@
 # 最小 Podman Quadlet 部署
 
-这份 `qq-agent.container` 运行 GHCR 中的合并镜像（AI API 与 QQ BotGo 桥接同在一个容器内），并使用 `qq-agent.network`。
-
-`qq-agent` 仍需要可访问的 Neo4j 和 Embedding 服务。示例环境文件默认通过 `host.containers.internal` 连接宿主机的 `7687` 和 `8080` 端口。
+这份 `qq-agent.container` 运行 GHCR 中的合并镜像——Neo4j、TEI Embedding、AI API 与 QQ BotGo 桥接全部在同一个容器内，不需要任何外部服务。数据保存在 `qq-agent-data`（Neo4j）、`qq-agent-models`（模型缓存）两个卷里。
 
 ## Rootless 安装
 

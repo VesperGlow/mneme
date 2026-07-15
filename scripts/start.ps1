@@ -1,5 +1,3 @@
-param([switch]$Gpu)
-
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
@@ -13,8 +11,5 @@ if (-not (Test-Path ".env")) {
     exit 0
 }
 
-$Args = @("compose", "-f", "compose.yaml")
-if ($Gpu) { $Args += @("-f", "compose.gpu.yaml") }
-$Args += @("up", "-d", "--build")
-& docker @Args
+& docker compose -f compose.yaml up -d --build
 

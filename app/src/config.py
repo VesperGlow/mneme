@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     mcp_timeout_seconds: float = 300
     mcp_result_max_chars: int = 12000
 
-    embedding_base_url: str = "http://embedding:80"
+    embedding_base_url: str = "http://127.0.0.1:8080"
     embedding_api_key: str = ""
     embedding_api_style: Literal["tei", "openai"] = "tei"
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     )
     embedding_timeout_seconds: float = 180
 
-    neo4j_uri: str = "bolt://neo4j:7687"
+    neo4j_uri: str = "bolt://127.0.0.1:7687"
     neo4j_user: str = "neo4j"
     neo4j_password: str = ""
     neo4j_database: str = "neo4j"

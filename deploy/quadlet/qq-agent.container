@@ -1,5 +1,5 @@
 [Unit]
-Description=QQ Agent AI API and BotGo bridge
+Description=QQ Agent all-in-one (Neo4j + TEI + AI API + BotGo bridge)
 
 [Container]
 Image=ghcr.io/vesperglow/qq-agent:latest
@@ -8,11 +8,18 @@ Network=qq-agent.network
 EnvironmentFile=./qq-agent.env
 PublishPort=127.0.0.1:8000:8000
 PublishPort=127.0.0.1:9000:9000
+# Neo4j Browser / Bolt，仅调试用
+PublishPort=127.0.0.1:7474:7474
+PublishPort=127.0.0.1:7687:7687
+Volume=qq-agent-data:/data
+Volume=qq-agent-logs:/logs
+Volume=qq-agent-models:/models
 AutoUpdate=registry
-HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live', timeout=3); urllib.request.urlopen('http://127.0.0.1:9000/healthz', timeout=3)"
+HealthCmd=curl -fsS http://127.0.0.1:8000/health/live >/dev/null && curl -fsS http://127.0.0.1:9000/healthz >/dev/null
 HealthInterval=15s
 HealthRetries=5
-HealthStartPeriod=45s
+# 首次启动要下载 embedding 模型（约 1.2GB），给足冷启动时间。
+HealthStartPeriod=300s
 HealthTimeout=5s
 HealthOnFailure=kill
 Notify=healthy
@@ -20,7 +27,7 @@ Notify=healthy
 [Service]
 Restart=always
 RestartSec=5s
-TimeoutStartSec=300
+TimeoutStartSec=600
 TimeoutStopSec=30
 
 [Install]
