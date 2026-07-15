@@ -8,7 +8,7 @@
 
 ```sh
 mkdir -p ~/.config/containers/systemd
-cp qq-agent.network qq-agent.container ~/.config/containers/systemd/
+cp qq-agent.container ~/.config/containers/systemd/
 cp qq-agent.env.example ~/.config/containers/systemd/qq-agent.env
 chmod 600 ~/.config/containers/systemd/qq-agent.env
 ```
@@ -36,6 +36,8 @@ curl http://127.0.0.1:9000/healthz
 ```
 
 示例 `qq-agent.env` 默认使用 `QQ_EVENT_MODE=websocket`，不需要公网域名或反向代理；只有改成 `webhook` 时，才需要把 QQ 开放平台的 HTTPS 回调反向代理到 `127.0.0.1:9000/qqbot`。
+
+再精简一点的话，env 只需 8 行就能跑：`APP_API_KEY`、`AI_BASE_URL`、`AI_API_KEY`、`MEMORY_MODEL`、`CHAT_MODEL`、`QQ_APP_ID`、`QQ_APP_SECRET`、`QQ_EVENT_MODE=websocket`——存储路径、embedding 模型、记忆等级梯度等全部有代码默认值。
 
 启用 Podman 自带的镜像自动更新定时器：
 

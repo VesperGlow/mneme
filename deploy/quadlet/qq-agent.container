@@ -4,7 +4,6 @@ Description=QQ Agent all-in-one (AI API with embedded SQLite/ONNX + BotGo bridge
 [Container]
 Image=ghcr.io/vesperglow/qq-agent:latest
 ContainerName=qq-agent
-Network=qq-agent.network
 EnvironmentFile=./qq-agent.env
 PublishPort=127.0.0.1:8000:8000
 PublishPort=127.0.0.1:9000:9000
