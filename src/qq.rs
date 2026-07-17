@@ -436,24 +436,37 @@ impl QqBridge {
         }
     }
 
-    /// 从 QQ CDN 下载图片并转成 data URI；超过配置的大小上限直接放弃。
+    /// 从 QQ CDN 下载图片并转成 data URI；超过发送上限或分辨率过大的先压缩。
     async fn fetch_image(&self, url: &str) -> Result<String> {
         let response = self.http.get(url).send().await?.error_for_status()?;
-        let limit = self.cfg.chat_image_max_bytes;
+        let fetch_limit = self.cfg.chat_image_fetch_max_bytes;
         if let Some(length) = response.content_length() {
-            if length as usize > limit {
-                bail!("图片 {length} 字节，超过上限 {limit}");
+            if length as usize > fetch_limit {
+                bail!("图片 {length} 字节，超过下载上限 {fetch_limit}");
             }
         }
         let bytes = response.bytes().await?;
         if bytes.is_empty() {
             bail!("图片内容为空");
         }
-        if bytes.len() > limit {
-            bail!("图片 {} 字节，超过上限 {limit}", bytes.len());
+        if bytes.len() > fetch_limit {
+            bail!("图片 {} 字节，超过下载上限 {fetch_limit}", bytes.len());
         }
-        tracing::debug!("QQ 图片下载完成 {} 字节", bytes.len());
-        Ok(crate::image::to_data_uri(&bytes))
+        let original = bytes.len();
+        let max_bytes = self.cfg.chat_image_max_bytes;
+        let max_edge = self.cfg.chat_image_max_edge;
+        // 解码/缩放/重编码是 CPU 密集操作，放阻塞线程池执行，不堵 async worker。
+        let prepared = tokio::task::spawn_blocking(move || {
+            crate::image::prepare(bytes.to_vec(), max_bytes, max_edge)
+        })
+        .await
+        .context("图片压缩任务被取消")??;
+        if prepared.len() != original {
+            tracing::info!("图片已压缩 {original} → {} 字节", prepared.len());
+        } else {
+            tracing::debug!("QQ 图片下载完成 {original} 字节");
+        }
+        Ok(crate::image::to_data_uri(&prepared))
     }
 
     async fn send_text(&self, job: &MessageJob, text: &str) -> Result<()> {

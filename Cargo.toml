@@ -19,6 +19,8 @@ ed25519-dalek = "3"
 futures-util = "0.3"
 half = "2"
 hex = "0.4"
+# 图片压缩：解码 jpeg/png，缩放后重编码 JPEG，把超大图压进上游 vision 接口的大小限制
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 rand = "0.9"
 regex = "1"
 thiserror = "2"

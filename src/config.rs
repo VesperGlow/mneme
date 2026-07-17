@@ -155,7 +155,12 @@ pub struct Config {
     /// 图片理解：把 QQ 图片附件 / API images 参数以 image_url 段传给对话模型（模型须支持视觉）。
     pub chat_image_enabled: bool,
     pub chat_image_max_count: usize,
+    /// 发送给模型的单张图片大小上限；超限的图会先压缩（缩放 + 重编码 JPEG）。
     pub chat_image_max_bytes: usize,
+    /// 从 QQ CDN 下载原图的大小上限（压缩前），防滥用兜底。
+    pub chat_image_fetch_max_bytes: usize,
+    /// 图片长边像素上限，超过则缩放；视觉模型内部分辨率有限，缩了还省 token。
+    pub chat_image_max_edge: u32,
 
     pub mood_tracking_enabled: bool,
     pub mood_trend_days: i64,
@@ -286,6 +291,12 @@ impl Config {
             chat_image_enabled: env_bool("CHAT_IMAGE_ENABLED", true),
             chat_image_max_count: clamp(env_parse("CHAT_IMAGE_MAX_COUNT", 3), 1, 10),
             chat_image_max_bytes: clamp(env_parse("CHAT_IMAGE_MAX_BYTES", 5_242_880), 65_536, 20_971_520),
+            chat_image_fetch_max_bytes: clamp(
+                env_parse("CHAT_IMAGE_FETCH_MAX_BYTES", 31_457_280),
+                1_048_576,
+                104_857_600,
+            ),
+            chat_image_max_edge: clamp(env_parse("CHAT_IMAGE_MAX_EDGE", 2048), 512, 8192),
 
             mood_tracking_enabled: env_bool("MOOD_TRACKING_ENABLED", true),
             mood_trend_days: clamp(env_parse("MOOD_TREND_DAYS", 7), 1, 90),

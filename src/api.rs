@@ -66,6 +66,9 @@ fn require_api_key(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError
 }
 
 pub fn router(state: AppState) -> Router {
+    // axum 默认 body 上限 2MB，装不下带图请求：按图片下载上限 × 张数的 base64 体积放宽。
+    let body_limit = state.cfg.chat_image_fetch_max_bytes * state.cfg.chat_image_max_count * 4 / 3
+        + 1_048_576;
     Router::new()
         .route("/", get(index))
         .route("/health/live", get(health_live))
@@ -80,6 +83,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/memories/{memory_id}/history", get(memory_history))
         .route("/v1/mood/{user_id}", get(mood_timeline))
         .route("/v1/graph/{user_id}", get(graph))
+        .layer(axum::extract::DefaultBodyLimit::max(body_limit))
         .with_state(state)
 }
 
@@ -143,7 +147,7 @@ struct ChatRequest {
 async fn chat(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<ChatRequest>,
+    Json(mut body): Json<ChatRequest>,
 ) -> Result<Json<Value>, ApiError> {
     require_api_key(&state, &headers)?;
     validate_len("user_id", &body.user_id, 1, 128)?;
@@ -162,12 +166,22 @@ async fn chat(
             format!("images 最多 {} 张", state.cfg.chat_image_max_count),
         ));
     }
-    let images: Vec<String> = body
-        .images
-        .iter()
-        .map(|raw| crate::image::normalize_input(raw, state.cfg.chat_image_max_bytes))
-        .collect::<Result<_, _>>()
-        .map_err(|error| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?;
+    // 归一化含解码/压缩，CPU 密集，放阻塞线程池执行。
+    let images: Vec<String> = if body.images.is_empty() {
+        Vec::new()
+    } else {
+        let raw = std::mem::take(&mut body.images);
+        let max_bytes = state.cfg.chat_image_max_bytes;
+        let max_edge = state.cfg.chat_image_max_edge;
+        tokio::task::spawn_blocking(move || {
+            raw.iter()
+                .map(|item| crate::image::normalize_input(item, max_bytes, max_edge))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .await
+        .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "图片处理任务被取消"))?
+        .map_err(|error| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?
+    };
     let result = state
         .agent
         .chat(
