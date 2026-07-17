@@ -100,6 +100,8 @@ pub enum QqEventMode {
 pub struct Config {
     pub app_api_key: String,
     pub log_level: String,
+    /// 运行日志里消息/记忆内容预览的最大字符数；0 = 完全不在日志里出现内容。
+    pub log_preview_chars: usize,
     pub persona_prompt: String,
     pub system_instructions: String,
 
@@ -218,6 +220,7 @@ impl Config {
         Ok(Self {
             app_api_key: env_string("APP_API_KEY", ""),
             log_level: env_string("LOG_LEVEL", "INFO"),
+            log_preview_chars: clamp(env_parse("LOG_CONTENT_PREVIEW_CHARS", 40), 0, 500),
             persona_prompt: env_string("PERSONA_PROMPT", ""),
             system_instructions: env_string("SYSTEM_INSTRUCTIONS", ""),
 

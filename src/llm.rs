@@ -89,6 +89,7 @@ impl LlmClient {
             payload["response_format"] = format.clone();
         }
         let url = self.url()?;
+        let started = std::time::Instant::now();
 
         let mut last_error = String::new();
         for attempt in 0..=self.cfg.ai_max_retries {
@@ -112,15 +113,34 @@ impl LlmClient {
                                 Some(status),
                             ));
                         }
+                        tracing::warn!(
+                            "LLM {model} 第{}次请求失败：HTTP {status}",
+                            attempt + 1
+                        );
                         last_error = format!("HTTP {status}：{body}");
                     } else {
                         let data: Value = response.json().await.map_err(|e| {
                             LlmError::new(format!("AI 接口响应不是 JSON：{e}"), None)
                         })?;
+                        let usage = &data["usage"];
+                        let tokens = match (
+                            usage["prompt_tokens"].as_i64(),
+                            usage["completion_tokens"].as_i64(),
+                        ) {
+                            (Some(p), Some(c)) => format!(" tokens={p}+{c}"),
+                            _ => String::new(),
+                        };
+                        tracing::info!(
+                            "LLM {model} 完成 耗时{:.1}s{tokens}",
+                            started.elapsed().as_secs_f32()
+                        );
                         return parse_choice(&data);
                     }
                 }
-                Err(e) => last_error = e.to_string(),
+                Err(e) => {
+                    tracing::warn!("LLM {model} 第{}次请求失败：{e}", attempt + 1);
+                    last_error = e.to_string();
+                }
             }
             if attempt < self.cfg.ai_max_retries {
                 let backoff = (1u64 << attempt).min(4);

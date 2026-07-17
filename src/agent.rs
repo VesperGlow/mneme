@@ -93,6 +93,24 @@ pub fn is_trivial_message(text: &str) -> bool {
     re.is_match(text.trim())
 }
 
+/// 日志用内容预览：压平换行、按字符截断；max_chars=0 时不暴露任何内容。
+pub fn preview(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return "(内容已隐藏)".into();
+    }
+    let flat: String = text
+        .trim()
+        .chars()
+        .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+        .take(max_chars)
+        .collect();
+    if text.trim().chars().count() > max_chars {
+        format!("{flat}…")
+    } else {
+        flat
+    }
+}
+
 // —— 时间感知 ——
 // 全国统一按北京时间（UTC+8，无夏令时）计算，与是否部署在境外服务器无关。
 fn beijing_now() -> DateTime<FixedOffset> {
@@ -319,8 +337,16 @@ impl Agent {
     ) -> Result<AgentResult> {
         // 整轮对话计入在途写入：优雅停机会等本轮（含 API 侧请求）做完再退出。
         let _pending = self.pending.guard();
+        let started_at = std::time::Instant::now();
         let conversation_id =
             conversation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let convo_tag: String = conversation_id.chars().take(12).collect();
+        tracing::info!(
+            "对话开始 user={user_id} convo={convo_tag} 文字{}字 图片{}张：{}",
+            message.chars().count(),
+            images.len(),
+            preview(message, self.cfg.log_preview_chars),
+        );
 
         // 纯图片消息没有文字可检索，用固定占位语义做记忆召回。
         let query_texts = [if message.trim().is_empty() && !images.is_empty() {
@@ -419,7 +445,17 @@ impl Agent {
         match judged {
             Some(Ok(outcome)) => {
                 match self.save_judged_memories(user_id, outcome.memories).await {
-                    Ok(items) => saved = items,
+                    Ok(items) => {
+                        for item in &items {
+                            tracing::info!(
+                                "自动保存记忆 [{}/L{}] {}",
+                                item.kind,
+                                item.level,
+                                preview(&item.text, self.cfg.log_preview_chars),
+                            );
+                        }
+                        saved = items
+                    }
                     Err(error) => {
                         tracing::warn!("自动保存记忆失败：{error:#}");
                         warnings.push(format!("自动保存记忆失败：{error}"));
@@ -481,6 +517,7 @@ impl Agent {
             if let Some((label, valence, note)) = judge_mood {
                 let store = self.store.clone();
                 let user = user_id.to_string();
+                tracing::info!("记录情绪 {label} valence={valence}");
                 self.pending.spawn(async move {
                     if let Err(error) = store.record_mood(user, label, valence, note).await {
                         tracing::warn!("记录情绪失败：{error:#}");
@@ -489,6 +526,14 @@ impl Agent {
             }
         }
 
+        tracing::info!(
+            "对话完成 user={user_id} convo={convo_tag} 检索{}条 工具{}次 新记忆{}条 耗时{:.1}s：{}",
+            retrieved.len(),
+            tool_events.len(),
+            saved.len(),
+            started_at.elapsed().as_secs_f32(),
+            preview(&content, self.cfg.log_preview_chars),
+        );
         Ok(AgentResult {
             conversation_id,
             content,
@@ -593,6 +638,12 @@ impl Agent {
             }
             let new_summary = self.summarize(&pending.summary, &pending.messages).await?;
             if !new_summary.is_empty() {
+                tracing::info!(
+                    "会话摘要已更新 convo={} 压缩{}条消息 摘要{}字",
+                    conversation_id.chars().take(12).collect::<String>(),
+                    pending.messages.len(),
+                    new_summary.chars().count(),
+                );
                 self.store
                     .update_conversation_summary(
                         user_id.to_string(),
@@ -772,6 +823,7 @@ impl Agent {
                 Err(error) => {
                     if tools_enabled && error.status == Some(400) {
                         tools_enabled = false;
+                        tracing::warn!("AI 提供商拒绝了 tools 参数，已降级为自动检索后直接对话");
                         warnings
                             .push("AI 提供商拒绝了 tools 参数，已降级为自动检索后直接对话。".into());
                         continue;
@@ -790,6 +842,7 @@ impl Agent {
                 return Ok((content, events, warnings));
             }
             if round_index >= self.cfg.max_tool_rounds {
+                tracing::warn!("已达到工具调用轮数上限（{}）", self.cfg.max_tool_rounds);
                 warnings.push("已达到工具调用轮数上限。".into());
                 let content = response.content.trim();
                 let content = if content.is_empty() {
@@ -813,19 +866,32 @@ impl Agent {
                 .ok()
                 .filter(|v| v.is_object())
                 {
-                    Some(arguments) => match self.execute_tool(user_id, &name, &arguments).await {
-                        Ok(result) => {
-                            let event = json!({"tool": name, "arguments": arguments, "ok": true, "result": result});
-                            (result, event)
+                    Some(arguments) => {
+                        let tool_started = std::time::Instant::now();
+                        match self.execute_tool(user_id, &name, &arguments).await {
+                            Ok(result) => {
+                                tracing::info!(
+                                    "工具 {name} 成功 耗时{:.1}s 参数={}",
+                                    tool_started.elapsed().as_secs_f32(),
+                                    preview(&arguments.to_string(), self.cfg.log_preview_chars),
+                                );
+                                let event = json!({"tool": name, "arguments": arguments, "ok": true, "result": result});
+                                (result, event)
+                            }
+                            Err(error) => {
+                                let text = error.to_string();
+                                tracing::warn!(
+                                    "工具 {name} 失败 耗时{:.1}s：{}",
+                                    tool_started.elapsed().as_secs_f32(),
+                                    preview(&text, 200),
+                                );
+                                (
+                                    json!({"error": text}),
+                                    json!({"tool": name, "ok": false, "error": text}),
+                                )
+                            }
                         }
-                        Err(error) => {
-                            let text = error.to_string();
-                            (
-                                json!({"error": text}),
-                                json!({"tool": name, "ok": false, "error": text}),
-                            )
-                        }
-                    },
+                    }
                     None => (
                         json!({"error": "arguments 不是对象"}),
                         json!({"tool": name, "ok": false, "error": "arguments 不是对象"}),

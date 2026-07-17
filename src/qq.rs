@@ -372,6 +372,13 @@ impl QqBridge {
 
     async fn process(&self, job: MessageJob) {
         let content = job.content.trim().to_string();
+        let received_at = std::time::Instant::now();
+        tracing::info!(
+            "收到 QQ 消息 msg={} 文字{}字 图片{}张",
+            job.message_id,
+            content.chars().count(),
+            job.image_urls.len(),
+        );
 
         // 下载图片附件转 data URI；单张失败只记日志，尽量把拿到的图带上。
         let mut images: Vec<String> = Vec::new();
@@ -407,11 +414,17 @@ impl QqBridge {
         )
         .await;
         match reply {
-            Ok(Ok(result)) => {
-                if let Err(error) = self.send_text(&job, &result.content).await {
-                    tracing::warn!("回复 QQ 消息失败: msg={} err={error:#}", job.message_id);
+            Ok(Ok(result)) => match self.send_text(&job, &result.content).await {
+                Ok(()) => tracing::info!(
+                    "已回复 QQ 消息 msg={} {}字 全程{:.1}s",
+                    job.message_id,
+                    result.content.chars().count(),
+                    received_at.elapsed().as_secs_f32(),
+                ),
+                Err(error) => {
+                    tracing::warn!("回复 QQ 消息失败: msg={} err={error:#}", job.message_id)
                 }
-            }
+            },
             Ok(Err(error)) => {
                 tracing::warn!("AI 处理 QQ 消息失败: msg={} err={error:#}", job.message_id);
                 let _ = self.send_text(&job, "这次处理失败了，请稍后再试。").await;
@@ -439,6 +452,7 @@ impl QqBridge {
         if bytes.len() > limit {
             bail!("图片 {} 字节，超过上限 {limit}", bytes.len());
         }
+        tracing::debug!("QQ 图片下载完成 {} 字节", bytes.len());
         Ok(crate::image::to_data_uri(&bytes))
     }
 
