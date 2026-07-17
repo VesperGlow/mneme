@@ -417,6 +417,16 @@ impl Agent {
         if images.is_empty() {
             messages.push(json!({"role": "user", "content": message}));
         } else {
+            // 纠偏：历史里可能有模型自己“看不到图片”的发言（比如用户在没发图时
+            // 问过能力），不注入提示的话它会顺着旧话继续嘴硬拒绝看图。
+            messages.push(json!({
+                "role": "system",
+                "content": format!(
+                    "用户本条消息附带了 {} 张图片，图片内容已包含在消息里，你可以直接看到并理解。\
+                     请根据图片内容自然回应；不要声称自己看不到图片，也不要要求用户描述图片。",
+                    images.len()
+                ),
+            }));
             let mut parts: Vec<Value> = Vec::new();
             if !message.trim().is_empty() {
                 parts.push(json!({"type": "text", "text": message}));
