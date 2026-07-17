@@ -8,6 +8,9 @@ services:
     build:
       context: .
     restart: unless-stopped
+    # 优雅停机：给进程留出 flush 在途消息与落库的时间（须 > SHUTDOWN_TIMEOUT_SECONDS，默认 30s），
+    # 否则默认 10s 后就 SIGKILL，等于白等。
+    stop_grace_period: 40s
     env_file:
       - .env
     # embedding 权重约 650MB 常驻，稳态总占用 <1GB；上限兜底 2GB。

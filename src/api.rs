@@ -129,11 +129,15 @@ async fn config_endpoint(
 #[derive(Deserialize)]
 struct ChatRequest {
     user_id: String,
+    #[serde(default)]
     message: String,
     #[serde(default)]
     conversation_id: Option<String>,
     #[serde(default)]
     system_prompt: Option<String>,
+    /// 图片列表：裸 base64、data URI 或 http(s) URL；需 CHAT_MODEL 支持视觉。
+    #[serde(default)]
+    images: Vec<String>,
 }
 
 async fn chat(
@@ -143,7 +147,27 @@ async fn chat(
 ) -> Result<Json<Value>, ApiError> {
     require_api_key(&state, &headers)?;
     validate_len("user_id", &body.user_id, 1, 128)?;
-    validate_len("message", &body.message, 1, 200_000)?;
+    // 带图片时允许 message 为空（纯图片消息）。
+    let message_min = if body.images.is_empty() { 1 } else { 0 };
+    validate_len("message", &body.message, message_min, 200_000)?;
+    if !body.images.is_empty() && !state.cfg.chat_image_enabled {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "图片输入未启用（CHAT_IMAGE_ENABLED=false）",
+        ));
+    }
+    if body.images.len() > state.cfg.chat_image_max_count {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("images 最多 {} 张", state.cfg.chat_image_max_count),
+        ));
+    }
+    let images: Vec<String> = body
+        .images
+        .iter()
+        .map(|raw| crate::image::normalize_input(raw, state.cfg.chat_image_max_bytes))
+        .collect::<Result<_, _>>()
+        .map_err(|error| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?;
     let result = state
         .agent
         .chat(
@@ -151,6 +175,7 @@ async fn chat(
             &body.message,
             body.conversation_id,
             body.system_prompt,
+            &images,
         )
         .await
         .map_err(|error| {

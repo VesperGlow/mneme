@@ -14,6 +14,7 @@ use crate::config::Config;
 use crate::embedding::Embedder;
 use crate::llm::{ChatParams, LlmClient, LlmError};
 use crate::mcp::McpManager;
+use crate::shutdown::Pending;
 use crate::store::{ChatTurn, EntityView, MemoryView, NewMemory, Store};
 
 // —— 人设层 ——
@@ -262,6 +263,7 @@ pub struct Agent {
     embedding: Arc<Embedder>,
     llm: Arc<LlmClient>,
     mcp: Arc<McpManager>,
+    pending: Pending,
 }
 
 impl Agent {
@@ -271,6 +273,7 @@ impl Agent {
         embedding: Arc<Embedder>,
         llm: Arc<LlmClient>,
         mcp: Arc<McpManager>,
+        pending: Pending,
     ) -> Self {
         Self {
             cfg,
@@ -278,6 +281,7 @@ impl Agent {
             embedding,
             llm,
             mcp,
+            pending,
         }
     }
 
@@ -303,17 +307,27 @@ impl Agent {
         }
     }
 
+    /// `images`：当轮附带的图片，元素为 data URI 或 http(s) URL，已由调用方
+    /// 校验过大小与数量；只传给模型看，不入库。
     pub async fn chat(
         &self,
         user_id: &str,
         message: &str,
         conversation_id: Option<String>,
         custom_system_prompt: Option<String>,
+        images: &[String],
     ) -> Result<AgentResult> {
+        // 整轮对话计入在途写入：优雅停机会等本轮（含 API 侧请求）做完再退出。
+        let _pending = self.pending.guard();
         let conversation_id =
             conversation_id.unwrap_or_else(|| Uuid::new_v4().to_string());
 
-        let query_texts = [message.to_string()];
+        // 纯图片消息没有文字可检索，用固定占位语义做记忆召回。
+        let query_texts = [if message.trim().is_empty() && !images.is_empty() {
+            "用户发来了图片".to_string()
+        } else {
+            message.to_string()
+        }];
         let (history, query_vectors, mood_trend, summary, last_message_at) = tokio::join!(
             self.store.get_history(
                 user_id.to_string(),
@@ -373,11 +387,24 @@ impl Agent {
         for turn in &history {
             messages.push(json!({"role": turn.role, "content": turn.content}));
         }
-        messages.push(json!({"role": "user", "content": message}));
+        // 带图片时按 OpenAI vision 规范用分段 content；纯文字保持字符串形式兼容所有提供商。
+        if images.is_empty() {
+            messages.push(json!({"role": "user", "content": message}));
+        } else {
+            let mut parts: Vec<Value> = Vec::new();
+            if !message.trim().is_empty() {
+                parts.push(json!({"type": "text", "text": message}));
+            }
+            for image in images {
+                parts.push(json!({"type": "image_url", "image_url": {"url": image}}));
+            }
+            messages.push(json!({"role": "user", "content": parts}));
+        }
 
-        // 纯寒暄/填充短消息跳过记忆筛选与情绪抽取，省一次便宜模型调用。
-        let do_judge =
-            !(self.cfg.memory_judge_skip_trivial && is_trivial_message(message));
+        // 纯寒暄/填充短消息跳过记忆筛选与情绪抽取，省一次便宜模型调用；
+        // 记忆筛选模型只看文字，纯图片消息没有可筛的内容。
+        let do_judge = !message.trim().is_empty()
+            && !(self.cfg.memory_judge_skip_trivial && is_trivial_message(message));
         let (chat_result, judged) = tokio::join!(self.run_tool_loop(user_id, messages), async {
             if do_judge {
                 Some(self.judge_memories(message).await)
@@ -412,15 +439,24 @@ impl Agent {
 
         // 历史落库、情绪记录、滚动摘要不影响本轮回复内容，放后台执行缩短响应延迟；
         // 仅在本轮成功生成回复后才调度落库，避免失败时留下没有助手回复的悬空消息。
+        // 经 pending 追踪，优雅停机时会等这些写入完成。
         {
             let agent = self.clone();
+            // 历史只落文字加图片标记，不存 base64（省库容量；历史窗口也带不动图片）。
+            let history_text = if images.is_empty() {
+                message.to_string()
+            } else if message.trim().is_empty() {
+                format!("[图片×{}]", images.len())
+            } else {
+                format!("[图片×{}] {message}", images.len())
+            };
             let (user, convo, msg, reply) = (
                 user_id.to_string(),
                 conversation_id.clone(),
-                message.to_string(),
+                history_text,
                 content.clone(),
             );
-            tokio::spawn(async move {
+            self.pending.spawn(async move {
                 if let Err(error) = agent
                     .store
                     .save_message(user.clone(), convo.clone(), "user".into(), msg)
@@ -445,7 +481,7 @@ impl Agent {
             if let Some((label, valence, note)) = judge_mood {
                 let store = self.store.clone();
                 let user = user_id.to_string();
-                tokio::spawn(async move {
+                self.pending.spawn(async move {
                     if let Err(error) = store.record_mood(user, label, valence, note).await {
                         tracing::warn!("记录情绪失败：{error:#}");
                     }

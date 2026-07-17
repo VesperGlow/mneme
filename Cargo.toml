@@ -13,6 +13,7 @@ onnx = ["dep:ort", "dep:tokenizers", "dep:memmap2"]
 [dependencies]
 anyhow = "1"
 axum = "0.8"
+base64 = "0.22"
 chrono = "0.4"
 ed25519-dalek = "3"
 futures-util = "0.3"

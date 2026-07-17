@@ -150,12 +150,21 @@ pub struct Config {
     pub memory_keyword_weight: f32,
     pub memory_recency_halflife_days: f32,
 
+    /// 图片理解：把 QQ 图片附件 / API images 参数以 image_url 段传给对话模型（模型须支持视觉）。
+    pub chat_image_enabled: bool,
+    pub chat_image_max_count: usize,
+    pub chat_image_max_bytes: usize,
+
     pub mood_tracking_enabled: bool,
     pub mood_trend_days: i64,
     pub mood_recent_limit: usize,
     pub time_awareness_enabled: bool,
 
     pub app_port: u16,
+
+    /// 收到 SIGTERM/Ctrl-C 后等待在途消息与落库任务完成的上限（秒）。
+    /// 注意容器编排的 stop 宽限期（如 podman stop -t / stop_grace_period）要不小于该值。
+    pub shutdown_timeout_seconds: u64,
 
     // QQ 桥接（沿用 Go 版变量名）
     pub qq_app_id: String,
@@ -271,12 +280,18 @@ impl Config {
             memory_keyword_weight: env_parse("MEMORY_KEYWORD_WEIGHT", 0.08),
             memory_recency_halflife_days: env_parse("MEMORY_RECENCY_HALFLIFE_DAYS", 30.0),
 
+            chat_image_enabled: env_bool("CHAT_IMAGE_ENABLED", true),
+            chat_image_max_count: clamp(env_parse("CHAT_IMAGE_MAX_COUNT", 3), 1, 10),
+            chat_image_max_bytes: clamp(env_parse("CHAT_IMAGE_MAX_BYTES", 5_242_880), 65_536, 20_971_520),
+
             mood_tracking_enabled: env_bool("MOOD_TRACKING_ENABLED", true),
             mood_trend_days: clamp(env_parse("MOOD_TREND_DAYS", 7), 1, 90),
             mood_recent_limit: clamp(env_parse("MOOD_RECENT_LIMIT", 50), 1, 500),
             time_awareness_enabled: env_bool("TIME_AWARENESS_ENABLED", true),
 
             app_port: env_parse("APP_PORT_INTERNAL", 8000),
+
+            shutdown_timeout_seconds: clamp(env_parse("SHUTDOWN_TIMEOUT_SECONDS", 30), 1, 600),
 
             qq_app_id: env_string("QQ_APP_ID", ""),
             qq_app_secret: env_string("QQ_APP_SECRET", ""),

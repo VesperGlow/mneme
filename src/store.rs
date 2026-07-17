@@ -300,6 +300,16 @@ impl Store {
         .context("存储任务被取消")?
     }
 
+    /// 停机前把 WAL 落回主库文件，缩短异常恢复窗口。
+    pub async fn checkpoint(&self) -> Result<()> {
+        self.run(|conn, _| {
+            // wal_checkpoint 会返回 (busy, log, checkpointed) 一行，须按查询执行。
+            conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn ping(&self) -> bool {
         self.run(|conn, _| {
             conn.query_row("SELECT 1", [], |_| Ok(()))?;
