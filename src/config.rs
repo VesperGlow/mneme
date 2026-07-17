@@ -239,7 +239,7 @@ impl Config {
                 .to_string(),
             embedding_api_key: env_string("EMBEDDING_API_KEY", ""),
             embedding_dimensions: clamp(env_parse("EMBEDDING_DIMENSIONS", 1024), 32, 4096),
-            embedding_context_size: clamp(env_parse("EMBEDDING_CONTEXT_SIZE", 2048), 64, 32768),
+            embedding_context_size: clamp(env_parse("EMBEDDING_CONTEXT_SIZE", 512), 64, 32768),
             embedding_query_instruction: env_string(
                 "EMBEDDING_QUERY_INSTRUCTION",
                 "Given a user's message, retrieve memories that are useful for personalizing the response",
