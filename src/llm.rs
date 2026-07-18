@@ -54,6 +54,21 @@ pub struct ChatParams {
     pub response_format: Option<Value>,
 }
 
+/// 选择使用哪个模型接入点：对话（grok 等）或记忆（deepseek 等）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Profile {
+    Chat,
+    Memory,
+}
+
+/// 某个 Profile 对应的模型名与接入点（base_url / api_key / 额外请求头）。
+struct Endpoint<'a> {
+    model: &'a str,
+    base_url: &'a str,
+    api_key: &'a str,
+    extra_headers: &'a [(String, String)],
+}
+
 pub struct LlmClient {
     cfg: Arc<Config>,
     http: reqwest::Client,
@@ -69,13 +84,29 @@ impl LlmClient {
         })
     }
 
-    fn url(&self) -> Result<String, LlmError> {
-        let base = &self.cfg.ai_base_url;
+    fn endpoint(&self, profile: Profile) -> Endpoint<'_> {
+        match profile {
+            Profile::Chat => Endpoint {
+                model: &self.cfg.chat_model,
+                base_url: &self.cfg.ai_base_url,
+                api_key: &self.cfg.ai_api_key,
+                extra_headers: &self.cfg.ai_extra_headers,
+            },
+            Profile::Memory => Endpoint {
+                model: &self.cfg.memory_model,
+                base_url: &self.cfg.memory_base_url,
+                api_key: &self.cfg.memory_api_key,
+                extra_headers: &self.cfg.memory_extra_headers,
+            },
+        }
+    }
+
+    fn url(base: &str) -> Result<String, LlmError> {
         if base.is_empty() {
             return Err(LlmError::new("尚未配置 AI_BASE_URL", None));
         }
         Ok(if base.ends_with("/chat/completions") {
-            base.clone()
+            base.to_string()
         } else {
             format!("{base}/chat/completions")
         })
@@ -83,10 +114,12 @@ impl LlmClient {
 
     pub async fn chat(
         &self,
-        model: &str,
+        profile: Profile,
         messages: &[Value],
         params: ChatParams,
     ) -> Result<LlmResponse, LlmError> {
+        let endpoint = self.endpoint(profile);
+        let model = endpoint.model;
         if model.is_empty() {
             return Err(LlmError::new("尚未配置模型名称", None));
         }
@@ -103,17 +136,17 @@ impl LlmClient {
         if let Some(format) = &params.response_format {
             payload["response_format"] = format.clone();
         }
-        let url = self.url()?;
+        let url = Self::url(endpoint.base_url)?;
         let started = std::time::Instant::now();
 
         let mut last_error = String::new();
         for attempt in 0..=self.cfg.ai_max_retries {
             let mut request = self.http.post(&url).json(&payload);
-            for (key, value) in &self.cfg.ai_extra_headers {
+            for (key, value) in endpoint.extra_headers {
                 request = request.header(key, value);
             }
-            if !self.cfg.ai_api_key.is_empty() {
-                request = request.bearer_auth(&self.cfg.ai_api_key);
+            if !endpoint.api_key.is_empty() {
+                request = request.bearer_auth(endpoint.api_key);
             }
             match request.send().await {
                 Ok(response) => {

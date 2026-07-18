@@ -109,6 +109,11 @@ pub struct Config {
     pub ai_api_key: String,
     pub memory_model: String,
     pub chat_model: String,
+    /// 记忆模型的独立接入点；为空时回退到 ai_* 共享配置。
+    /// 这样对话模型可用 grok、廉价的记忆模型可用 deepseek 等不同供应商。
+    pub memory_base_url: String,
+    pub memory_api_key: String,
+    pub memory_extra_headers: Vec<(String, String)>,
     pub ai_timeout_seconds: f64,
     pub ai_max_retries: u32,
     pub ai_extra_headers: Vec<(String, String)>,
@@ -196,6 +201,29 @@ impl Config {
         let ai_extra_headers = parse_headers(&env_string("AI_EXTRA_HEADERS_JSON", "{}"))
             .context("AI_EXTRA_HEADERS_JSON 必须是 JSON 对象")?;
 
+        // 记忆模型接入点：未单独设置时回退到共享的 ai_* 配置。
+        let memory_base_url = {
+            let raw = env_string("MEMORY_BASE_URL", "").trim_end_matches('/').to_string();
+            if raw.is_empty() {
+                env_string("AI_BASE_URL", "").trim_end_matches('/').to_string()
+            } else {
+                raw
+            }
+        };
+        let memory_api_key = {
+            let raw = env_string("MEMORY_API_KEY", "");
+            if raw.is_empty() {
+                env_string("AI_API_KEY", "")
+            } else {
+                raw
+            }
+        };
+        let memory_extra_headers = match env::var("MEMORY_EXTRA_HEADERS_JSON") {
+            Ok(value) if !value.trim().is_empty() => parse_headers(&value)
+                .context("MEMORY_EXTRA_HEADERS_JSON 必须是 JSON 对象")?,
+            _ => ai_extra_headers.clone(),
+        };
+
         let embedding_api_style = match env_string("EMBEDDING_API_STYLE", "local").as_str() {
             "local" => EmbeddingStyle::Local,
             "openai" => EmbeddingStyle::OpenAi,
@@ -233,6 +261,9 @@ impl Config {
             ai_api_key: env_string("AI_API_KEY", ""),
             memory_model: env_string("MEMORY_MODEL", ""),
             chat_model: env_string("CHAT_MODEL", ""),
+            memory_base_url,
+            memory_api_key,
+            memory_extra_headers,
             ai_timeout_seconds: env_parse("AI_TIMEOUT_SECONDS", 120.0),
             ai_max_retries: env_parse("AI_MAX_RETRIES", 2),
             ai_extra_headers,
@@ -329,6 +360,7 @@ impl Config {
         #[derive(Serialize)]
         struct Summary<'a> {
             ai_base_url: &'a str,
+            memory_base_url: &'a str,
             memory_model: &'a str,
             chat_model: &'a str,
             embedding_api_style: &'a str,
@@ -341,6 +373,7 @@ impl Config {
         }
         serde_json::to_value(Summary {
             ai_base_url: &self.ai_base_url,
+            memory_base_url: &self.memory_base_url,
             memory_model: &self.memory_model,
             chat_model: &self.chat_model,
             embedding_api_style: match self.embedding_api_style {

@@ -12,7 +12,7 @@ use uuid::Uuid;
 
 use crate::config::Config;
 use crate::embedding::Embedder;
-use crate::llm::{ChatParams, LlmClient, LlmError, TokenUsage};
+use crate::llm::{ChatParams, LlmClient, LlmError, Profile, TokenUsage};
 use crate::mcp::McpManager;
 use crate::shutdown::Pending;
 use crate::store::{ChatTurn, EntityView, MemoryView, NewMemory, Store};
@@ -696,7 +696,7 @@ impl Agent {
         let response = self
             .llm
             .chat(
-                &self.cfg.memory_model,
+                Profile::Memory,
                 &[
                     json!({"role": "system", "content": SUMMARY_PROMPT}),
                     json!({"role": "user", "content": prompt}),
@@ -729,7 +729,7 @@ impl Agent {
         };
         let response = match self
             .llm
-            .chat(&self.cfg.memory_model, &messages, params)
+            .chat(Profile::Memory, &messages, params)
             .await
         {
             Ok(response) => response,
@@ -739,7 +739,7 @@ impl Agent {
             }) => {
                 self.llm
                     .chat(
-                        &self.cfg.memory_model,
+                        Profile::Memory,
                         &messages,
                         ChatParams {
                             temperature: 0.0,
@@ -840,7 +840,7 @@ impl Agent {
                 tools: tools_enabled.then(|| available_tools.clone()),
                 ..Default::default()
             };
-            let response = match self.llm.chat(&self.cfg.chat_model, &messages, params).await {
+            let response = match self.llm.chat(Profile::Chat, &messages, params).await {
                 Ok(response) => response,
                 Err(error) => {
                     if tools_enabled && error.status == Some(400) {
