@@ -179,9 +179,19 @@ impl LlmClient {
         }
         // 思考深度：把当前等级对应的厂商片段深合并进 payload。片段里值为 null 的键会被
         // 删除（用于去掉某些推理模型不接受的字段，如 o 系的 temperature、grok 的 stop）。
-        if let Some(fragment) = endpoint.thinking_map.get(params.think.key()) {
-            deep_merge(&mut payload, fragment);
-        }
+        let think_applied = match endpoint.thinking_map.get(params.think.key()) {
+            Some(fragment) => {
+                deep_merge(&mut payload, fragment);
+                true
+            }
+            None => false,
+        };
+        // 请求了非 off 等级却没配对应片段：思考字段没发出去，会被厂商默认行为静默降级。
+        let think_label = if !think_applied && params.think != Think::Off {
+            format!("{}(未配)", params.think.key())
+        } else {
+            params.think.key().to_string()
+        };
         let url = Self::url(endpoint.base_url)?;
         let started = std::time::Instant::now();
 
@@ -226,7 +236,7 @@ impl LlmClient {
                             String::new()
                         };
                         tracing::info!(
-                            "LLM {model} 完成 耗时{:.1}s{tokens}",
+                            "LLM {model} think={think_label} 完成 耗时{:.1}s{tokens}",
                             started.elapsed().as_secs_f32()
                         );
                         let mut parsed = parse_choice(&data)?;
