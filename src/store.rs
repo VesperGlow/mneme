@@ -1153,17 +1153,11 @@ pub fn cli_list_memories(cfg: &Config, filter: &ListFilter) -> Result<Vec<Memory
         })
     };
 
-    // 只有按用户过滤时才有 ?1 占位符；用 params_from_iter 统一处理 0/1 个参数，
-    // 避免空参数数组的类型推断歧义。
-    let bind: Vec<&dyn rusqlite::ToSql> = filter
-        .user_id
-        .as_ref()
-        .map(|uid| vec![uid as &dyn rusqlite::ToSql])
-        .unwrap_or_default();
-
+    // 只有按用户过滤时才有 ?1 占位符。Option::iter() 产出 0 或 1 个 &String，
+    // 既统一了 0/1 参数、又避免空参数数组的类型推断歧义（&String: ToSql）。
     let mut stmt = conn.prepare(&sql)?;
     let rows: Vec<MemoryListRow> = stmt
-        .query_map(rusqlite::params_from_iter(bind), map_row)?
+        .query_map(rusqlite::params_from_iter(filter.user_id.iter()), map_row)?
         .collect::<std::result::Result<_, _>>()?;
     Ok(rows)
 }
@@ -1204,7 +1198,7 @@ fn resolve_memory_id(conn: &Connection, input: &str, active_only: bool) -> Resul
         .query_map(params![input], |row| row.get(0))?
         .collect::<std::result::Result<_, _>>()?;
     // 完整 id 精确命中：即使它是别的更长 id 的前缀（UUID 不会）也优先。
-    if ids.iter().any(|id| id == input) {
+    if ids.iter().any(|existing| existing.as_str() == input) {
         return Ok(Some(input.to_string()));
     }
     match ids.len() {
@@ -1336,12 +1330,9 @@ pub fn cli_stats(cfg: &Config, user: Option<&str>) -> Result<MemoryStats> {
     } else {
         "SELECT active, level, kind, created_at, user_id FROM memories"
     };
-    let bind: Vec<&dyn rusqlite::ToSql> = user
-        .map(|u| vec![u as &dyn rusqlite::ToSql])
-        .unwrap_or_default();
-
     let mut stmt = conn.prepare(sql)?;
-    let rows = stmt.query_map(rusqlite::params_from_iter(bind), |row| {
+    // Option::iter() 产出 0 或 1 个 &&str（&str: ToSql），对应 SQL 里的 0/1 占位符。
+    let rows = stmt.query_map(rusqlite::params_from_iter(user.iter()), |row| {
         Ok((
             row.get::<_, i64>(0)? != 0,
             row.get::<_, i64>(1)?,
@@ -1367,10 +1358,10 @@ pub fn cli_stats(cfg: &Config, user: Option<&str>) -> Result<MemoryStats> {
             active += 1;
             *level_map.entry(level).or_default() += 1;
             *kind_map.entry(kind).or_default() += 1;
-            if oldest.as_ref().is_none_or(|o| &created_at < o) {
+            if oldest.as_ref().map_or(true, |o| &created_at < o) {
                 oldest = Some(created_at.clone());
             }
-            if newest.as_ref().is_none_or(|n| &created_at > n) {
+            if newest.as_ref().map_or(true, |n| &created_at > n) {
                 newest = Some(created_at);
             }
         }
