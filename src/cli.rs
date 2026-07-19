@@ -87,9 +87,15 @@ fn memory_list(cfg: &Config, args: &[String]) -> Result<()> {
     }
 
     let scope = if filter.include_inactive { "（含已失效）" } else { "" };
+    // 单人库（或已按用户过滤）时不逐行重复用户，只在标题里带一次。
+    let users: std::collections::BTreeSet<&str> = rows.iter().map(|r| r.user_id.as_str()).collect();
+    let per_row_user = filter.user_id.is_none() && users.len() > 1;
     match &filter.user_id {
         Some(uid) => println!("共 {} 条{}，user={uid}：", rows.len(), scope),
-        None => println!("共 {} 条{}：", rows.len(), scope),
+        None if users.len() == 1 => {
+            println!("共 {} 条{}，user={}：", rows.len(), scope, users.iter().next().unwrap())
+        }
+        None => println!("共 {} 条{}（{} 个用户）：", rows.len(), scope, users.len()),
     }
     for row in &rows {
         // active 用 ✓/✗，日期只留到秒，text 放最后免去 CJK 等宽对齐问题。
@@ -100,14 +106,15 @@ fn memory_list(cfg: &Config, args: &[String]) -> Result<()> {
             "{flag} {when}  L{:<2} {:<11} ×{}",
             row.level, row.kind, row.repetitions
         );
-        // 不按用户过滤时附上用户尾号区分；id 打全，供 show/forget 直接复制。
-        if filter.user_id.is_none() {
-            line.push_str(&format!("  [{}]", short_id(&row.user_id)));
+        // 多用户时才附用户尾号区分；id 只显示 8 位前缀（show/forget 认前缀）。
+        if per_row_user {
+            line.push_str(&format!("  [{}]", user_tail(&row.user_id)));
         }
-        line.push_str(&format!("  {}  {}", row.id, text));
+        line.push_str(&format!("  {}  {}", id_head(&row.id), text));
         println!("{line}");
     }
-    println!("\n（show/forget 用上面那串完整 id：mneme memory show <id>）");
+    let example = rows.first().map(|r| id_head(&r.id)).unwrap_or_default();
+    println!("\n（show/forget 用前缀即可，如 mneme memory show {example}）");
     Ok(())
 }
 
@@ -201,12 +208,17 @@ fn truncate(text: &str, max_chars: usize) -> String {
     out
 }
 
-/// 取尾 8 个字符，便于人眼区分而不刷屏。
-fn short_id(value: &str) -> String {
+/// user_id 取尾 8 字符，便于多用户时人眼区分而不刷屏。
+fn user_tail(value: &str) -> String {
     let chars: Vec<char> = value.chars().collect();
     if chars.len() <= 10 {
         value.to_string()
     } else {
         format!("…{}", chars[chars.len() - 8..].iter().collect::<String>())
     }
+}
+
+/// 记忆 id 取前 8 字符（UUID 前缀，个人库唯一性足够）；show/forget 认前缀。
+fn id_head(id: &str) -> String {
+    id.chars().take(8).collect()
 }

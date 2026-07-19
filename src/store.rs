@@ -5,7 +5,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
@@ -1191,12 +1191,40 @@ pub struct MemoryDetail {
     pub text: String,
 }
 
-/// CLI 用：按 id 取单条记忆的完整明细 + 实体。只读打开。找不到返回 None。
+/// show/forget 按 id 前缀解析（像 git 短哈希）。完整 id 精确命中优先；多前缀命中
+/// 报歧义（提示多给几位）；无命中返回 None。active_only 时只在活跃记忆里找。
+fn resolve_memory_id(conn: &Connection, input: &str, active_only: bool) -> Result<Option<String>> {
+    let sql = if active_only {
+        "SELECT id FROM memories WHERE (id = ?1 OR id LIKE ?1 || '%') AND active = 1 LIMIT 20"
+    } else {
+        "SELECT id FROM memories WHERE id = ?1 OR id LIKE ?1 || '%' LIMIT 20"
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let ids: Vec<String> = stmt
+        .query_map(params![input], |row| row.get(0))?
+        .collect::<std::result::Result<_, _>>()?;
+    // 完整 id 精确命中：即使它是别的更长 id 的前缀（UUID 不会）也优先。
+    if ids.iter().any(|id| id == input) {
+        return Ok(Some(input.to_string()));
+    }
+    match ids.len() {
+        0 => Ok(None),
+        1 => Ok(Some(ids.into_iter().next().unwrap())),
+        _ => bail!("id 前缀 {input} 匹配到 {} 条，请多给几位：\n{}", ids.len(), ids.join("\n")),
+    }
+}
+
+/// CLI 用：按 id（或前缀）取单条记忆的完整明细 + 实体。只读打开。找不到返回 None。
 pub fn cli_show_memory(cfg: &Config, id: &str) -> Result<Option<MemoryDetail>> {
     let conn = Connection::open(&cfg.db_path)
         .with_context(|| format!("无法打开数据库 {}", cfg.db_path))?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
     conn.pragma_update(None, "query_only", true)?;
+
+    let full_id = match resolve_memory_id(&conn, id, false)? {
+        Some(full) => full,
+        None => return Ok(None),
+    };
 
     let detail = conn
         .query_row(
@@ -1204,7 +1232,7 @@ pub fn cli_show_memory(cfg: &Config, id: &str) -> Result<Option<MemoryDetail>> {
              access_count, created_at, last_seen_at, last_accessed_at, expires_at, \
              forgotten_at, superseded_by, superseded_at, text \
              FROM memories WHERE id = ?1",
-            params![id],
+            params![full_id],
             |row| {
                 Ok(MemoryDetail {
                     id: row.get(0)?,
@@ -1257,20 +1285,19 @@ pub fn cli_forget_memory(cfg: &Config, id: &str) -> Result<Option<String>> {
         .with_context(|| format!("无法打开数据库 {}", cfg.db_path))?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
 
-    let text: Option<String> = conn
-        .query_row(
-            "SELECT text FROM memories WHERE id = ?1 AND active = 1",
-            params![id],
-            |row| row.get(0),
-        )
-        .optional()?;
-    let Some(text) = text else {
-        return Ok(None);
+    let full_id = match resolve_memory_id(&conn, id, true)? {
+        Some(full) => full,
+        None => return Ok(None),
     };
+    let text: String = conn.query_row(
+        "SELECT text FROM memories WHERE id = ?1",
+        params![full_id],
+        |row| row.get(0),
+    )?;
 
     conn.execute(
         "UPDATE memories SET active = 0, forgotten_at = ?1 WHERE id = ?2",
-        params![now_iso(), id],
+        params![now_iso(), full_id],
     )?;
     Ok(Some(text))
 }

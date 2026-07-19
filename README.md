@@ -165,7 +165,7 @@ podman exec <容器> mneme memory forget <id>          # 软删除一条（activ
 
 > 容器名 `<容器>` 取决于你的 quadlet `ContainerName`（默认部署里是 `mneme`，即 `podman exec mneme mneme memory list`）。
 
-`list`/`show` 只读打开（`query_only`），与运行中的服务共享同一 WAL 库、互不影响；`forget` 是写操作，靠 WAL + busy_timeout 与服务并发安全。`list` 默认文本表格每行为 `✓ 时间 L等级 kind ×重复次数 [用户尾号] 完整id 摘要`，`--json` 输出全字段（含 `id`/时间戳/`expires_at`）。
+`list`/`show` 只读打开（`query_only`），与运行中的服务共享同一 WAL 库、互不影响；`forget` 是写操作，靠 WAL + busy_timeout 与服务并发安全。`list` 默认文本表格每行为 `✓ 时间 L等级 kind ×重复次数 id前缀 摘要`（单用户时用户列省略、只在标题带一次 `user=`，多用户才逐行加 `[尾号]`）。`show`/`forget` 认 id 前缀（像 git 短哈希，如 `memory show 7642e9b1`），多条命中会提示多给几位。`--json` 输出全字段（含完整 `id`/时间戳/`expires_at`）。
 
 ## 对话 API
 
