@@ -7,10 +7,10 @@ ContainerName=mneme
 EnvironmentFile=./mneme.env
 PublishPort=127.0.0.1:8000:8000
 PublishPort=127.0.0.1:9000:9000
-# 卷名刻意仍叫 qq-agent-*：改名会挂到新空卷、丢掉既有 memory.db。
-# 要一并改成 mneme-* 需先在服务器上迁移卷数据（见 README）。
-Volume=qq-agent-data:/data
-Volume=qq-agent-models:/models
+# 从旧的 qq-agent-* 卷迁移数据后再启用（见 README「切到 mneme」一节），
+# 否则会挂到新建的空卷、丢掉既有 memory.db。
+Volume=mneme-data:/data
+Volume=mneme-models:/models
 # embedding 权重约 650MB 常驻，稳态总占用 ~1GB；上限兜底 2GB。
 PodmanArgs=--memory=2g
 AutoUpdate=registry
