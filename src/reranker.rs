@@ -232,18 +232,25 @@ mod local {
                     ort::value::Tensor::from_array(([1usize, len], positions.clone()))
                         .map_err(ort_err)?
                         .into_dyn()
+                } else if n == "use_cache_branch" {
+                    // 合并式（merged）导出的分支开关：单次 prefill 不走 KV 缓存分支，喂 false。
+                    ort::value::Tensor::from_array(([1usize], vec![false]))
+                        .map_err(ort_err)?
+                        .into_dyn()
                 } else if n.starts_with("past_key_values") || n.starts_with("past_key")
                     || n.starts_with("past_value")
                 {
                     // 因果 LM 的 ONNX 要 past_key_values 输入；单次（唯一）前向用空 KV
                     //（序列长度 0）= 对整段 prompt 直接 prefill，这正是 transformers.js 的做法。
+                    // 必须用 Tensor::new（按 shape 分配）建这个空张量——from_array 从原始数据
+                    // 建张量会拒绝含 0 的维度（ort 的 "dimensions must be >= 1"）。
                     if self.kv_heads == 0 || self.head_dim == 0 {
                         bail!("重排模型需要 KV cache 输入，但 config.json 缺 num_key_value_heads/head_dim");
                     }
-                    ort::value::Tensor::from_array((
+                    ort::value::Tensor::<f32>::new(
+                        session.allocator(),
                         [1usize, self.kv_heads, 0usize, self.head_dim],
-                        Vec::<f32>::new(),
-                    ))
+                    )
                     .map_err(ort_err)?
                     .into_dyn()
                 } else {
