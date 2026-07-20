@@ -41,6 +41,8 @@ pub fn clean_relation(value: &str) -> String {
     }
 }
 
+// f16 编码只剩迁移的单测在用（校验 blob_to_vec 依赖的 f16 布局）；保留但允许未使用。
+#[allow(dead_code)]
 pub fn vec_to_blob(vector: &[f32]) -> Vec<u8> {
     let mut blob = Vec::with_capacity(vector.len() * 2);
     for value in vector {
@@ -97,15 +99,15 @@ fn migrate_embeddings_to_vec0(conn: &mut Connection, dim: usize) -> Result<()> {
     }
     let tx = conn.transaction()?;
     tx.execute("DELETE FROM vec_memories", [])?;
-    let rows: Vec<(i64, Vec<u8>, String, String, String)> = {
-        let mut stmt = tx.prepare(
-            "SELECT rowid, embedding, user_id, subject, kind FROM memories WHERE active = 1",
-        )?;
-        stmt.query_map([], |row| {
+    let mut stmt = tx.prepare(
+        "SELECT rowid, embedding, user_id, subject, kind FROM memories WHERE active = 1",
+    )?;
+    let rows: Vec<(i64, Vec<u8>, String, String, String)> = stmt
+        .query_map([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
         })?
-        .collect::<std::result::Result<_, _>>()?
-    };
+        .collect::<std::result::Result<_, _>>()?;
+    drop(stmt);
     let mut migrated = 0usize;
     for (rowid, blob, user_id, subject, kind) in rows {
         let vector = blob_to_vec(&blob);
