@@ -1255,7 +1255,7 @@ pub fn cli_show_memory(cfg: &Config, id: &str) -> Result<Option<MemoryDetail>> {
 /// 与运行中的服务并发安全）。
 pub fn cli_forget_memory(cfg: &Config, id: &str, purge: bool) -> Result<Option<String>> {
     register_vec_extension();
-    let conn = Connection::open(&cfg.db_path)
+    let mut conn = Connection::open(&cfg.db_path)
         .with_context(|| format!("无法打开数据库 {}", cfg.db_path))?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
     // 硬删要靠 FK 级联清掉 memory_entities/memory_links。
@@ -1273,19 +1273,22 @@ pub fn cli_forget_memory(cfg: &Config, id: &str, purge: bool) -> Result<Option<S
         |row| row.get(0),
     )?;
 
+    // memories 与 vec0 的改动放同一事务，避免中途崩溃留下"半删"的不一致状态。
+    let tx = conn.transaction()?;
     // 先删向量索引（趁 memories 行还在、rowid 可查；硬删后 rowid 会被复用污染新记忆）。
-    conn.execute(
+    tx.execute(
         "DELETE FROM vec_memories WHERE rowid = (SELECT rowid FROM memories WHERE id = ?1)",
         params![full_id],
     )?;
     if purge {
-        conn.execute("DELETE FROM memories WHERE id = ?1", params![full_id])?;
+        tx.execute("DELETE FROM memories WHERE id = ?1", params![full_id])?;
     } else {
-        conn.execute(
+        tx.execute(
             "UPDATE memories SET active = 0, forgotten_at = ?1 WHERE id = ?2",
             params![now_iso(), full_id],
         )?;
     }
+    tx.commit()?;
     Ok(Some(text))
 }
 
@@ -1373,25 +1376,28 @@ pub fn cli_stats(cfg: &Config, user: Option<&str>) -> Result<MemoryStats> {
 /// 返回受影响条数。危险操作，调用方（cli）负责 --yes 确认。
 pub fn cli_forget_all(cfg: &Config, purge: bool) -> Result<usize> {
     register_vec_extension();
-    let conn = Connection::open(&cfg.db_path)
+    let mut conn = Connection::open(&cfg.db_path)
         .with_context(|| format!("无法打开数据库 {}", cfg.db_path))?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     ensure_vec_table(&conn, cfg.embedding_dimensions)?;
 
+    // memories 与 vec0 同一事务，避免半删不一致。
+    let tx = conn.transaction()?;
     let affected = if purge {
         // 清空向量索引 + 硬删全部记忆（WHERE 1 = ?1 恒真，避免空参数类型推断歧义）。
-        conn.execute("DELETE FROM vec_memories", [])?;
-        conn.execute("DELETE FROM memories WHERE 1 = ?1", params![1_i64])?
+        tx.execute("DELETE FROM vec_memories", [])?;
+        tx.execute("DELETE FROM memories WHERE 1 = ?1", params![1_i64])?
     } else {
         // 软删全部活跃记忆 → 全部移出向量索引（vec0 只存活跃记忆）。
-        let n = conn.execute(
+        let n = tx.execute(
             "UPDATE memories SET active = 0, forgotten_at = ?1 WHERE active = 1",
             params![now_iso()],
         )?;
-        conn.execute("DELETE FROM vec_memories", [])?;
+        tx.execute("DELETE FROM vec_memories", [])?;
         n
     };
+    tx.commit()?;
     Ok(affected)
 }
 
