@@ -2,7 +2,7 @@
 
 [![Build and test](https://github.com/VesperGlow/mneme/actions/workflows/build.yml/badge.svg)](https://github.com/VesperGlow/mneme/actions/workflows/build.yml)
 
-这是一个可直接容器化部署的个人情感陪伴助手：**一个 Rust 单二进制**（axum + rusqlite + ort）内完成一切——进程内跑 uint8 量化的 `Qwen3-Embedding-0.6B` 与 `Qwen3-Reranker-0.6B`（ONNX）做向量化与二段精排，SQLite 单文件保存对话、长期记忆与情绪时间线；记忆**永久留存**，便宜模型判断哪些值得记并抽取情绪，主模型负责对话与工具调用；QQ 桥接按官方开放平台协议与私聊（C2C）通信。填好 `.env` 一条命令即可启动。
+这是一个可直接容器化部署的个人情感陪伴助手：**一个 Rust 单二进制**（axum + rusqlite + sqlite-vec + ort）内完成一切——进程内跑 uint8 量化的 `Qwen3-Embedding-0.6B` 与 `Qwen3-Reranker-0.6B`（ONNX）做向量化与二段精排，SQLite 单文件保存对话、长期记忆与情绪时间线；记忆**永久留存**，便宜模型判断哪些值得记并抽取情绪，主模型负责对话与工具调用；QQ 桥接按官方开放平台协议与私聊（C2C）通信。填好 `.env` 一条命令即可启动。
 
 ```mermaid
 flowchart LR
@@ -151,7 +151,7 @@ AI_THINKING_MAP_JSON='{"low":{"reasoning_effort":"low"},"high":{"reasoning_effor
 
 某个等级在映射里没有对应片段时，请求体就不带任何思考字段，由厂商用自己的默认值决定。`DeepSeek-reasoner` 那种「靠换模型名开思考、无参数」的旧法不属于这一维，用 `MEMORY_MODEL`/`CHAT_MODEL` 直接选型即可。`GET /v1/config` 会回显当前 `chat_think` 与已配置的等级列表。
 
-已入库的向量按写入时的维度保存。要改变 `EMBEDDING_DIMENSIONS` 或换 embedding 模型，需要重新生成全部记忆向量；全新测试环境也可以用 `docker compose down -v` 清空数据后重建（这会永久删除全部记忆数据和模型缓存）。
+向量存在 sqlite-vec 的 vec0 表里，维度在建表时固定。要改变 `EMBEDDING_DIMENSIONS` 或换 embedding 模型，需要重建 `vec_memories` 表并重新生成全部向量；全新测试环境也可以用 `docker compose down -v` 清空数据后重建（这会永久删除全部记忆数据和模型缓存）。
 
 ### 查看已存记忆（CLI 子命令）
 
@@ -276,6 +276,8 @@ SQLite 数据库和模型缓存分别保存在 Docker volume `app_data`、`model
 ```sh
 docker compose stop
 ```
+
+> **首次启动会做一次向量迁移**：服务启动时把记忆向量整理进 `vec_memories`（vec0）表；从更早的版本（向量曾存在 `memories.embedding` f16 BLOB 列）升级时，首启会回填 vec0 后**移除该列，不可逆**。所以升级前先备份：`cp memory.db memory.db.bak`。首启日志出现 `向量已迁移到 vec0：N 条` 即迁移成功（全新库无此列，直接跳过）。
 
 查看错误：
 
