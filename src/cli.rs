@@ -148,8 +148,8 @@ fn memory_show(cfg: &Config, args: &[String]) -> Result<()> {
         println!("最近检索   {v}");
     }
     match &m.expires_at {
-        Some(v) => println!("过期       {v}"),
-        None => println!("过期       永不（L10 或未设）"),
+        Some(v) => println!("过期       {v}（旧数据遗留，追加式下已不生效）"),
+        None => println!("过期       永不（追加式存储，不按时间遗忘）"),
     }
     if let Some(v) = &m.forgotten_at {
         println!("遗忘于     {v}");

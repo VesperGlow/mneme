@@ -1,12 +1,13 @@
 //! SQLite 存储：schema / float16 向量 BLOB / ISO 时间戳保持稳定，现有 memory.db 无需迁移。
-//! 向量检索是 O(n) 暴力余弦 + 新近度/等级/关键词加权。
+//! 追加式（append-only）：记忆只新增，不因时间过期；软删除/取代仍保留可审计留痕。
+//! 检索是 O(n) 暴力余弦一段召回，二段精排（rerank）在 agent 层完成。
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context, Result};
-use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use chrono::{Duration, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -16,12 +17,6 @@ use crate::config::Config;
 
 pub fn now_iso() -> String {
     Utc::now().to_rfc3339_opts(SecondsFormat::Micros, false)
-}
-
-fn parse_iso(value: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(value)
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now())
 }
 
 pub fn clean_relation(value: &str) -> String {
@@ -43,58 +38,6 @@ pub fn clean_relation(value: &str) -> String {
     } else {
         truncated
     }
-}
-
-/// 按记忆等级计算过期时间。等级 10 永久（None）；1..9 按 ttl_days 梯度。
-/// 记忆被再次提及时以当下时间重算，相当于续期。
-pub fn level_expiry(level: i64, ttl_days: &[f64], now: DateTime<Utc>) -> Option<String> {
-    if level >= 10 {
-        return None;
-    }
-    let index = (level.clamp(1, ttl_days.len() as i64) - 1) as usize;
-    let seconds = (ttl_days[index] * 86400.0) as i64;
-    Some((now + Duration::seconds(seconds)).to_rfc3339_opts(SecondsFormat::Micros, false))
-}
-
-/// 从查询里取值得做字面匹配的词：连续 CJK 段（>=2 字）或 3+ 字符的字母数字词。
-pub fn keyword_tokens(query: &str, max_tokens: usize) -> Vec<String> {
-    let mut tokens: Vec<String> = Vec::new();
-    let mut current = String::new();
-    let mut current_cjk = false;
-    let is_cjk = |c: char| ('\u{4e00}'..='\u{9fff}').contains(&c);
-    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
-    let mut flush = |buf: &mut String, cjk: bool, tokens: &mut Vec<String>| {
-        let min_len = if cjk { 2 } else { 3 };
-        if buf.chars().count() >= min_len && !tokens.contains(buf) {
-            tokens.push(buf.clone());
-        }
-        buf.clear();
-    };
-    for c in query.chars() {
-        if is_cjk(c) {
-            if !current.is_empty() && !current_cjk {
-                flush(&mut current, false, &mut tokens);
-            }
-            current_cjk = true;
-            current.push(c);
-        } else if is_word(c) {
-            if !current.is_empty() && current_cjk {
-                flush(&mut current, true, &mut tokens);
-            }
-            current_cjk = false;
-            current.push(c);
-        } else if !current.is_empty() {
-            flush(&mut current, current_cjk, &mut tokens);
-        }
-        if tokens.len() >= max_tokens {
-            return tokens;
-        }
-    }
-    if !current.is_empty() {
-        flush(&mut current, current_cjk, &mut tokens);
-    }
-    tokens.truncate(max_tokens);
-    tokens
 }
 
 pub fn vec_to_blob(vector: &[f32]) -> Vec<u8> {
@@ -193,9 +136,6 @@ CREATE TABLE IF NOT EXISTS moods (
 CREATE INDEX IF NOT EXISTS idx_moods_user ON moods(user_id, created_at);
 "#;
 
-/// 过期记忆先从检索里消失，再宽限这么多天才物理删除，留出反悔窗口。
-const PURGE_GRACE_DAYS: i64 = 7;
-
 /// SQLite 连接池大小。WAL 下多连接可并发读、写自动串行，个人规模 4 条足矣。
 const DB_POOL_SIZE: usize = 4;
 
@@ -287,10 +227,10 @@ impl Store {
             conn.pragma_update(None, "busy_timeout", 5000)?;
             // 页缓存默认约 2MB；个人库读写量小，每连接 512KB 足够（负值单位为 KiB）。
             conn.pragma_update(None, "cache_size", -512)?;
-            // schema 建表与开机清理只需在一条连接上做一次（CREATE IF NOT EXISTS 幂等）。
+            // schema 建表只需在一条连接上做一次（CREATE IF NOT EXISTS 幂等）。
+            // 追加式存储：不再有开机清理过期记忆这一步。
             if index == 0 {
                 conn.execute_batch(SCHEMA)?;
-                purge_expired(&conn)?;
             }
             pool.push(Mutex::new(conn));
         }
@@ -518,94 +458,55 @@ impl Store {
 
     // ---------- 长期记忆 ----------
 
+    /// 一段召回：对该用户全部活跃记忆做暴力余弦，按相似度取 top-`limit` 候选。
+    /// 不再叠加新近度/等级/关键词加权——最终排序质量交给 agent 层的二段重排（rerank）。
+    /// `limit` 是候选宽度：启用重排时通常传 `rerank_candidates`，未启用时传最终条数。
     pub async fn search_memories(
         &self,
         user_id: String,
         embedding: Vec<f32>,
         limit: Option<usize>,
         min_score: Option<f32>,
-        temporal_ranking: bool,
-        query_text: String,
     ) -> Result<Vec<MemoryView>> {
         self.run(move |conn, cfg| {
             let limit = limit.unwrap_or(cfg.memory_search_limit);
             let min_score = min_score.unwrap_or(cfg.memory_min_score);
             let now = now_iso();
-            let now_dt = parse_iso(&now);
-            let tokens = if query_text.is_empty() {
-                Vec::new()
-            } else {
-                keyword_tokens(&query_text, 8)
-            };
 
-            struct Candidate {
-                rowdata: MemoryRow,
-                similarity: f32,
-                final_score: f32,
-            }
+            // 追加式：不再按 expires_at 过滤，活跃记忆全部参与召回。
             let mut stmt = conn.prepare(&format!(
-                "SELECT {MEMORY_COLUMNS} FROM memories WHERE user_id = ?1 AND active = 1 \n                 AND (expires_at IS NULL OR expires_at > ?2)"
+                "SELECT {MEMORY_COLUMNS} FROM memories WHERE user_id = ?1 AND active = 1"
             ))?;
             let rows: Vec<MemoryRow> = stmt
-                .query_map(params![user_id, now], MemoryRow::from_row)?
+                .query_map(params![user_id], MemoryRow::from_row)?
                 .collect::<std::result::Result<_, _>>()?;
             drop(stmt);
 
-            let recency_weight = if temporal_ranking { cfg.memory_recency_weight } else { 0.0 };
-            let level_weight = if temporal_ranking { cfg.memory_importance_weight } else { 0.0 };
-            let keyword_weight = if temporal_ranking { cfg.memory_keyword_weight } else { 0.0 };
-
-            let mut scored: Vec<Candidate> = Vec::new();
+            let mut scored: Vec<(MemoryRow, f32)> = Vec::new();
             for rowdata in rows {
-                // 向量在入库前已 L2 归一化，点积即余弦相似度。
-                let vector = blob_to_vec(&rowdata.embedding);
-                let similarity = dot(&vector, &embedding);
-                if similarity < min_score {
-                    continue;
+                // 向量入库前已 L2 归一化，点积即余弦相似度。
+                let similarity = dot(&blob_to_vec(&rowdata.embedding), &embedding);
+                if similarity >= min_score {
+                    scored.push((rowdata, similarity));
                 }
-                let mut final_score = similarity * cfg.memory_similarity_weight;
-                if recency_weight > 0.0 {
-                    let age_days = (now_dt - parse_iso(&rowdata.last_seen_at))
-                        .num_seconds()
-                        .max(0) as f32
-                        / 86400.0;
-                    final_score +=
-                        recency_weight / (1.0 + age_days / cfg.memory_recency_halflife_days);
-                }
-                if level_weight > 0.0 {
-                    final_score += level_weight * (rowdata.level as f32 / 10.0);
-                }
-                if keyword_weight > 0.0 && tokens.iter().any(|t| rowdata.text.contains(t.as_str()))
-                {
-                    final_score += keyword_weight;
-                }
-                scored.push(Candidate {
-                    rowdata,
-                    similarity,
-                    final_score,
-                });
             }
-            scored.sort_by(|a, b| {
-                b.final_score
-                    .partial_cmp(&a.final_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+            scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             scored.truncate(limit);
 
             let tx = conn.transaction()?;
-            for candidate in &scored {
+            for (rowdata, _) in &scored {
                 tx.execute(
                     "UPDATE memories SET access_count = access_count + 1, last_accessed_at = ?1 \n                     WHERE id = ?2",
-                    params![now, candidate.rowdata.id],
+                    params![now, rowdata.id],
                 )?;
             }
             tx.commit()?;
 
             scored
                 .into_iter()
-                .map(|c| {
-                    let mut view = memory_view_from_row(conn, &c.rowdata)?;
-                    view.score = Some((c.similarity * 1e6).round() / 1e6);
+                .map(|(rowdata, similarity)| {
+                    let mut view = memory_view_from_row(conn, &rowdata)?;
+                    view.score = Some((similarity * 1e6).round() / 1e6);
                     Ok(view)
                 })
                 .collect()
@@ -957,23 +858,11 @@ fn load_memory_row(conn: &Connection, id: &str) -> Result<MemoryRow> {
     )?)
 }
 
-fn purge_expired(conn: &Connection) -> Result<()> {
-    let deadline = (Utc::now() - Duration::days(PURGE_GRACE_DAYS))
-        .to_rfc3339_opts(SecondsFormat::Micros, false);
-    let deleted = conn.execute(
-        "DELETE FROM memories WHERE expires_at IS NOT NULL AND expires_at < ?1 \n         AND superseded_by IS NULL",
-        params![deadline],
-    )?;
-    if deleted > 0 {
-        tracing::info!("已清理 {deleted} 条过期记忆");
-    }
-    Ok(())
-}
-
-/// 同一记忆再次出现：续期、升级（取更高等级）、计数。
+/// 同一记忆再次出现：更新最近提及时间、取更高的重要度等级、计数。
+/// 追加式下不再有过期续期这回事，只维护 last_seen_at / repetitions / level。
 fn touch_memory(
     conn: &Connection,
-    cfg: &Config,
+    _cfg: &Config,
     id: &str,
     old_level: i64,
     level: i64,
@@ -981,13 +870,8 @@ fn touch_memory(
 ) -> Result<MemoryView> {
     let new_level = old_level.max(level);
     conn.execute(
-        "UPDATE memories SET last_seen_at = ?1, repetitions = repetitions + 1, \n         level = ?2, expires_at = ?3 WHERE id = ?4",
-        params![
-            now,
-            new_level,
-            level_expiry(new_level, &cfg.memory_level_ttl_days, parse_iso(now)),
-            id
-        ],
+        "UPDATE memories SET last_seen_at = ?1, repetitions = repetitions + 1, \n         level = ?2 WHERE id = ?3",
+        params![now, new_level, id],
     )?;
     let row = load_memory_row(conn, id)?;
     let mut view = memory_view_from_row(conn, &row)?;
@@ -1001,8 +885,6 @@ fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Re
     let text = new.text.trim().to_string();
     let fingerprint = hex::encode(Sha256::digest(text.to_lowercase().as_bytes()));
     let now = now_iso();
-
-    purge_expired(conn)?;
 
     // 去重按主体隔离：同样文本但主体不同（关于用户 vs 关于助手）不应合并。
     let existing: Option<(String, i64)> = conn
@@ -1020,10 +902,10 @@ fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Re
     // 避免把“喜欢 X”和“不喜欢 X”误合并。
     let candidates: Vec<(String, i64, Vec<u8>)> = {
         let mut stmt = conn.prepare(
-            "SELECT id, level, embedding FROM memories WHERE user_id = ?1 AND active = 1 \n             AND subject = ?2 AND kind = ?3 AND (expires_at IS NULL OR expires_at > ?4)",
+            "SELECT id, level, embedding FROM memories WHERE user_id = ?1 AND active = 1 \n             AND subject = ?2 AND kind = ?3",
         )?;
         let rows = stmt
-            .query_map(params![new.user_id, subject, new.kind, now], |row| {
+            .query_map(params![new.user_id, subject, new.kind], |row| {
                 Ok((row.get(0)?, row.get(1)?, row.get(2)?))
             })?
             .collect::<std::result::Result<_, _>>()?;
@@ -1054,8 +936,9 @@ fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Re
         "INSERT OR IGNORE INTO users (id, created_at) VALUES (?1, ?2)",
         params![new.user_id, now],
     )?;
+    // 追加式：不写 expires_at（列保留兼容旧库，新记忆恒为 NULL = 永不过期）。
     tx.execute(
-        "INSERT INTO memories (id, user_id, text, kind, level, subject, \n         embedding, fingerprint, source, created_at, last_seen_at, expires_at) \n         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10, ?11)",
+        "INSERT INTO memories (id, user_id, text, kind, level, subject, \n         embedding, fingerprint, source, created_at, last_seen_at) \n         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
         params![
             memory_id,
             new.user_id,
@@ -1067,7 +950,6 @@ fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Re
             fingerprint,
             new.source,
             now,
-            level_expiry(level, &cfg.memory_level_ttl_days, parse_iso(&now)),
         ],
     )?;
     for (name, entity_type, key) in &safe_entities {
@@ -1439,28 +1321,6 @@ mod tests {
     }
 
     #[test]
-    fn level_expiry_gradient() {
-        let ttls = [2.0, 4.0, 7.0, 14.0, 30.0, 60.0, 120.0, 240.0, 365.0];
-        let now = parse_iso("2026-07-16T00:00:00+00:00");
-        assert!(level_expiry(10, &ttls, now).is_none());
-        assert_eq!(
-            level_expiry(1, &ttls, now).unwrap(),
-            "2026-07-18T00:00:00.000000+00:00"
-        );
-        assert_eq!(
-            level_expiry(9, &ttls, now).unwrap(),
-            "2027-07-16T00:00:00.000000+00:00"
-        );
-    }
-
-    #[test]
-    fn keyword_tokens_mixed_language() {
-        let tokens = keyword_tokens("帮我看看 suzuka 项目的构建，还有猫粮的事", 8);
-        assert!(tokens.iter().any(|t| t == "suzuka"));
-        assert!(tokens.iter().any(|t| t.contains("猫粮")));
-    }
-
-    #[test]
     fn blob_roundtrip_matches_python_f16_layout() {
         let vector = vec![0.5f32, -0.25, 1.0, 0.0];
         let blob = vec_to_blob(&vector);
@@ -1509,20 +1369,13 @@ mod tests {
             .await
             .unwrap();
         let results = store
-            .search_memories(
-                "u1".into(),
-                unit(1.0, 0.2, 0.0, 0.0),
-                None,
-                None,
-                true,
-                "猫怎么样了".into(),
-            )
+            .search_memories("u1".into(), unit(1.0, 0.2, 0.0, 0.0), None, None)
             .await
             .unwrap();
         assert!(results[0].text.starts_with("用户养了一只"));
         assert!(results[0].score.unwrap() > 0.9);
         let other = store
-            .search_memories("u2".into(), unit(1.0, 0.0, 0.0, 0.0), None, None, true, String::new())
+            .search_memories("u2".into(), unit(1.0, 0.0, 0.0, 0.0), None, None)
             .await
             .unwrap();
         assert!(other.is_empty());
@@ -1575,7 +1428,7 @@ mod tests {
             .unwrap();
         assert_eq!(new.superseded, Some(true));
         let texts: Vec<String> = store
-            .search_memories("u1".into(), unit(1.0, 0.0, 0.0, 0.0), None, None, true, String::new())
+            .search_memories("u1".into(), unit(1.0, 0.0, 0.0, 0.0), None, None)
             .await
             .unwrap()
             .into_iter()

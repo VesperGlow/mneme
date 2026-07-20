@@ -239,26 +239,10 @@ async fn search_memories(
 ) -> Result<Json<Value>, ApiError> {
     require_api_key(&state, &headers)?;
     validate_len("q", &query.q, 1, 50_000)?;
-    let vector = state
-        .agent
-        .embedder()
-        .embed(&[query.q.clone()], true)
-        .await
-        .map_err(ApiError::internal)?
-        .into_iter()
-        .next()
-        .ok_or_else(|| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "查询向量为空"))?;
+    // 走 agent 的两段式检索（余弦召回 + rerank 精排），与对话内检索一致。
     let items = state
         .agent
-        .store()
-        .search_memories(
-            query.user_id,
-            vector,
-            Some(query.limit.clamp(1, 50)),
-            None,
-            true,
-            query.q,
-        )
+        .retrieve(&query.user_id, &query.q, Some(query.limit.clamp(1, 50)))
         .await
         .map_err(ApiError::internal)?;
     Ok(Json(serde_json::to_value(items).map_err(|e| ApiError::internal(e.into()))?))

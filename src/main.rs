@@ -1,4 +1,4 @@
-//! Mneme：单进程二进制 —— HTTP API + 进程内 embedding + SQLite 分级记忆 + QQ 桥接。
+//! Mneme：单进程二进制 —— HTTP API + 进程内 embedding/rerank + SQLite 长期记忆 + QQ 桥接。
 
 mod agent;
 mod api;
@@ -10,6 +10,7 @@ mod image;
 mod llm;
 mod mcp;
 mod qq;
+mod reranker;
 mod shutdown;
 mod store;
 
@@ -47,6 +48,7 @@ async fn main() -> Result<()> {
 
     let store = store::Store::open(cfg.clone())?;
     let embedder = Arc::new(embedding::Embedder::new(cfg.clone())?);
+    let reranker = Arc::new(reranker::Reranker::new(cfg.clone()));
     let llm = Arc::new(llm::LlmClient::new(cfg.clone())?);
     let mut mcp = mcp::McpManager::new(cfg.clone())?;
     mcp.start().await?;
@@ -59,6 +61,7 @@ async fn main() -> Result<()> {
         cfg.clone(),
         store.clone(),
         embedder.clone(),
+        reranker.clone(),
         llm,
         Arc::new(mcp),
         fetcher,
@@ -72,6 +75,14 @@ async fn main() -> Result<()> {
             if let Err(error) = embedder.warmup().await {
                 tracing::warn!("Embedding 预热失败：{error:#}");
             }
+        });
+    }
+
+    // 预热重排模型（可选；下载/加载失败只告警，检索会回退到纯余弦）。
+    if reranker.enabled() {
+        let reranker = reranker.clone();
+        tokio::spawn(async move {
+            reranker.warmup().await;
         });
     }
 

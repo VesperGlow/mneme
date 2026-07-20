@@ -155,22 +155,29 @@ pub struct Config {
     pub embedding_output_max: f32,
     pub hf_token: String,
 
+    /// 二段精排前，一段余弦召回返回给上层的最终条数上限。
     pub memory_search_limit: usize,
     pub memory_min_score: f32,
     pub memory_history_messages: i64,
     pub memory_duplicate_threshold: f32,
     pub memory_judge_skip_trivial: bool,
-    pub memory_level_ttl_days: Vec<f64>,
+
+    /// 重排（rerank）：本地 ONNX 交叉编码器给 (query, 候选) 联合打分做二段精排。
+    /// 关闭、模型加载失败或推理出错时，自动回退到一段余弦顺序，服务不受影响。
+    pub rerank_enabled: bool,
+    pub rerank_model: String,
+    /// 从仓库多个 onnx 变体里挑一个的偏好子串（如 "quantized"/"q4"/"fp16"）；
+    /// onnx-community 这类仓库把多份量化权重放在 onnx/ 子目录，必须挑一个而不是全下。
+    pub rerank_onnx_file: String,
+    /// 一段余弦召回的候选宽度：喂给重排器的最多条数（再由重排精排到 memory_search_limit）。
+    pub rerank_candidates: usize,
+    pub rerank_context_size: usize,
+    pub rerank_threads: usize,
+    pub rerank_instruction: String,
 
     pub conversation_summary_enabled: bool,
     pub conversation_summary_batch: usize,
     pub conversation_summary_max_chars: usize,
-
-    pub memory_similarity_weight: f32,
-    pub memory_recency_weight: f32,
-    pub memory_importance_weight: f32,
-    pub memory_keyword_weight: f32,
-    pub memory_recency_halflife_days: f32,
 
     /// 图片理解：把 QQ 图片附件 / API images 参数以 image_url 段传给对话模型（模型须支持视觉）。
     pub chat_image_enabled: bool,
@@ -262,16 +269,6 @@ impl Config {
             other => bail!("QQ_EVENT_MODE 必须是 webhook 或 websocket，当前是 {other}"),
         };
 
-        let ttl_raw = env_string("MEMORY_LEVEL_TTL_DAYS", "2,4,7,14,30,60,120,240,365");
-        let memory_level_ttl_days: Vec<f64> = ttl_raw
-            .split(',')
-            .map(|part| part.trim().parse::<f64>())
-            .collect::<std::result::Result<_, _>>()
-            .context("MEMORY_LEVEL_TTL_DAYS 必须是逗号分隔的数字")?;
-        if memory_level_ttl_days.len() != 9 || memory_level_ttl_days.iter().any(|v| *v <= 0.0) {
-            bail!("MEMORY_LEVEL_TTL_DAYS 需要恰好 9 个正数（等级 1..9）");
-        }
-
         let mut qq_webhook_path = env_string("QQ_WEBHOOK_PATH", "/qqbot");
         if !qq_webhook_path.starts_with('/') {
             qq_webhook_path.insert(0, '/');
@@ -338,7 +335,17 @@ impl Config {
             memory_history_messages: clamp(env_parse("MEMORY_HISTORY_MESSAGES", 16), 0, 100),
             memory_duplicate_threshold: env_parse("MEMORY_DUPLICATE_THRESHOLD", 0.995),
             memory_judge_skip_trivial: env_bool("MEMORY_JUDGE_SKIP_TRIVIAL", true),
-            memory_level_ttl_days,
+
+            rerank_enabled: env_bool("RERANK_ENABLED", true),
+            rerank_model: env_string("RERANK_MODEL", "onnx-community/Qwen3-Reranker-0.6B-ONNX"),
+            rerank_onnx_file: env_string("RERANK_ONNX_FILE", "quantized"),
+            rerank_candidates: clamp(env_parse("RERANK_CANDIDATES", 50), 1, 500),
+            rerank_context_size: clamp(env_parse("RERANK_CONTEXT_SIZE", 512), 64, 32768),
+            rerank_threads: clamp(env_parse("RERANK_THREADS", 4), 1, 32),
+            rerank_instruction: env_string(
+                "RERANK_INSTRUCTION",
+                "Given the user's message, judge whether the memory is useful for personalizing the reply",
+            ),
 
             conversation_summary_enabled: env_bool("CONVERSATION_SUMMARY_ENABLED", true),
             conversation_summary_batch: clamp(env_parse("CONVERSATION_SUMMARY_BATCH", 10), 2, 100),
@@ -347,12 +354,6 @@ impl Config {
                 100,
                 8000,
             ),
-
-            memory_similarity_weight: env_parse("MEMORY_SIMILARITY_WEIGHT", 1.0),
-            memory_recency_weight: env_parse("MEMORY_RECENCY_WEIGHT", 0.15),
-            memory_importance_weight: env_parse("MEMORY_IMPORTANCE_WEIGHT", 0.10),
-            memory_keyword_weight: env_parse("MEMORY_KEYWORD_WEIGHT", 0.08),
-            memory_recency_halflife_days: env_parse("MEMORY_RECENCY_HALFLIFE_DAYS", 30.0),
 
             chat_image_enabled: env_bool("CHAT_IMAGE_ENABLED", true),
             chat_image_max_count: clamp(env_parse("CHAT_IMAGE_MAX_COUNT", 3), 1, 10),
@@ -403,7 +404,8 @@ impl Config {
             embedding_dimensions: usize,
             embedding_context_size: usize,
             db_path: &'a str,
-            memory_level_ttl_days: &'a [f64],
+            rerank_enabled: bool,
+            rerank_model: &'a str,
             mcp_servers: Vec<&'a str>,
         }
         serde_json::to_value(Summary {
@@ -421,7 +423,8 @@ impl Config {
             embedding_dimensions: self.embedding_dimensions,
             embedding_context_size: self.embedding_context_size,
             db_path: &self.db_path,
-            memory_level_ttl_days: &self.memory_level_ttl_days,
+            rerank_enabled: self.rerank_enabled,
+            rerank_model: &self.rerank_model,
             mcp_servers: self.mcp_servers.iter().map(|s| s.name.as_str()).collect(),
         })
         .expect("safe summary 序列化不应失败")

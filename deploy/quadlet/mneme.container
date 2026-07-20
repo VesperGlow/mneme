@@ -11,14 +11,15 @@ PublishPort=127.0.0.1:9000:9000
 # 否则会挂到新建的空卷、丢掉既有 memory.db。
 Volume=mneme-data:/data
 Volume=mneme-models:/models
-# embedding 权重约 650MB 常驻，稳态总占用 ~1GB；上限兜底 2GB。
+# embedding + reranker 两个模型各约 650MB，合计常驻约 1.3GB、稳态往 1.5GB 走；上限兜底 2GB
+#（偏紧：内存不足可 RERANK_ENABLED=false 关重排，或调大 --memory）。
 PodmanArgs=--memory=2g
 AutoUpdate=registry
 HealthCmd=curl -fsS http://127.0.0.1:8000/health/live >/dev/null && curl -fsS http://127.0.0.1:9000/healthz >/dev/null
 HealthInterval=15s
 HealthRetries=5
-# 首次启动要下载 embedding 模型（约 640MB），给足冷启动时间。
-HealthStartPeriod=300s
+# 首次启动要下载 embedding + reranker 两个模型（各约 640MB），给足冷启动时间。
+HealthStartPeriod=420s
 HealthTimeout=5s
 HealthOnFailure=kill
 Notify=healthy

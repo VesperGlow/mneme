@@ -1,7 +1,7 @@
 name: memory-graph-agent
 
-# 单容器单进程部署：Rust 二进制内含 HTTP API、进程内 ONNX embedding、
-# SQLite 分级记忆与 QQ 桥接，只需填好 .env 即可启动。
+# 单容器单进程部署：Rust 二进制内含 HTTP API、进程内 ONNX embedding 与 rerank、
+# SQLite 长期记忆与 QQ 桥接，只需填好 .env 即可启动。
 services:
   agent:
     image: ${APP_IMAGE:-ghcr.io/vesperglow/mneme:latest}
@@ -13,7 +13,8 @@ services:
     stop_grace_period: 40s
     env_file:
       - .env
-    # embedding 权重约 650MB 常驻，稳态总占用 <1GB；上限兜底 2GB。
+    # embedding + reranker 两个模型权重各约 650MB，合计常驻约 1.3GB、稳态往 1.5GB 走；
+    # 上限默认兜底 2GB（偏紧，内存不足可 RERANK_ENABLED=false 关重排，或调大 MEM_LIMIT）。
     mem_limit: ${MEM_LIMIT:-2g}
     ports:
       - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-8000}:8000"
@@ -30,8 +31,8 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-      # 首次启动要下载 embedding 模型（约 640MB），给足冷启动时间。
-      start_period: 300s
+      # 首次启动要下载 embedding + reranker 两个模型（各约 640MB），给足冷启动时间。
+      start_period: 420s
 
 volumes:
   app_data:

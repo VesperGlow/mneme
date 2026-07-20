@@ -34,7 +34,7 @@ pub fn dequantize(values: &[u8], out_min: f32, out_max: f32) -> Vec<f32> {
     values.iter().map(|v| *v as f32 * scale + out_min).collect()
 }
 
-fn hf_home() -> PathBuf {
+pub(crate) fn hf_home() -> PathBuf {
     if let Ok(home) = std::env::var("HF_HOME") {
         return PathBuf::from(home);
     }
@@ -44,95 +44,172 @@ fn hf_home() -> PathBuf {
     PathBuf::from(base).join(".cache").join("huggingface")
 }
 
-fn wanted_file(name: &str) -> bool {
-    name == "tokenizer.json"
-        || name == "tokenizer_config.json"
-        || name == "special_tokens_map.json"
-        || name == "config.json"
-        || name.ends_with(".onnx")
-        || name.ends_with(".onnx_data")
-        || name.ends_with(".onnx.data")
+/// 随模型一起下载的元数据文件（tokenizer / config，均取仓库根）。onnx 单独按变体选取。
+pub(crate) fn wanted_meta(name: &str) -> bool {
+    matches!(
+        name,
+        "tokenizer.json"
+            | "tokenizer_config.json"
+            | "special_tokens_map.json"
+            | "added_tokens.json"
+            | "config.json"
+    )
 }
 
-/// 下载模型仓库需要的文件到本地目录（已存在的跳过），返回目录路径。
-async fn ensure_model_files(cfg: &Config) -> Result<PathBuf> {
-    let target = hf_home()
-        .join("local")
-        .join(cfg.embedding_model.replace('/', "--"));
+/// 从候选 onnx 文件名里按偏好选一个：先匹配 `prefer` 子串（如 "quantized"），
+/// 再按量化/体积从小到大的经验顺序，最后回退到 model.onnx 或第一个。
+/// onnx-community 这类仓库把多份量化变体放进 onnx/ 子目录，必须挑一个而不是全下。
+pub(crate) fn pick_onnx_name<'a>(names: &'a [String], prefer: &str) -> Option<&'a String> {
+    if !prefer.is_empty() {
+        let pl = prefer.to_lowercase();
+        if let Some(n) = names.iter().find(|n| n.to_lowercase().contains(pl.as_str())) {
+            return Some(n);
+        }
+    }
+    for key in ["uint8", "quantized", "q4f16", "q4", "int8", "fp16"] {
+        if let Some(n) = names.iter().find(|n| n.to_lowercase().contains(key)) {
+            return Some(n);
+        }
+    }
+    names
+        .iter()
+        .find(|n| n.to_lowercase().ends_with("model.onnx"))
+        .or_else(|| names.first())
+}
+
+/// 递归收集目录下所有 .onnx 文件（onnx 可能在 onnx/ 子目录）。
+pub(crate) fn collect_onnx(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                out.extend(collect_onnx(&path));
+            } else if path.extension().map_or(false, |ext| ext.eq_ignore_ascii_case("onnx")) {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// 从磁盘上已下载的多个 onnx 里按偏好选一个（复用 [`pick_onnx_name`] 的文件名偏好）。
+pub(crate) fn pick_onnx_path(paths: Vec<PathBuf>, prefer: &str) -> Option<PathBuf> {
+    if paths.len() <= 1 {
+        return paths.into_iter().next();
+    }
+    let names: Vec<String> = paths
+        .iter()
+        .map(|p| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())
+        .collect();
+    let chosen = pick_onnx_name(&names, prefer)?.clone();
+    paths.into_iter().find(|p| {
+        p.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .as_deref()
+            == Some(chosen.as_str())
+    })
+}
+
+/// 下载模型仓库需要的文件（tokenizer/config + 按 `prefer_onnx` 选中的**单个** onnx 变体
+/// 及其外部权重），已存在的跳过，返回目录路径。embedding 与 reranker 共用；变体可能在
+/// onnx/ 子目录，本地保留相同的相对路径。
+pub(crate) async fn ensure_model_files(
+    model: &str,
+    hf_token: &str,
+    prefer_onnx: &str,
+) -> Result<PathBuf> {
+    let target = hf_home().join("local").join(model.replace('/', "--"));
     tokio::fs::create_dir_all(&target).await?;
 
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(1800))
         .build()?;
     let auth = |req: reqwest::RequestBuilder| {
-        if cfg.hf_token.is_empty() {
+        if hf_token.is_empty() {
             req
         } else {
-            req.bearer_auth(&cfg.hf_token)
+            req.bearer_auth(hf_token)
         }
     };
 
-    // 已有 tokenizer + onnx 就不碰网络（离线也能重启）。
-    let mut have_onnx = false;
-    let mut have_tokenizer = false;
-    let mut entries = tokio::fs::read_dir(&target).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.ends_with(".onnx") {
-            have_onnx = true;
-        }
-        if name == "tokenizer.json" {
-            have_tokenizer = true;
-        }
-    }
-    if have_onnx && have_tokenizer {
+    // 已有 tokenizer.json + 任意 onnx（含子目录）就不碰网络（离线也能重启）。
+    let have_tokenizer = tokio::fs::try_exists(target.join("tokenizer.json"))
+        .await
+        .unwrap_or(false);
+    if have_tokenizer && !collect_onnx(&target).is_empty() {
         return Ok(target);
     }
 
-    tracing::info!("正在下载 embedding 模型 {} ...", cfg.embedding_model);
+    tracing::info!("正在下载模型 {model} ...");
     let listing: serde_json::Value = auth(client.get(format!(
-        "https://huggingface.co/api/models/{}",
-        cfg.embedding_model
+        "https://huggingface.co/api/models/{model}"
     )))
     .send()
     .await?
     .error_for_status()
-    .with_context(|| format!("查询模型仓库 {} 失败", cfg.embedding_model))?
+    .with_context(|| format!("查询模型仓库 {model} 失败"))?
     .json()
     .await?;
-    let files: Vec<String> = listing["siblings"]
+    let siblings: Vec<String> = listing["siblings"]
         .as_array()
         .map(|items| {
             items
                 .iter()
                 .filter_map(|item| item["rfilename"].as_str())
-                .filter(|name| wanted_file(name) && !name.contains('/'))
                 .map(str::to_string)
                 .collect()
         })
         .unwrap_or_default();
-    if files.is_empty() {
-        bail!("模型仓库 {} 里没有可用的 onnx/tokenizer 文件", cfg.embedding_model);
+
+    // 元数据只取仓库根（避免各变体子目录里重复的 config）。
+    let mut to_get: Vec<String> = siblings
+        .iter()
+        .filter(|n| wanted_meta(n) && !n.contains('/'))
+        .cloned()
+        .collect();
+    // onnx 变体（可能在 onnx/ 子目录）按偏好选一个，连同其外部权重数据一起下。
+    let onnx_names: Vec<String> = siblings
+        .iter()
+        .filter(|n| n.to_lowercase().ends_with(".onnx"))
+        .cloned()
+        .collect();
+    let chosen = pick_onnx_name(&onnx_names, prefer_onnx)
+        .ok_or_else(|| anyhow!("模型仓库 {model} 里没有 .onnx 文件"))?
+        .clone();
+    let stem = chosen.trim_end_matches(".onnx");
+    to_get.push(chosen.clone());
+    for name in &siblings {
+        if *name != chosen
+            && name.starts_with(stem)
+            && (name.ends_with(".onnx_data") || name.ends_with(".onnx.data"))
+        {
+            to_get.push(name.clone());
+        }
     }
 
-    for name in files {
+    use tokio::io::AsyncWriteExt;
+    for name in to_get {
         let path = target.join(&name);
         if tokio::fs::try_exists(&path).await.unwrap_or(false) {
             continue;
         }
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
         tracing::info!("下载 {name} ...");
-        // 流式落盘：模型文件可达数百 MB，整块读进内存再写盘会造成
-        // 首次启动的瞬时内存峰值，小内存机器会被 OOM。
-        use tokio::io::AsyncWriteExt;
+        // 流式落盘：模型文件可达数百 MB，整块读进内存再写盘会造成首次启动的瞬时内存峰值。
         let mut response = auth(client.get(format!(
-            "https://huggingface.co/{}/resolve/main/{name}",
-            cfg.embedding_model
+            "https://huggingface.co/{model}/resolve/main/{name}"
         )))
         .send()
         .await?
         .error_for_status()
         .with_context(|| format!("下载 {name} 失败"))?;
-        let tmp = target.join(format!("{name}.part"));
+        let tmp = path.with_file_name(format!(
+            "{}.part",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        ));
         let mut file = tokio::fs::File::create(&tmp).await?;
         while let Some(chunk) = response.chunk().await? {
             file.write_all(&chunk).await?;
@@ -166,26 +243,14 @@ mod local {
 
     impl LocalModel {
         pub async fn load(cfg: &Config) -> Result<Arc<Self>> {
-            let dir = ensure_model_files(cfg).await?;
+            let dir = ensure_model_files(&cfg.embedding_model, &cfg.hf_token, "").await?;
             let cfg = cfg.clone();
             tokio::task::spawn_blocking(move || Self::load_sync(&cfg, &dir)).await?
         }
 
         fn load_sync(cfg: &Config, dir: &std::path::Path) -> Result<Arc<Self>> {
-            // 选目录里最大的 .onnx（有的仓库带多个变体）。
-            let mut onnx_files: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)?
-                .filter_map(|entry| entry.ok())
-                .filter(|entry| {
-                    entry.file_name().to_string_lossy().ends_with(".onnx")
-                })
-                .filter_map(|entry| {
-                    entry.metadata().ok().map(|m| (m.len(), entry.path()))
-                })
-                .collect();
-            onnx_files.sort_by_key(|(size, _)| std::cmp::Reverse(*size));
-            let (_, model_path) = onnx_files
-                .into_iter()
-                .next()
+            // 递归找已下载的 onnx（可能在 onnx/ 子目录）并选一个。
+            let model_path = pick_onnx_path(collect_onnx(dir), "")
                 .ok_or_else(|| anyhow!("{} 里没有 .onnx 文件", dir.display()))?;
 
             let mut tokenizer = Tokenizer::from_file(dir.join("tokenizer.json"))

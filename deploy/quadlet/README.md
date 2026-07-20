@@ -1,6 +1,6 @@
 # 最小 Podman Quadlet 部署
 
-这份 `mneme.container` 运行 GHCR 中的镜像——单个 Rust 二进制包含 AI API、进程内 ONNX embedding、SQLite 分级记忆与 QQ 桥接，不需要任何外部服务。数据保存在 `mneme-data`（SQLite）、`mneme-models`（模型缓存）两个卷里。
+这份 `mneme.container` 运行 GHCR 中的镜像——单个 Rust 二进制包含 AI API、进程内 ONNX embedding 与 rerank、SQLite 长期记忆与 QQ 桥接，不需要任何外部服务。数据保存在 `mneme-data`（SQLite）、`mneme-models`（模型缓存）两个卷里。
 
 ## Rootless 安装
 
