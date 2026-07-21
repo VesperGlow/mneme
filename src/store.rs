@@ -128,6 +128,21 @@ fn migrate_embeddings_to_vec0(conn: &mut Connection, dim: usize) -> Result<()> {
     Ok(())
 }
 
+/// 旧库退场：移除 `memories.level`。分级早已废弃（排序纯靠二段 rerank，落库恒为同一等级），
+/// 该列没有任何读者。停止维护并 DROP（幂等：无该列则跳过）。不可逆，但列本就无信息量。
+fn migrate_drop_level_column(conn: &Connection) -> Result<()> {
+    let has_col: bool = conn.query_row(
+        "SELECT count(*) FROM pragma_table_info('memories') WHERE name = 'level'",
+        [],
+        |row| row.get::<_, i64>(0),
+    )? > 0;
+    if has_col {
+        conn.execute("ALTER TABLE memories DROP COLUMN level", [])?;
+        tracing::info!("memories.level 列已移除（分级维度已废弃）");
+    }
+    Ok(())
+}
+
 /// 旧库补列：`conversations.memory_upto_seq`（自动记忆巩固的水位线）。新库由 SCHEMA
 /// 直接带上，旧库 `CREATE TABLE IF NOT EXISTS` 不会补列，故在此 ALTER 补齐（幂等）。
 fn ensure_conversation_columns(conn: &Connection) -> Result<()> {
@@ -175,7 +190,6 @@ CREATE TABLE IF NOT EXISTS memories (
   user_id TEXT NOT NULL REFERENCES users(id),
   text TEXT NOT NULL,
   kind TEXT NOT NULL,
-  level INTEGER NOT NULL,
   subject TEXT NOT NULL DEFAULT 'user',
   fingerprint TEXT NOT NULL,
   source TEXT NOT NULL,
@@ -226,7 +240,7 @@ CREATE INDEX IF NOT EXISTS idx_moods_user ON moods(user_id, created_at);
 const DB_POOL_SIZE: usize = 4;
 
 /// memories 表拼出 [`MemoryRow`] 所需的列，顺序与 [`MemoryRow::from_row`] 对应。
-const MEMORY_COLUMNS: &str = "id, text, kind, level, subject, created_at";
+const MEMORY_COLUMNS: &str = "id, text, kind, subject, created_at";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityView {
@@ -242,7 +256,6 @@ pub struct MemoryView {
     pub id: String,
     pub text: String,
     pub kind: String,
-    pub level: i64,
     pub subject: String,
     pub created_at: String,
     #[serde(default)]
@@ -280,7 +293,6 @@ pub struct NewMemory {
     pub user_id: String,
     pub text: String,
     pub kind: String,
-    pub level: i64,
     pub subject: String,
     pub entities: Vec<EntityView>,
     pub embedding: Vec<f32>,
@@ -324,6 +336,7 @@ impl Store {
             if index == 0 {
                 conn.execute_batch(SCHEMA)?;
                 ensure_conversation_columns(&conn)?;
+                migrate_drop_level_column(&conn)?;
                 ensure_vec_table(&conn, cfg.embedding_dimensions)?;
                 migrate_embeddings_to_vec0(&mut conn, cfg.embedding_dimensions)?;
             }
@@ -609,7 +622,6 @@ impl Store {
         self.run(move |conn, cfg| {
             let limit = limit.unwrap_or(cfg.memory_search_limit);
             let min_score = min_score.unwrap_or(cfg.memory_min_score);
-            let now = now_iso();
             let query = vec_to_blob_f32(&embedding);
 
             // 一段召回 = vec0 KNN：按 user_id 过滤的余弦最近邻（vec0 只存活跃记忆）。
@@ -619,7 +631,7 @@ impl Store {
             ))?;
             let scored: Vec<(MemoryRow, f32)> = stmt
                 .query_map(params![query, user_id, limit as i64], |row| {
-                    let similarity = (1.0 - row.get::<_, f64>(6)?) as f32;
+                    let similarity = (1.0 - row.get::<_, f64>(5)?) as f32;
                     Ok((MemoryRow::from_row(row)?, similarity))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?
@@ -628,15 +640,8 @@ impl Store {
                 .collect();
             drop(stmt);
 
-            let tx = conn.transaction()?;
-            for (rowdata, _) in &scored {
-                tx.execute(
-                    "UPDATE memories SET access_count = access_count + 1, last_accessed_at = ?1 \n                     WHERE id = ?2",
-                    params![now, rowdata.id],
-                )?;
-            }
-            tx.commit()?;
-
+            // 检索为纯读路径：不再回写 access_count/last_accessed_at（这两列无任何读者，
+            // 每次检索都写最多 rerank_candidates 行纯属写放大，还和真正的写入抢 WAL 单写锁）。
             // 一次性取回所有命中记忆的实体，避免逐条查询（N+1）。
             let ids: Vec<&str> = scored.iter().map(|(row, _)| row.id.as_str()).collect();
             let mut entities = fetch_entities_map(conn, &ids)?;
@@ -766,8 +771,8 @@ impl Store {
                     |row| {
                         Ok((
                             MemoryRow::from_row(row)?,
-                            row.get::<_, i64>(6)? != 0,
-                            row.get(7)?,
+                            row.get::<_, i64>(5)? != 0,
+                            row.get(6)?,
                         ))
                     },
                 )?
@@ -970,7 +975,6 @@ struct MemoryRow {
     id: String,
     text: String,
     kind: String,
-    level: i64,
     subject: String,
     created_at: String,
 }
@@ -982,9 +986,8 @@ impl MemoryRow {
             id: row.get(0)?,
             text: row.get(1)?,
             kind: row.get(2)?,
-            level: row.get(3)?,
-            subject: row.get(4)?,
-            created_at: row.get(5)?,
+            subject: row.get(3)?,
+            created_at: row.get(4)?,
         })
     }
 }
@@ -1027,7 +1030,6 @@ fn memory_view_with_entities(row: &MemoryRow, entities: Vec<EntityView>) -> Memo
         id: row.id.clone(),
         text: row.text.clone(),
         kind: row.kind.clone(),
-        level: row.level,
         subject: row.subject.clone(),
         created_at: row.created_at.clone(),
         entities,
@@ -1057,20 +1059,12 @@ fn load_memory_row(conn: &Connection, id: &str) -> Result<MemoryRow> {
     )?)
 }
 
-/// 同一记忆再次出现：更新最近提及时间、取更高的重要度等级、计数。
-/// 追加式下不再有过期续期这回事，只维护 last_seen_at / repetitions / level。
-fn touch_memory(
-    conn: &Connection,
-    _cfg: &Config,
-    id: &str,
-    old_level: i64,
-    level: i64,
-    now: &str,
-) -> Result<MemoryView> {
-    let new_level = old_level.max(level);
+/// 同一记忆再次出现：更新最近提及时间与计数。
+/// 追加式下不再有过期续期这回事，只维护 last_seen_at / repetitions。
+fn touch_memory(conn: &Connection, id: &str, now: &str) -> Result<MemoryView> {
     conn.execute(
-        "UPDATE memories SET last_seen_at = ?1, repetitions = repetitions + 1, \n         level = ?2 WHERE id = ?3",
-        params![now, new_level, id],
+        "UPDATE memories SET last_seen_at = ?1, repetitions = repetitions + 1 WHERE id = ?2",
+        params![now, id],
     )?;
     let row = load_memory_row(conn, id)?;
     let mut view = memory_view_from_row(conn, &row)?;
@@ -1080,40 +1074,41 @@ fn touch_memory(
 
 fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Result<MemoryView> {
     let subject = if new.subject == "assistant" { "assistant" } else { "user" };
-    let level = new.level.clamp(1, 10);
     let text = new.text.trim().to_string();
     let fingerprint = hex::encode(Sha256::digest(text.to_lowercase().as_bytes()));
     let now = now_iso();
 
     // 去重按主体隔离：同样文本但主体不同（关于用户 vs 关于助手）不应合并。
-    let existing: Option<(String, i64)> = conn
+    let existing: Option<String> = conn
         .query_row(
-            "SELECT id, level FROM memories WHERE user_id = ?1 AND fingerprint = ?2 \n             AND active = 1 AND subject = ?3 LIMIT 1",
+            "SELECT id FROM memories WHERE user_id = ?1 AND fingerprint = ?2 \n             AND active = 1 AND subject = ?3 LIMIT 1",
             params![new.user_id, fingerprint, subject],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .optional()?;
-    if let Some((id, old_level)) = existing {
-        return touch_memory(conn, cfg, &id, old_level, level, &now);
+    if let Some(id) = existing {
+        return touch_memory(conn, &id, &now);
     }
 
-    // 近乎完全相同的表述用极高阈值合并（默认 0.995）：在 vec0 里查同 user/subject/kind
-    // 的最近一条，余弦 ≥ 阈值即视为重复、并入旧记忆（避免把“喜欢 X”和“不喜欢 X”误并）。
+    // 近乎完全相同的表述用极高阈值合并（默认 0.995）：在 vec0 里查同 user/subject 的最近
+    // 一条，余弦 ≥ 阈值即视为重复、并入旧记忆。作用域与上面的指纹去重一致（都按 user+subject）；
+    // 不再按 kind 过滤，好让「同一件事被两次巩固标成不同 kind」的近似重复也能合并。极高阈值
+    // 本身足以区分“喜欢 X”和“不喜欢 X”，不需要 kind 兜底。
     let near: Option<(i64, f64)> = conn
         .query_row(
-            "SELECT rowid, distance FROM vec_memories \n             WHERE embedding MATCH ?1 AND user_id = ?2 AND subject = ?3 AND kind = ?4 AND k = 1",
-            params![vec_to_blob_f32(&new.embedding), new.user_id, subject, new.kind],
+            "SELECT rowid, distance FROM vec_memories \n             WHERE embedding MATCH ?1 AND user_id = ?2 AND subject = ?3 AND k = 1",
+            params![vec_to_blob_f32(&new.embedding), new.user_id, subject],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
     if let Some((rowid, distance)) = near {
         if 1.0 - distance >= cfg.memory_duplicate_threshold as f64 {
-            let (id, old_level): (String, i64) = conn.query_row(
-                "SELECT id, level FROM memories WHERE rowid = ?1",
+            let id: String = conn.query_row(
+                "SELECT id FROM memories WHERE rowid = ?1",
                 params![rowid],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| row.get(0),
             )?;
-            return touch_memory(conn, cfg, &id, old_level, level, &now);
+            return touch_memory(conn, &id, &now);
         }
     }
 
@@ -1138,13 +1133,12 @@ fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Re
     )?;
     // 追加式：不写 expires_at（列保留兼容旧库，新记忆恒为 NULL = 永不过期）。
     tx.execute(
-        "INSERT INTO memories (id, user_id, text, kind, level, subject, \n         fingerprint, source, created_at, last_seen_at) \n         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?9)",
+        "INSERT INTO memories (id, user_id, text, kind, subject, \n         fingerprint, source, created_at, last_seen_at) \n         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
         params![
             memory_id,
             new.user_id,
             text,
             new.kind,
-            level,
             subject,
             fingerprint,
             new.source,
@@ -1293,14 +1287,13 @@ pub fn cli_delete_memory(cfg: &Config, id: &str) -> Result<Option<String>> {
     Ok(Some(text))
 }
 
-/// CLI `memory stats` 的聚合结果。by_level/by_kind/oldest/newest 只统计活跃记忆。
+/// CLI `memory stats` 的聚合结果。by_kind/oldest/newest 只统计活跃记忆。
 #[derive(Debug, Serialize)]
 pub struct MemoryStats {
     pub total: usize,
     pub active: usize,
     pub inactive: usize,
     pub users: usize,
-    pub by_level: Vec<(i64, usize)>,
     pub by_kind: Vec<(String, usize)>,
     pub oldest: Option<String>,
     pub newest: Option<String>,
@@ -1308,7 +1301,7 @@ pub struct MemoryStats {
 
 /// CLI 用：单次扫描 memories 在 Rust 侧聚合出统计。只读打开。
 pub fn cli_stats(cfg: &Config, user: Option<&str>) -> Result<MemoryStats> {
-    use std::collections::{BTreeMap, BTreeSet, HashMap};
+    use std::collections::{BTreeSet, HashMap};
 
     let conn = Connection::open(&cfg.db_path)
         .with_context(|| format!("无法打开数据库 {}", cfg.db_path))?;
@@ -1316,37 +1309,34 @@ pub fn cli_stats(cfg: &Config, user: Option<&str>) -> Result<MemoryStats> {
     conn.pragma_update(None, "query_only", true)?;
 
     let sql = if user.is_some() {
-        "SELECT active, level, kind, created_at, user_id FROM memories WHERE user_id = ?1"
+        "SELECT active, kind, created_at, user_id FROM memories WHERE user_id = ?1"
     } else {
-        "SELECT active, level, kind, created_at, user_id FROM memories"
+        "SELECT active, kind, created_at, user_id FROM memories"
     };
     let mut stmt = conn.prepare(sql)?;
     // Option::iter() 产出 0 或 1 个 &&str（&str: ToSql），对应 SQL 里的 0/1 占位符。
     let rows = stmt.query_map(rusqlite::params_from_iter(user.iter()), |row| {
         Ok((
             row.get::<_, i64>(0)? != 0,
-            row.get::<_, i64>(1)?,
+            row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
             row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
         ))
     })?;
 
     let mut total = 0usize;
     let mut active = 0usize;
     let mut users: BTreeSet<String> = BTreeSet::new();
-    let mut level_map: BTreeMap<i64, usize> = BTreeMap::new();
     let mut kind_map: HashMap<String, usize> = HashMap::new();
     let mut oldest: Option<String> = None;
     let mut newest: Option<String> = None;
 
     for row in rows {
-        let (is_active, level, kind, created_at, user_id) = row?;
+        let (is_active, kind, created_at, user_id) = row?;
         total += 1;
         users.insert(user_id);
         if is_active {
             active += 1;
-            *level_map.entry(level).or_default() += 1;
             *kind_map.entry(kind).or_default() += 1;
             if oldest.as_ref().map_or(true, |o| &created_at < o) {
                 oldest = Some(created_at.clone());
@@ -1357,7 +1347,6 @@ pub fn cli_stats(cfg: &Config, user: Option<&str>) -> Result<MemoryStats> {
         }
     }
 
-    let by_level: Vec<(i64, usize)> = level_map.into_iter().collect();
     let mut by_kind: Vec<(String, usize)> = kind_map.into_iter().collect();
     by_kind.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
 
@@ -1366,7 +1355,6 @@ pub fn cli_stats(cfg: &Config, user: Option<&str>) -> Result<MemoryStats> {
         active,
         inactive: total - active,
         users: users.len(),
-        by_level,
         by_kind,
         oldest,
         newest,
@@ -1408,12 +1396,11 @@ mod tests {
         vec![x / norm, y / norm, z / norm, w / norm]
     }
 
-    fn mem(user: &str, text: &str, kind: &str, level: i64, embedding: Vec<f32>) -> NewMemory {
+    fn mem(user: &str, text: &str, kind: &str, embedding: Vec<f32>) -> NewMemory {
         NewMemory {
             user_id: user.into(),
             text: text.into(),
             kind: kind.into(),
-            level,
             subject: "user".into(),
             entities: Vec::new(),
             embedding,
@@ -1467,13 +1454,12 @@ mod tests {
     async fn create_search_and_isolation() {
         let (_dir, store) = open_store();
         let cat = store
-            .create_memory(mem("u1", "用户养了一只叫年糕的猫", "fact", 8, unit(1.0, 0.0, 0.0, 0.0)))
+            .create_memory(mem("u1", "用户养了一只叫年糕的猫", "fact", unit(1.0, 0.0, 0.0, 0.0)))
             .await
             .unwrap();
-        assert_eq!(cat.level, 8);
         assert_eq!(cat.deduplicated, Some(false));
         store
-            .create_memory(mem("u1", "用户最近在追一部剧", "event", 2, unit(0.0, 1.0, 0.0, 0.0)))
+            .create_memory(mem("u1", "用户最近在追一部剧", "event", unit(0.0, 1.0, 0.0, 0.0)))
             .await
             .unwrap();
         let results = store
@@ -1490,30 +1476,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fingerprint_dedupe_bumps_level() {
+    async fn fingerprint_dedupe_merges() {
         let (_dir, store) = open_store();
         let first = store
-            .create_memory(mem("u1", "用户在学日语", "goal", 3, unit(0.0, 0.0, 1.0, 0.0)))
+            .create_memory(mem("u1", "用户在学日语", "goal", unit(0.0, 0.0, 1.0, 0.0)))
             .await
             .unwrap();
         let again = store
-            .create_memory(mem("u1", "用户在学日语", "goal", 6, unit(0.0, 0.0, 1.0, 0.0)))
+            .create_memory(mem("u1", "用户在学日语", "goal", unit(0.0, 0.0, 1.0, 0.0)))
             .await
             .unwrap();
         assert_eq!(again.deduplicated, Some(true));
         assert_eq!(again.id, first.id);
-        assert_eq!(again.level, 6);
     }
 
     #[tokio::test]
     async fn near_duplicate_vector_merges() {
         let (_dir, store) = open_store();
         let first = store
-            .create_memory(mem("u1", "用户喜欢喝美式咖啡", "preference", 5, unit(1.0, 0.001, 0.0, 0.0)))
+            .create_memory(mem("u1", "用户喜欢喝美式咖啡", "preference", unit(1.0, 0.001, 0.0, 0.0)))
             .await
             .unwrap();
         let merged = store
-            .create_memory(mem("u1", "用户喜欢喝美式咖啡。", "preference", 5, unit(1.0, 0.002, 0.0, 0.0)))
+            .create_memory(mem("u1", "用户喜欢喝美式咖啡。", "preference", unit(1.0, 0.002, 0.0, 0.0)))
+            .await
+            .unwrap();
+        assert_eq!(merged.deduplicated, Some(true));
+        assert_eq!(merged.id, first.id);
+    }
+
+    #[tokio::test]
+    async fn near_duplicate_merges_across_kind() {
+        // 同一件事被两次巩固标成不同 kind、措辞略有差异（指纹不同）：近似去重应仍按
+        // (user, subject) 合并，不因 kind 不同而各存一条。
+        let (_dir, store) = open_store();
+        let first = store
+            .create_memory(mem("u1", "用户在学日语", "goal", unit(0.0, 0.0, 1.0, 0.0)))
+            .await
+            .unwrap();
+        let merged = store
+            .create_memory(mem("u1", "用户在学日语。", "fact", unit(0.0, 0.001, 1.0, 0.0)))
             .await
             .unwrap();
         assert_eq!(merged.deduplicated, Some(true));
@@ -1524,13 +1526,13 @@ mod tests {
     async fn forget_supersede_and_history() {
         let (_dir, store) = open_store();
         let old = store
-            .create_memory(mem("u1", "用户在 A 公司上班", "fact", 7, unit(1.0, 0.0, 0.0, 0.0)))
+            .create_memory(mem("u1", "用户在 A 公司上班", "fact", unit(1.0, 0.0, 0.0, 0.0)))
             .await
             .unwrap();
         let new = store
             .supersede_memory(
                 old.id.clone(),
-                mem("u1", "用户跳槽到了 B 公司", "fact", 7, unit(0.9, 0.1, 0.0, 0.0)),
+                mem("u1", "用户跳槽到了 B 公司", "fact", unit(0.9, 0.1, 0.0, 0.0)),
             )
             .await
             .unwrap();

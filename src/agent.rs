@@ -65,9 +65,6 @@ const ALLOWED_KINDS: [&str; 7] = [
     "other",
 ];
 
-/// 追加式 + rerank 之后不再分级：所有记忆用统一等级入库（`level` 列仍在，仅占位兼容旧库）。
-const MEMORY_LEVEL: i64 = 5;
-
 fn sensitive_patterns() -> &'static [Regex] {
     static PATTERNS: OnceLock<Vec<Regex>> = OnceLock::new();
     PATTERNS.get_or_init(|| {
@@ -1040,7 +1037,6 @@ impl Agent {
                     user_id: user_id.to_string(),
                     text: op.text,
                     kind: op.kind,
-                    level: MEMORY_LEVEL,
                     subject: op.subject,
                     entities: op.entities,
                     embedding: vector,
@@ -1253,7 +1249,6 @@ impl Agent {
                     user_id: user_id.to_string(),
                     text,
                     kind: kind.to_string(),
-                    level: MEMORY_LEVEL,
                     subject,
                     entities,
                     embedding: vector,

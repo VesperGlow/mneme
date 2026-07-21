@@ -280,8 +280,6 @@ struct CreateMemoryRequest {
     text: String,
     #[serde(default = "default_kind")]
     kind: String,
-    #[serde(default = "default_level")]
-    level: i64,
     #[serde(default = "default_subject")]
     subject: String,
     #[serde(default)]
@@ -298,9 +296,6 @@ struct EntityInput {
 fn default_kind() -> String {
     "other".into()
 }
-fn default_level() -> i64 {
-    5
-}
 fn default_subject() -> String {
     "user".into()
 }
@@ -315,9 +310,6 @@ async fn create_memory(
 ) -> Result<Json<Value>, ApiError> {
     require_api_key(&state, &headers)?;
     validate_len("text", &body.text, 1, 50_000)?;
-    if !(1..=10).contains(&body.level) {
-        return Err(ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, "level 必须在 1..=10"));
-    }
     let vector = state
         .agent
         .embedder()
@@ -334,7 +326,6 @@ async fn create_memory(
             user_id: body.user_id,
             text: body.text,
             kind: body.kind,
-            level: body.level,
             subject: body.subject,
             entities: body
                 .entities
