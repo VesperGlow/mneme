@@ -86,18 +86,6 @@ pub fn contains_sensitive_secret(text: &str) -> bool {
     sensitive_patterns().iter().any(|p| p.is_match(text))
 }
 
-/// 纯寒暄/填充类短消息：整条匹配才跳过记忆筛选，避免误伤“我好难过”等短情绪句。
-pub fn is_trivial_message(text: &str) -> bool {
-    static TRIVIAL: OnceLock<Regex> = OnceLock::new();
-    let re = TRIVIAL.get_or_init(|| {
-        Regex::new(
-            r"(?i)^(?:在吗|在不在|你在吗|嗯+|哦+|噢+|啊+|呃+|哈+|呵+|嘿+|哟+|好的?|行|可以|收到|知道了?|明白|懂了?|谢谢?|多谢|不客气|早|早安|晚安|拜拜|再见|88|ok|okay|yes|no|yep|nope|[。，,.!！?？~、…\s]+)$",
-        )
-        .unwrap()
-    });
-    re.is_match(text.trim())
-}
-
 /// 日志用内容预览：压平换行、按字符截断；max_chars=0 时不暴露任何内容。
 pub fn preview(text: &str, max_chars: usize) -> String {
     if max_chars == 0 {
@@ -308,9 +296,9 @@ pub struct Agent {
     mcp: Arc<McpManager>,
     fetcher: Arc<Fetcher>,
     pending: Pending,
-    /// 正在巩固的会话键集合（`user_id\u{1f}conversation_id`）。per-turn 巩固与
-    /// 尾巴 flush 可能同时命中同一会话，用它保证同一会话同一时刻只有一个巩固在跑，
-    /// 避免重复调用记忆模型、重复记录情绪。
+    /// 后台任务的 in-flight 去重集合。键含任务命名空间：巩固用 `user\u{1f}convo`
+    /// （per-turn 与尾巴 flush 可能撞同一会话），摘要用 `summary\u{1f}user\u{1f}convo`；
+    /// 保证同一会话同一任务同一时刻只有一个在跑，避免重复调用模型、重复记录情绪。
     consolidating: Arc<Mutex<HashSet<String>>>,
 }
 
@@ -351,9 +339,10 @@ impl Agent {
         self.mcp.openai_tools().len()
     }
 
-    /// 两段式检索：① 余弦召回候选（启用重排时召回更宽的 `rerank_candidates` 池），
-    /// ② rerank 交叉编码器精排，③ 截断到 `final_limit`（默认 `memory_search_limit`）。
-    /// 重排不可用（未启用/加载失败/推理失败）时自动保持一段余弦顺序，结果照常返回。
+    /// 两段式检索：① 余弦召回候选（启用重排时召回更宽的 `rerank_candidates` 池，且**不**做
+    /// 余弦地板预过滤，让重排器看到完整候选池），② rerank 交叉编码器精排，③ 截断到
+    /// `final_limit`（默认 `memory_search_limit`）。重排不可用（未启用/加载失败/推理失败）时退回
+    /// 余弦顺序，并在此时补回 `memory_min_score` 地板（余弦是最终信号时才该有地板）。
     pub async fn retrieve(
         &self,
         user_id: &str,
@@ -368,40 +357,54 @@ impl Agent {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("查询向量为空"))?;
-        let width = if self.reranker.enabled() {
+        let reranking = self.reranker.enabled();
+        let floor = self.cfg.memory_min_score;
+        let width = if reranking {
             self.cfg.rerank_candidates.max(final_limit)
         } else {
             final_limit
         };
+        // 启用重排时 min_score=0：不预过滤，把完整候选池交给重排定夺；未启用时余弦分数即
+        // 最终排序信号，直接按配置地板过滤。
+        let min_score = if reranking { Some(0.0) } else { None };
         let candidates = self
             .store
-            .search_memories(user_id.to_string(), vector, Some(width), None)
+            .search_memories(user_id.to_string(), vector, Some(width), min_score)
             .await?;
-        if candidates.len() <= 1 {
-            let mut candidates = candidates;
+
+        // 余弦回退（重排未启用/不可用/候选太少无需重排）时的最终结果：按余弦序，并在“本轮是
+        // 冲着重排去、候选未预过滤”的情况下补回余弦地板，避免把无关项也塞进上下文。
+        let cosine_fallback = |mut candidates: Vec<MemoryView>| -> Vec<MemoryView> {
+            if reranking {
+                candidates.retain(|m| m.score.map_or(true, |score| score >= floor));
+            }
             candidates.truncate(final_limit);
-            return Ok(candidates);
+            candidates
+        };
+
+        if candidates.len() <= 1 {
+            return Ok(cosine_fallback(candidates));
         }
         let docs: Vec<String> = candidates.iter().map(|m| m.text.clone()).collect();
-        let mut ordered = match self.reranker.scores(query_text, &docs).await {
+        match self.reranker.scores(query_text, &docs).await {
             // 精排成功：按重排分数重排，并把 view.score 换成重排概率（更能反映相关性）。
             Some(scores) if scores.len() == candidates.len() => {
                 let mut zipped: Vec<(MemoryView, f32)> =
                     candidates.into_iter().zip(scores).collect();
                 zipped.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-                zipped
+                let mut ordered: Vec<MemoryView> = zipped
                     .into_iter()
                     .map(|(mut view, score)| {
                         view.score = Some((score * 1e6).round() / 1e6);
                         view
                     })
-                    .collect::<Vec<_>>()
+                    .collect();
+                ordered.truncate(final_limit);
+                Ok(ordered)
             }
-            // 重排不可用：candidates 已按余弦降序，直接用。
-            _ => candidates,
-        };
-        ordered.truncate(final_limit);
-        Ok(ordered)
+            // 重排不可用：退回余弦序（补回地板）。
+            _ => Ok(cosine_fallback(candidates)),
+        }
     }
 
     fn system_instructions(&self) -> String {
@@ -513,12 +516,11 @@ impl Agent {
         }
 
         // 自动记忆不再每轮筛选用户单句，改到短期窗口滑出时对整批做巩固（见
-        // maybe_consolidate_memories），上下文更完整；本轮返回的 saved 恒为空。
-        // 用户主动「记住/忘掉」仍可经主模型的记忆工具即时生效。
-        let (content, tool_events, tool_warnings, loop_usage) =
+        // maybe_consolidate_memories），上下文更完整。用户主动「记住/忘掉」仍可经主模型的
+        // 记忆工具即时生效，这类即时保存会由 run_tool_loop 收进下面的 saved 返回。
+        let (content, tool_events, tool_warnings, saved, loop_usage) =
             self.run_tool_loop(user_id, messages).await?;
         let warnings: Vec<String> = tool_warnings;
-        let saved: Vec<MemoryView> = Vec::new();
         let turn_usage = loop_usage;
 
         // 历史落库必须在返回前完成：会话锁只在本轮期间持有，若异步落库，
@@ -661,12 +663,20 @@ impl Agent {
 
     /// 把滑出短期窗口、且尚未摘要的旧消息批量压缩进会话摘要。后台调用。
     async fn maybe_update_summary(&self, user_id: &str, conversation_id: &str) {
+        // 与巩固一样做 in-flight 去重（独立命名空间）：快速连续几轮同时越过摘要阈值时，
+        // 避免两个后台 spawn 就同一段消息各调一次摘要模型（结果相同、纯浪费）。
+        let Some(_release) =
+            self.acquire_inflight(format!("summary\u{1f}{user_id}\u{1f}{conversation_id}"))
+        else {
+            return;
+        };
         let result: Result<()> = async {
             let pending = self
                 .store
-                .messages_to_summarize(
+                .messages_beyond_watermark(
                     user_id.to_string(),
                     conversation_id.to_string(),
+                    "summary_upto_seq",
                     self.cfg.memory_history_messages,
                     200,
                 )
@@ -675,7 +685,11 @@ impl Agent {
             if pending.messages.len() < self.cfg.conversation_summary_batch {
                 return Ok(());
             }
-            let new_summary = self.summarize(&pending.summary, &pending.messages).await?;
+            let previous = self
+                .store
+                .get_conversation_summary(user_id.to_string(), conversation_id.to_string())
+                .await?;
+            let new_summary = self.summarize(&previous, &pending.messages).await?;
             if !new_summary.is_empty() {
                 tracing::info!(
                     "会话摘要已更新 convo={} 压缩{}条消息 摘要{}字",
@@ -751,6 +765,22 @@ impl Agent {
         .await;
     }
 
+    /// 抢占某会话某任务（`key` 已含 user/convo 与任务命名空间）的 in-flight 名额；
+    /// 已被占用则返回 None，调用方直接跳过。返回的 guard Drop 时自动释放（含异常路径）。
+    fn acquire_inflight(&self, key: String) -> Option<InFlightRelease> {
+        let mut set = self
+            .consolidating
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !set.insert(key.clone()) {
+            return None;
+        }
+        Some(InFlightRelease {
+            set: self.consolidating.clone(),
+            key,
+        })
+    }
+
     /// 自动记忆巩固的通用实现（后台）：取「seq 在 (memory_upto_seq, total-window]、
     /// 尚未巩固」的旧消息，达到 `min_batch` 就整批交给记忆模型，对照已有记忆
     /// reconcile 成长期记忆，成功后推进独立水位线。
@@ -765,27 +795,18 @@ impl Agent {
     ) {
         // 同一会话同一时刻只允许一个巩固：per-turn 与 flush 在 idle 边界上可能撞车，
         // 后到者直接跳过（其未巩固消息会在下一次巩固里连同处理，水位线不丢）。
-        let key = format!("{user_id}\u{1f}{conversation_id}");
-        {
-            let mut inflight = match self.consolidating.lock() {
-                Ok(inflight) => inflight,
-                Err(poisoned) => poisoned.into_inner(),
-            };
-            if !inflight.insert(key.clone()) {
-                return;
-            }
-        }
-        let _release = InFlightRelease {
-            set: self.consolidating.clone(),
-            key,
+        let Some(_release) = self.acquire_inflight(format!("{user_id}\u{1f}{conversation_id}"))
+        else {
+            return;
         };
 
         let result: Result<()> = async {
             let pending = self
                 .store
-                .messages_to_consolidate(
+                .messages_beyond_watermark(
                     user_id.to_string(),
                     conversation_id.to_string(),
+                    "memory_upto_seq",
                     window,
                     200,
                 )
@@ -1056,9 +1077,11 @@ impl Agent {
         &self,
         user_id: &str,
         mut messages: Vec<Value>,
-    ) -> Result<(String, Vec<Value>, Vec<String>, TokenUsage)> {
+    ) -> Result<(String, Vec<Value>, Vec<String>, Vec<MemoryView>, TokenUsage)> {
         let mut events: Vec<Value> = Vec::new();
         let mut warnings: Vec<String> = Vec::new();
+        // 主模型本轮经 remember_memory/update_memory 即时保存的记忆，回给调用方放进 `saved`。
+        let mut saved: Vec<MemoryView> = Vec::new();
         let mut usage = TokenUsage::default();
         let mut tools_enabled = true;
         let mut available_tools = builtin_tools();
@@ -1101,7 +1124,7 @@ impl Agent {
                 } else {
                     content
                 };
-                return Ok((content, events, warnings, usage));
+                return Ok((content, events, warnings, saved, usage));
             }
             if round_index >= self.cfg.max_tool_rounds {
                 tracing::warn!("已达到工具调用轮数上限（{}）", self.cfg.max_tool_rounds);
@@ -1112,7 +1135,7 @@ impl Agent {
                 } else {
                     content.to_string()
                 };
-                return Ok((content, events, warnings, usage));
+                return Ok((content, events, warnings, saved, usage));
             }
 
             messages.push(json!({
@@ -1137,6 +1160,14 @@ impl Agent {
                                     tool_started.elapsed().as_secs_f32(),
                                     preview(&arguments.to_string(), self.cfg.log_preview_chars),
                                 );
+                                // 记忆类工具即时保存的记忆收进 saved，供本轮回复给客户端展示。
+                                if matches!(name.as_str(), "remember_memory" | "update_memory") {
+                                    if let Ok(view) =
+                                        serde_json::from_value::<MemoryView>(result.clone())
+                                    {
+                                        saved.push(view);
+                                    }
+                                }
                                 let event = json!({"tool": name, "arguments": arguments, "ok": true, "result": result});
                                 (result, event)
                             }
@@ -1345,14 +1376,6 @@ mod tests {
     }
 
     #[test]
-    fn trivial_messages_matched_whole_only() {
-        assert!(is_trivial_message("在吗"));
-        assert!(is_trivial_message("哈哈哈"));
-        assert!(!is_trivial_message("我好难过"));
-        assert!(!is_trivial_message("在吗？我想问个事"));
-    }
-
-    #[test]
     fn format_gap_thresholds() {
         assert_eq!(format_gap(5 * 60), "");
         assert_eq!(format_gap(3 * 3600 + 20 * 60), "3 小时 20 分钟");
@@ -1371,7 +1394,10 @@ mod tests {
 
     #[test]
     fn extract_json_from_fenced_response() {
-        let value = extract_json_object("```json\n{\"should_remember\": false}\n```").unwrap();
-        assert_eq!(value["should_remember"], false);
+        // 记忆巩固器返回的是 {"memories":[...],"moods":[...]} 这类对象，可能被 ``` 包裹。
+        let value =
+            extract_json_object("```json\n{\"memories\": [], \"moods\": []}\n```").unwrap();
+        assert!(value["memories"].as_array().unwrap().is_empty());
+        assert!(value["moods"].as_array().unwrap().is_empty());
     }
 }

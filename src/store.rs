@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex, Once};
 use anyhow::{anyhow, bail, Context, Result};
 use chrono::{Duration, SecondsFormat, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -192,7 +192,6 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id, active);
 CREATE INDEX IF NOT EXISTS idx_memories_fingerprint ON memories(user_id, fingerprint);
-CREATE INDEX IF NOT EXISTS idx_memories_expires ON memories(expires_at);
 CREATE INDEX IF NOT EXISTS idx_memories_superseded_by ON memories(superseded_by);
 CREATE TABLE IF NOT EXISTS entities (
   key TEXT PRIMARY KEY,
@@ -227,16 +226,18 @@ CREATE INDEX IF NOT EXISTS idx_moods_user ON moods(user_id, created_at);
 const DB_POOL_SIZE: usize = 4;
 
 /// memories 表拼出 [`MemoryRow`] 所需的列，顺序与 [`MemoryRow::from_row`] 对应。
-const MEMORY_COLUMNS: &str = "id, text, kind, level, subject, created_at, last_seen_at";
+const MEMORY_COLUMNS: &str = "id, text, kind, level, subject, created_at";
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EntityView {
     pub name: String,
     #[serde(rename = "type")]
     pub kind: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+// Deserialize 供 agent 层把工具即时保存的记忆结果（本已 Serialize 成 JSON）读回 MemoryView，
+// 收集进本轮返回的 `saved`；被跳过序列化的可选字段缺省即 None。
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryView {
     pub id: String,
     pub text: String,
@@ -244,18 +245,19 @@ pub struct MemoryView {
     pub level: i64,
     pub subject: String,
     pub created_at: String,
+    #[serde(default)]
     pub entities: Vec<EntityView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub score: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deduplicated: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_at: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub superseded_memory_id: Option<String>,
 }
 
@@ -265,16 +267,10 @@ pub struct ChatTurn {
     pub content: String,
 }
 
+/// 一批「已滑出短期窗口、越过某条水位线、尚未处理」的旧消息，供摘要或记忆巩固消费。
+/// 已有摘要正文不在这里（摘要路径另经 [`Store::get_conversation_summary`] 取）。
 #[derive(Debug, Clone)]
-pub struct PendingSummary {
-    pub summary: String,
-    pub messages: Vec<ChatTurn>,
-    pub max_seq: i64,
-}
-
-/// 一批「已滑出短期窗口、尚未巩固进长期记忆」的旧消息（自动记忆巩固用）。
-#[derive(Debug, Clone)]
-pub struct PendingConsolidation {
+pub struct PendingBatch {
     pub messages: Vec<ChatTurn>,
     pub max_seq: i64,
 }
@@ -489,85 +485,24 @@ impl Store {
         .await
     }
 
-    /// 取已滑出短期窗口（seq <= total-window）且尚未摘要（seq > summary_upto_seq）的旧消息。
-    pub async fn messages_to_summarize(
+    /// 取「已滑出短期窗口（seq <= total-window）且越过水位线（seq > <watermark_col>）」的旧消息。
+    /// `watermark_col` 是 conversations 上的水位线列名，由调用方以字面量指定（`summary_upto_seq`
+    /// 摘要用、`memory_upto_seq` 记忆巩固用），二者互不影响；绝不接受外部输入以免注入。
+    pub async fn messages_beyond_watermark(
         &self,
         user_id: String,
         conversation_id: String,
+        watermark_col: &'static str,
         window: i64,
         limit: i64,
-    ) -> Result<Option<PendingSummary>> {
-        self.run(move |conn, _| {
-            let convo: Option<(String, i64, i64)> = conn
-                .query_row(
-                    "SELECT summary, summary_upto_seq, message_count FROM conversations \n                     WHERE id = ?1 AND user_id = ?2",
-                    params![conversation_id, user_id],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )
-                .optional()?;
-            let Some((summary, upto, total)) = convo else {
-                return Ok(None);
-            };
-            let mut stmt = conn.prepare(
-                "SELECT role, content, seq FROM messages \n                 WHERE conversation_id = ?1 AND seq > ?2 AND seq <= ?3 \n                 AND role IN ('user', 'assistant') ORDER BY seq ASC LIMIT ?4",
-            )?;
-            let rows: Vec<(String, String, i64)> = stmt
-                .query_map(
-                    params![
-                        conversation_id,
-                        upto,
-                        total - window.max(0),
-                        limit.clamp(1, 1000)
-                    ],
-                    |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                )?
-                .collect::<std::result::Result<_, _>>()?;
-            if rows.is_empty() {
-                return Ok(None);
-            }
-            let max_seq = rows.last().map(|r| r.2).unwrap_or(0);
-            Ok(Some(PendingSummary {
-                summary,
-                messages: rows
-                    .into_iter()
-                    .map(|(role, content, _)| ChatTurn { role, content })
-                    .collect(),
-                max_seq,
-            }))
-        })
-        .await
-    }
-
-    pub async fn update_conversation_summary(
-        &self,
-        user_id: String,
-        conversation_id: String,
-        summary: String,
-        upto_seq: i64,
-    ) -> Result<()> {
-        self.run(move |conn, _| {
-            conn.execute(
-                "UPDATE conversations SET summary = ?1, summary_upto_seq = ?2, summary_at = ?3 \n                 WHERE id = ?4 AND user_id = ?5",
-                params![summary, upto_seq, now_iso(), conversation_id, user_id],
-            )?;
-            Ok(())
-        })
-        .await
-    }
-
-    /// 取已滑出短期窗口（seq <= total-window）且尚未巩固（seq > memory_upto_seq）的旧消息，
-    /// 交给自动记忆巩固。与摘要各用独立水位线，互不影响（摘要可单独关闭）。
-    pub async fn messages_to_consolidate(
-        &self,
-        user_id: String,
-        conversation_id: String,
-        window: i64,
-        limit: i64,
-    ) -> Result<Option<PendingConsolidation>> {
+    ) -> Result<Option<PendingBatch>> {
         self.run(move |conn, _| {
             let convo: Option<(i64, i64)> = conn
                 .query_row(
-                    "SELECT memory_upto_seq, message_count FROM conversations \n                     WHERE id = ?1 AND user_id = ?2",
+                    &format!(
+                        "SELECT {watermark_col}, message_count FROM conversations \
+                         WHERE id = ?1 AND user_id = ?2"
+                    ),
                     params![conversation_id, user_id],
                     |row| Ok((row.get(0)?, row.get(1)?)),
                 )
@@ -593,13 +528,30 @@ impl Store {
                 return Ok(None);
             }
             let max_seq = rows.last().map(|r| r.2).unwrap_or(0);
-            Ok(Some(PendingConsolidation {
+            Ok(Some(PendingBatch {
                 messages: rows
                     .into_iter()
                     .map(|(role, content, _)| ChatTurn { role, content })
                     .collect(),
                 max_seq,
             }))
+        })
+        .await
+    }
+
+    pub async fn update_conversation_summary(
+        &self,
+        user_id: String,
+        conversation_id: String,
+        summary: String,
+        upto_seq: i64,
+    ) -> Result<()> {
+        self.run(move |conn, _| {
+            conn.execute(
+                "UPDATE conversations SET summary = ?1, summary_upto_seq = ?2, summary_at = ?3 \n                 WHERE id = ?4 AND user_id = ?5",
+                params![summary, upto_seq, now_iso(), conversation_id, user_id],
+            )?;
+            Ok(())
         })
         .await
     }
@@ -667,7 +619,7 @@ impl Store {
             ))?;
             let scored: Vec<(MemoryRow, f32)> = stmt
                 .query_map(params![query, user_id, limit as i64], |row| {
-                    let similarity = (1.0 - row.get::<_, f64>(7)?) as f32;
+                    let similarity = (1.0 - row.get::<_, f64>(6)?) as f32;
                     Ok((MemoryRow::from_row(row)?, similarity))
                 })?
                 .collect::<std::result::Result<Vec<_>, _>>()?
@@ -685,32 +637,45 @@ impl Store {
             }
             tx.commit()?;
 
-            scored
+            // 一次性取回所有命中记忆的实体，避免逐条查询（N+1）。
+            let ids: Vec<&str> = scored.iter().map(|(row, _)| row.id.as_str()).collect();
+            let mut entities = fetch_entities_map(conn, &ids)?;
+            let views = scored
                 .into_iter()
                 .map(|(rowdata, similarity)| {
-                    let mut view = memory_view_from_row(conn, &rowdata)?;
+                    let mut view = memory_view_with_entities(
+                        &rowdata,
+                        entities.remove(&rowdata.id).unwrap_or_default(),
+                    );
                     view.score = Some((similarity * 1e6).round() / 1e6);
-                    Ok(view)
+                    view
                 })
-                .collect()
+                .collect();
+            Ok(views)
         })
         .await
     }
 
     pub async fn recent_memories(&self, user_id: String, limit: usize) -> Result<Vec<MemoryView>> {
         self.run(move |conn, _| {
-            let now = now_iso();
+            // 追加式永不写 expires_at，无需过期过滤；仍按 last_seen_at 倒序取最近活跃记忆。
             let mut stmt = conn.prepare(&format!(
-                "SELECT {MEMORY_COLUMNS} FROM memories WHERE user_id = ?1 AND active = 1 \n                 AND (expires_at IS NULL OR expires_at > ?2) \n                 ORDER BY last_seen_at DESC LIMIT ?3"
+                "SELECT {MEMORY_COLUMNS} FROM memories WHERE user_id = ?1 AND active = 1 \n                 ORDER BY last_seen_at DESC LIMIT ?2"
             ))?;
             let rows: Vec<MemoryRow> = stmt
                 .query_map(
-                    params![user_id, now, limit.clamp(1, 100) as i64],
+                    params![user_id, limit.clamp(1, 100) as i64],
                     MemoryRow::from_row,
                 )?
                 .collect::<std::result::Result<_, _>>()?;
             drop(stmt);
-            rows.iter().map(|r| memory_view_from_row(conn, r)).collect()
+            let ids: Vec<&str> = rows.iter().map(|r| r.id.as_str()).collect();
+            let mut entities = fetch_entities_map(conn, &ids)?;
+            let views = rows
+                .iter()
+                .map(|r| memory_view_with_entities(r, entities.remove(&r.id).unwrap_or_default()))
+                .collect();
+            Ok(views)
         })
         .await
     }
@@ -801,21 +766,28 @@ impl Store {
                     |row| {
                         Ok((
                             MemoryRow::from_row(row)?,
-                            row.get::<_, i64>(7)? != 0,
-                            row.get(8)?,
+                            row.get::<_, i64>(6)? != 0,
+                            row.get(7)?,
                         ))
                     },
                 )?
                 .collect::<std::result::Result<_, _>>()?;
             drop(stmt);
-            rows.into_iter()
+            let ids: Vec<&str> = rows.iter().map(|(row, _, _)| row.id.as_str()).collect();
+            let mut entities = fetch_entities_map(conn, &ids)?;
+            let views = rows
+                .into_iter()
                 .map(|(rowdata, active, superseded_at)| {
-                    let mut view = memory_view_from_row(conn, &rowdata)?;
+                    let mut view = memory_view_with_entities(
+                        &rowdata,
+                        entities.remove(&rowdata.id).unwrap_or_default(),
+                    );
                     view.active = Some(active);
                     view.superseded_at = superseded_at;
-                    Ok(view)
+                    view
                 })
-                .collect()
+                .collect();
+            Ok(views)
         })
         .await
     }
@@ -1001,8 +973,6 @@ struct MemoryRow {
     level: i64,
     subject: String,
     created_at: String,
-    #[allow(dead_code)]
-    last_seen_at: String,
 }
 
 impl MemoryRow {
@@ -1015,24 +985,45 @@ impl MemoryRow {
             level: row.get(3)?,
             subject: row.get(4)?,
             created_at: row.get(5)?,
-            last_seen_at: row.get(6)?,
         })
     }
 }
 
-fn memory_view_from_row(conn: &Connection, row: &MemoryRow) -> Result<MemoryView> {
-    let mut stmt = conn.prepare(
-        "SELECT e.name, e.type FROM memory_entities me \n         JOIN entities e ON e.key = me.entity_key WHERE me.memory_id = ?1",
-    )?;
-    let entities: Vec<EntityView> = stmt
-        .query_map(params![row.id], |erow| {
-            Ok(EntityView {
-                name: erow.get(0)?,
-                kind: erow.get(1)?,
-            })
-        })?
-        .collect::<std::result::Result<_, _>>()?;
-    Ok(MemoryView {
+/// 一次查询取回多条记忆的实体并按 memory_id 归组，供列表场景避免逐条查询（N+1）。
+/// 空输入直接返回空表（`IN ()` 非法）；同一记忆的实体顺序不保证，调用方不应依赖。
+fn fetch_entities_map(
+    conn: &Connection,
+    ids: &[&str],
+) -> Result<std::collections::HashMap<String, Vec<EntityView>>> {
+    let mut map: std::collections::HashMap<String, Vec<EntityView>> =
+        std::collections::HashMap::new();
+    if ids.is_empty() {
+        return Ok(map);
+    }
+    let marks = vec!["?"; ids.len()].join(",");
+    let mut stmt = conn.prepare(&format!(
+        "SELECT me.memory_id, e.name, e.type FROM memory_entities me \
+         JOIN entities e ON e.key = me.entity_key WHERE me.memory_id IN ({marks})"
+    ))?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            EntityView {
+                name: row.get(1)?,
+                kind: row.get(2)?,
+            },
+        ))
+    })?;
+    for row in rows {
+        let (memory_id, entity) = row?;
+        map.entry(memory_id).or_default().push(entity);
+    }
+    Ok(map)
+}
+
+/// 用已备好的实体列表拼出 MemoryView（不触库）；可选字段留 None，由调用方按需覆写。
+fn memory_view_with_entities(row: &MemoryRow, entities: Vec<EntityView>) -> MemoryView {
+    MemoryView {
         id: row.id.clone(),
         text: row.text.clone(),
         kind: row.kind.clone(),
@@ -1046,7 +1037,16 @@ fn memory_view_from_row(conn: &Connection, row: &MemoryRow) -> Result<MemoryView
         superseded_at: None,
         superseded: None,
         superseded_memory_id: None,
-    })
+    }
+}
+
+/// 单条记忆构建 MemoryView（touch/create/load 等单行路径用）；列表路径应改用
+/// [`fetch_entities_map`] + [`memory_view_with_entities`] 批量取实体，避免 N+1。
+fn memory_view_from_row(conn: &Connection, row: &MemoryRow) -> Result<MemoryView> {
+    let entities = fetch_entities_map(conn, &[row.id.as_str()])?
+        .remove(&row.id)
+        .unwrap_or_default();
+    Ok(memory_view_with_entities(row, entities))
 }
 
 fn load_memory_row(conn: &Connection, id: &str) -> Result<MemoryRow> {
@@ -1622,7 +1622,7 @@ mod tests {
                 .unwrap();
         }
         let batch = store
-            .messages_to_consolidate("u1".into(), "c1".into(), 2, 200)
+            .messages_beyond_watermark("u1".into(), "c1".into(), "memory_upto_seq", 2, 200)
             .await
             .unwrap()
             .expect("应有已滑出窗口的待巩固消息");
@@ -1635,7 +1635,7 @@ mod tests {
             .await
             .unwrap();
         assert!(store
-            .messages_to_consolidate("u1".into(), "c1".into(), 2, 200)
+            .messages_beyond_watermark("u1".into(), "c1".into(), "memory_upto_seq", 2, 200)
             .await
             .unwrap()
             .is_none());
