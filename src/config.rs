@@ -11,10 +11,10 @@ use serde::Serialize;
 // ---------- DeepSeek 接入点（固定） ----------
 
 pub const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com";
-/// 对话模型：思考模式恒开、等级 max（见 llm.rs 的 payload 组装）。
+/// 全局唯一的模型：对话开思考（等级 max），记忆侧的结构化抽取关思考（见 llm.rs 的
+/// payload 组装）。不再有第二个便宜模型——记忆工作要么已折叠进主模型这一次调用
+/// （整池直供，见 MEMORY_INLINE_MAX），要么在后台跑且需要真正的判断力（巩固）。
 pub const CHAT_MODEL: &str = "deepseek-v4-pro";
-/// 记忆模型：精选/巩固/摘要这类结构化短任务，用便宜的 flash 且关掉思考。
-pub const MEMORY_MODEL: &str = "deepseek-v4-flash";
 /// 固定思考等级。DeepSeek 只有 high / max 两档，这里恒取 max。
 pub const REASONING_EFFORT: &str = "max";
 
@@ -47,13 +47,24 @@ pub const FETCH_RESULT_MAX_CHARS: usize = 12000;
 
 // ---------- 记忆策略 ----------
 
-/// 检索最终注入上下文的记忆条数上限。
+/// 整池直供的上限：活跃记忆不超过这么多条时，整池挂进主模型的 system 段，
+/// **不调精选**——一个模型、一次往返、零额外延迟。超过才降级到精选（见下）。
+///
+/// 定成 300 是因为个人陪伴场景的记忆总量通常远小于它，也就是绝大多数用户永远走直供。
+/// 经济性押在前缀缓存上：池子按创建时间正序渲染，追加只落末尾，整段命中缓存。
+/// 调大它会让降级更晚发生（更准、缓存未命中时更贵），调小则更早退回精选。
+pub const MEMORY_INLINE_MAX: usize = 300;
+/// 降级到精选时，最终注入上下文的记忆条数上限。
 pub const MEMORY_SEARCH_LIMIT: usize = 8;
+/// 实体保底召回一次最多补进候选池多少条（仅降级路径生效）。
+/// 补的是「按新近度早已沉底、但本轮字面提到了」的记忆，几十条足够，多了只是噪声。
+pub const MEMORY_ENTITY_RESCUE_MAX: usize = 30;
 pub const MEMORY_HISTORY_MESSAGES: i64 = 16;
 /// 近似去重阈值：字符三元组 Jaccard ≥ 此值即并入旧记忆。
 /// 0.9 ≈「只差标点或一两个语气词」；「喜欢 X」与「不喜欢 X」只有 0.3 左右，不会被误合并。
 pub const MEMORY_DUPLICATE_THRESHOLD: f32 = 0.9;
-/// 精选候选池上限：按 last_seen_at 倒序取这么多条活跃记忆交给记忆模型挑。
+/// 候选池上限：按 last_seen_at 取这么多条活跃记忆（渲染时改按 created_at 正序，
+/// 见 `Store::memory_pool`）。不超过 MEMORY_INLINE_MAX 时整池直供，否则交给精选挑。
 pub const MEMORY_SELECT_POOL_MAX: usize = 400;
 /// 候选清单里每条记忆的截断长度（字符）。
 pub const MEMORY_SELECT_TEXT_MAX_CHARS: usize = 200;
@@ -191,7 +202,6 @@ impl Config {
             provider: &'a str,
             base_url: &'a str,
             chat_model: &'a str,
-            memory_model: &'a str,
             reasoning_effort: &'a str,
             db_path: &'a str,
             mcp_servers: Vec<&'a str>,
@@ -200,7 +210,6 @@ impl Config {
             provider: "deepseek",
             base_url: DEEPSEEK_BASE_URL,
             chat_model: CHAT_MODEL,
-            memory_model: MEMORY_MODEL,
             reasoning_effort: REASONING_EFFORT,
             db_path: &self.db_path,
             mcp_servers: self.mcp_servers.iter().map(|s| s.name.as_str()).collect(),

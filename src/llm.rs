@@ -1,9 +1,12 @@
 //! DeepSeek /chat/completions 客户端：带重试、tools 与 response_format 支持。
 //!
-//! 只对接 DeepSeek 官方 API。两个 Profile 的差别只有模型名和思考开关：
-//! - Chat：`deepseek-v4-pro` + 思考开启、`reasoning_effort=max`（固定，不可配）。
-//!   思考模式不支持 temperature / top_p / 惩罚项，所以对话侧不发 temperature。
-//! - Memory：`deepseek-v4-flash` + 思考关闭，用于精选/巩固/摘要这类结构化短任务。
+//! 只对接 DeepSeek 官方 API，且**只用一个模型**（`CHAT_MODEL`）。两个 Profile 的差别
+//! 只剩思考开关：
+//! - Chat：思考开启、`reasoning_effort=max`（固定，不可配）。思考模式不支持
+//!   temperature / top_p / 惩罚项，所以对话侧不发 temperature。
+//! - Structured：思考关闭 + 低温，用于巩固/摘要/精选这类结构化抽取。这些是判断题不是
+//!   推理题，开思考只会拖慢并烧钱；但它们（尤其是巩固里的 add/update 抉择）需要真正的
+//!   判断力——判错一次 supersede 就永久停用一条无关记忆，所以不再降级到便宜模型。
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -52,27 +55,18 @@ pub struct LlmResponse {
 
 #[derive(Debug, Clone, Default)]
 pub struct ChatParams {
-    /// 只对 Memory Profile 生效：思考模式不接受温度参数。
+    /// 只对 Structured Profile 生效：思考模式不接受温度参数。
     pub temperature: f32,
     pub max_tokens: u32,
     pub tools: Option<Vec<Value>>,
     pub response_format: Option<Value>,
 }
 
-/// 选择使用哪个 DeepSeek 模型：对话（思考 max）或记忆（不思考）。
+/// 同一个模型的两种用法：对话（思考 max）或结构化抽取（不思考、低温）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Profile {
     Chat,
-    Memory,
-}
-
-impl Profile {
-    fn model(self) -> &'static str {
-        match self {
-            Profile::Chat => config::CHAT_MODEL,
-            Profile::Memory => config::MEMORY_MODEL,
-        }
-    }
+    Structured,
 }
 
 pub struct LlmClient {
@@ -99,7 +93,7 @@ impl LlmClient {
         if self.cfg.deepseek_api_key.is_empty() {
             return Err(LlmError::new("尚未配置 DEEPSEEK_API_KEY", None));
         }
-        let model = profile.model();
+        let model = config::CHAT_MODEL;
         let mut payload = json!({
             "model": model,
             "messages": messages,
@@ -110,7 +104,7 @@ impl LlmClient {
                 payload["thinking"] = json!({"type": "enabled"});
                 payload["reasoning_effort"] = json!(config::REASONING_EFFORT);
             }
-            Profile::Memory => {
+            Profile::Structured => {
                 payload["thinking"] = json!({"type": "disabled"});
                 payload["temperature"] = json!(params.temperature);
             }

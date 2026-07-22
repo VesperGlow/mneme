@@ -1,7 +1,7 @@
 //! SQLite 存储：对话/记忆/实体/情绪全在普通关系表里，没有向量、没有虚拟表。
 //! 追加式（append-only）：记忆只新增，不因时间过期；软删除/取代仍保留可审计留痕。
-//! 检索不在这一层做语义判断——本模块只负责按新近度端出候选池（[`Store::memory_pool`]）
-//! 和按 id 取回正文（[`Store::memories_by_ids`]），选哪几条由 agent 层交给记忆模型决定。
+//! 检索不在这一层做语义判断——本模块只负责端出候选池（[`Store::memory_pool`]，按新近度
+//! 取、按创建时间排）和按 id 取回正文（[`Store::memories_by_ids`]），怎么用由 agent 层定。
 
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -58,7 +58,7 @@ fn trigrams(text: &str) -> std::collections::HashSet<String> {
 
 /// 字符三元组 Jaccard 相似度（0..=1）。用于「近乎完全相同的表述」的合并判定——
 /// 取代了原先基于向量余弦的近似去重。注意它衡量的是**字面**重合而非语义：这正是
-/// 这里想要的，真正的语义判重由记忆模型在巩固时 reconcile 完成。
+/// 这里想要的，真正的语义判重由巩固器在巩固时 reconcile 完成。
 pub fn trigram_similarity(a: &str, b: &str) -> f32 {
     let (ga, gb) = (trigrams(a), trigrams(b));
     let intersection = ga.intersection(&gb).count();
@@ -84,7 +84,29 @@ fn migrate_drop_level_column(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// 旧库退场：清掉向量存储的残留。检索改由记忆模型精选后，`vec_memories` 虚拟表与更早的
+/// 旧库退场：移除没有任何读者的列。
+///
+/// - `access_count`：检索路径从不回写（那是纯写放大，还要和真正的写入抢 WAL 单写锁），
+///   恒为 0，没有意义。「这条记忆用得多不多」由 `last_accessed_at` 表达就够了。
+/// - `expires_at`：追加式存储永不写它，恒为 NULL；记忆不因时间过期，只会被遗忘或取代。
+///
+/// 幂等：无该列则跳过。不可逆，但两列本就无信息量。
+fn migrate_drop_dead_columns(conn: &Connection) -> Result<()> {
+    for column in ["access_count", "expires_at"] {
+        let has_col: bool = conn.query_row(
+            "SELECT count(*) FROM pragma_table_info('memories') WHERE name = ?1",
+            params![column],
+            |row| row.get::<_, i64>(0),
+        )? > 0;
+        if has_col {
+            conn.execute(&format!("ALTER TABLE memories DROP COLUMN {column}"), [])?;
+            tracing::info!("memories.{column} 列已移除（无任何读者）");
+        }
+    }
+    Ok(())
+}
+
+/// 旧库退场：清掉向量存储的残留。检索改由模型精选后，`vec_memories` 虚拟表与更早的
 /// `memories.embedding` 列都没有读者了。
 ///
 /// 两步都是尽力而为、失败不致命：本进程不再注册 sqlite-vec，`DROP TABLE vec_memories`
@@ -161,11 +183,12 @@ CREATE TABLE IF NOT EXISTS memories (
   source TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   repetitions INTEGER NOT NULL DEFAULT 1,
-  access_count INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
+  -- last_seen_at：最近一次被「写入或去重命中」，即用户又提了一遍。
+  -- last_accessed_at：最近一次被精选真正挑中，即这条记忆确实派上了用场。
+  -- 候选池按两者的较大值排序（见 memory_pool）：用得到的浮上来，长期没用的沉下去。
   last_seen_at TEXT NOT NULL,
   last_accessed_at TEXT,
-  expires_at TEXT,
   forgotten_at TEXT,
   superseded_by TEXT,
   superseded_at TEXT
@@ -310,6 +333,7 @@ impl Store {
                 conn.execute_batch(SCHEMA)?;
                 ensure_conversation_columns(&conn)?;
                 migrate_drop_level_column(&conn)?;
+                migrate_drop_dead_columns(&conn)?;
                 migrate_drop_vector_storage(&conn)?;
             }
             pool.push(Mutex::new(conn));
@@ -581,12 +605,21 @@ impl Store {
 
     // ---------- 长期记忆 ----------
 
-    /// 候选池：该用户的活跃记忆，按最近提及倒序取最多 `limit` 条，只带精选所需的
-    /// 最小字段（id/text/kind/subject），不查实体也不组装 [`MemoryView`]。
+    /// 候选池：该用户的活跃记忆，最多 `limit` 条，只带下游所需的最小字段
+    /// （id/text/kind/subject），不查实体也不组装 [`MemoryView`]。
     ///
-    /// 这是「LLM 精选」检索的第一步：整池原样喂给记忆模型让它挑，所以这里刻意**不做**
-    /// 任何相关性判断。超出 `limit` 时按 `last_seen_at` 截断——留下最近被提及的那部分，
-    /// 是无语义信息可用时最合理的取舍。
+    /// **选谁**分两层，超出 `limit` 时才谈得上取舍：
+    /// - **核心层**（`kind = 'constraint'` 或 `subject = 'assistant'`）永远优先入池。过敏、
+    ///   忌口这类硬约束和助手自己的承诺可能半年不提一次，却绝不能因为「不够新」被挤出去——
+    ///   它们条数天然很少，置顶的代价可以忽略，漏掉的代价却是不可接受的。
+    /// - **近期层**按「最近被用到」倒序填满余量：取 `last_seen_at`（又被提了一遍）与
+    ///   `last_accessed_at`（被精选真正挑中）的较大值，用得到的浮上来、长期没用的沉下去。
+    ///   没有语义信息可用时，这是最合理的取舍。这里刻意**不做**任何相关性判断。
+    ///
+    /// **怎么排**却按 `created_at` 正序返回，这两件事必须分开：池子会被原样渲染进模型的
+    /// system 段，而 DeepSeek 的上下文缓存是按前缀逐字节匹配的。若沿用倒序，新写入的记忆
+    /// 会插在第一行、把后面每一行都顶掉，整段前缀每轮作废；改成正序后追加只落在末尾，
+    /// 前缀保持稳定，命中缓存的输入价约为未命中的 1/50。
     pub async fn memory_pool(
         &self,
         user_id: String,
@@ -594,9 +627,12 @@ impl Store {
     ) -> Result<Vec<MemoryCandidate>> {
         self.run(move |conn, _| {
             let mut stmt = conn.prepare(
-                // rowid 做次级排序键：同一微秒内写入的两条记忆 last_seen_at 可能相等，
-                // 光按时间排序结果不确定，截断时会随机丢掉其中一条。
-                "SELECT id, text, kind, subject FROM memories \n                 WHERE user_id = ?1 AND active = 1 \n                 ORDER BY last_seen_at DESC, rowid DESC LIMIT ?2",
+                // rowid 做次级排序键：同一微秒内写入的两条记忆时间戳可能相等，光按时间
+                // 排序结果不确定——截断时会随机丢掉其中一条，渲染时会随机换行序（对缓存
+                // 而言等同于整段失效）。内层定“取哪些”，外层定“怎么排”。
+                // max(a, b) 是 SQLite 的二元标量函数；last_accessed_at 可能为 NULL，
+                // 必须先 coalesce 成 ''（字典序小于任何时间戳），否则整个 max 变成 NULL。
+                "SELECT id, text, kind, subject FROM ( \n                   SELECT id, text, kind, subject, created_at, rowid AS rid, \n                     CASE WHEN kind = 'constraint' OR subject = 'assistant' \n                          THEN 0 ELSE 1 END AS tier \n                   FROM memories \n                   WHERE user_id = ?1 AND active = 1 \n                   ORDER BY tier ASC, \n                            max(last_seen_at, coalesce(last_accessed_at, '')) DESC, \n                            rowid DESC \n                   LIMIT ?2 \n                 ) ORDER BY created_at ASC, rid ASC",
             )?;
             let rows: Vec<MemoryCandidate> = stmt
                 .query_map(params![user_id, limit as i64], |row| {
@@ -609,6 +645,114 @@ impl Store {
                 })?
                 .collect::<std::result::Result<_, _>>()?;
             Ok(rows)
+        })
+        .await
+    }
+
+    /// 实体保底召回：取「所提及的实体名字面出现在 `text` 里」的活跃记忆。
+    ///
+    /// 这是候选池截断时的安全网，专治「很久没提、但这次正好提到」——那类记忆按新近度早就
+    /// 沉底了，可它恰恰是本轮最该被看见的。`entities` / `memory_entities` 两张表此前只有
+    /// 图谱导出一个读者，这里终于让它们干上活：字面匹配便宜、精确，且不需要任何模型判断。
+    ///
+    /// 只匹配长度 ≥ 2 的实体名（单字实体几乎必然命中，是噪声不是信号），大小写不敏感。
+    pub async fn memories_mentioning(
+        &self,
+        user_id: String,
+        text: String,
+        limit: usize,
+    ) -> Result<Vec<MemoryCandidate>> {
+        if text.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        self.run(move |conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT DISTINCT m.id, m.text, m.kind, m.subject, m.created_at, m.rowid \n                 FROM memories m \n                 JOIN memory_entities me ON me.memory_id = m.id \n                 JOIN entities e ON e.key = me.entity_key \n                 WHERE m.user_id = ?1 AND m.active = 1 \n                   AND length(e.name) >= 2 \n                   AND instr(lower(?2), lower(e.name)) > 0 \n                 ORDER BY m.created_at ASC, m.rowid ASC LIMIT ?3",
+            )?;
+            let rows: Vec<MemoryCandidate> = stmt
+                .query_map(params![user_id, text, limit.clamp(1, 200) as i64], |row| {
+                    Ok(MemoryCandidate {
+                        id: row.get(0)?,
+                        text: row.get(1)?,
+                        kind: row.get(2)?,
+                        subject: row.get(3)?,
+                    })
+                })?
+                .collect::<std::result::Result<_, _>>()?;
+            Ok(rows)
+        })
+        .await
+    }
+
+    /// 精选真正挑中某几条记忆时，推进它们的 `last_accessed_at`。
+    ///
+    /// 「被模型挑中」是比「被写入」强得多的相关性信号，把它记下来，候选池就从一份静态清单
+    /// 变成活的工作集。只在模型**确实做出了选择**时调用——回退路径挑的是「最近 N 条」，
+    /// 那不是信号，记下来只会让排序自我强化。
+    ///
+    /// 最多 8 行的单条 UPDATE，后台 best-effort 执行，不进热路径。
+    pub async fn touch_recalled(&self, user_id: String, ids: Vec<String>) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+        self.run(move |conn, _| {
+            let marks = std::iter::repeat("?")
+                .take(ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let now = now_iso();
+            // 绑定顺序：?1 时间、?2 user_id，其后依次是各个 id。
+            let binds = std::iter::once(&now)
+                .chain(std::iter::once(&user_id))
+                .chain(ids.iter());
+            conn.execute(
+                &format!(
+                    "UPDATE memories SET last_accessed_at = ?1 \
+                     WHERE user_id = ?2 AND active = 1 AND id IN ({marks})"
+                ),
+                rusqlite::params_from_iter(binds),
+            )?;
+            Ok(())
+        })
+        .await
+    }
+
+    /// 把 id 前缀解析成完整 id（像 git 短哈希），限定在该用户的活跃记忆内。
+    ///
+    /// 让主模型可以直接引用背景里看到的短编号去 update / forget / link，省掉一次
+    /// 「先 search 拿 id」的工具往返（而那次 search 在降级模式下还要再付一次模型调用）。
+    /// 完整 id 精确命中优先；多条命中报歧义而不是随便挑一条——挑错就是误停用一条无关记忆。
+    pub async fn resolve_memory_id(
+        &self,
+        user_id: String,
+        input: String,
+    ) -> Result<Option<String>> {
+        let input = input.trim().to_string();
+        // 只放行 uuid 字母表。这不只是格式校验：下面用的是 LIKE 前缀匹配，而 `_` 在 LIKE
+        // 里是单字符通配符——模型若给出「1234_678」会匹配到别的记忆，再拿去 forget /
+        // supersede 就是改错了一条。限定字符集比加 ESCAPE 更简单也更严。
+        if input.is_empty()
+            || !input
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == '-')
+        {
+            return Ok(None);
+        }
+        self.run(move |conn, _| {
+            let mut stmt = conn.prepare(
+                "SELECT id FROM memories \n                 WHERE user_id = ?1 AND active = 1 AND (id = ?2 OR id LIKE ?2 || '%') \n                 LIMIT 20",
+            )?;
+            let ids: Vec<String> = stmt
+                .query_map(params![user_id, input], |row| row.get(0))?
+                .collect::<std::result::Result<_, _>>()?;
+            if ids.iter().any(|existing| *existing == input) {
+                return Ok(Some(input));
+            }
+            match ids.len() {
+                0 => Ok(None),
+                1 => Ok(Some(ids.into_iter().next().unwrap())),
+                _ => bail!("记忆编号 {input} 匹配到 {} 条，请给出完整 id", ids.len()),
+            }
         })
         .await
     }
@@ -635,8 +779,9 @@ impl Store {
                 .collect::<std::result::Result<_, _>>()?;
             drop(stmt);
 
-            // 检索为纯读路径：不回写 access_count/last_accessed_at（两列无任何读者，
-            // 每次检索都写一批纯属写放大，还和真正的写入抢 WAL 单写锁）。
+            // 取回正文本身是纯读路径，不在这里回写任何东西：整池直供模式下每轮都会取回
+            // 全部记忆，若在此处 touch，「最近被用到」会退化成人人相同、失去区分度。
+            // 真正的相关性信号只在精选**挑中**时产生，由 touch_recalled 单独回写。
             // 一次性取回所有命中记忆的实体，避免逐条查询（N+1）。
             let id_refs: Vec<&str> = rows.iter().map(|row| row.id.as_str()).collect();
             let mut entities = fetch_entities_map(conn, &id_refs)?;
@@ -658,7 +803,7 @@ impl Store {
 
     pub async fn recent_memories(&self, user_id: String, limit: usize) -> Result<Vec<MemoryView>> {
         self.run(move |conn, _| {
-            // 追加式永不写 expires_at，无需过期过滤；仍按 last_seen_at 倒序取最近活跃记忆。
+            // 追加式存储没有过期这回事，无需过期过滤；按 last_seen_at 倒序取最近活跃记忆。
             let mut stmt = conn.prepare(&format!(
                 "SELECT {MEMORY_COLUMNS} FROM memories WHERE user_id = ?1 AND active = 1 \n                 ORDER BY last_seen_at DESC LIMIT ?2"
             ))?;
@@ -1076,7 +1221,7 @@ fn create_memory_sync(conn: &mut Connection, new: NewMemory) -> Result<MemoryVie
     // 重复也能合并。
     //
     // 这一步只兜「改了个标点/语气词」这类字面近重；语义层面的重复（换种说法讲同一件事）
-    // 由记忆模型在巩固时对照已有记忆 reconcile 成 update，不指望这里。
+    // 由巩固器在巩固时对照已有记忆 reconcile 成 update，不指望这里。
     //
     // 长度比在 [0.5, 2] 之外的直接跳过：字数差一倍以上不可能达到 0.9 的 Jaccard，
     // 先用一次整数比较挡掉大部分候选，省去建三元组集合的开销。
@@ -1126,7 +1271,7 @@ fn create_memory_sync(conn: &mut Connection, new: NewMemory) -> Result<MemoryVie
         "INSERT OR IGNORE INTO users (id, created_at) VALUES (?1, ?2)",
         params![new.user_id, now],
     )?;
-    // 追加式：不写 expires_at（列保留兼容旧库，新记忆恒为 NULL = 永不过期）。
+    // 追加式：记忆永不过期，只会被遗忘（软删）或被取代。
     tx.execute(
         "INSERT INTO memories (id, user_id, text, kind, subject, \n         fingerprint, source, created_at, last_seen_at) \n         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
         params![
@@ -1378,7 +1523,7 @@ mod tests {
     #[test]
     fn trigram_similarity_separates_near_dupes_from_distinct_text() {
         // 只差一个句号 → 标点被滤掉，完全相同；换个说法讲同一件事 → 远低于合并阈值
-        //（这类语义重复交给记忆模型 reconcile，不归近似去重管）。
+        //（这类语义重复交给巩固器 reconcile，不归近似去重管）。
         assert_eq!(trigram_similarity("用户喜欢喝美式咖啡", "用户喜欢喝美式咖啡。"), 1.0);
         assert!(trigram_similarity("用户养了一只叫年糕的猫", "用户家里有只小猫咪") < 0.5);
         // 否定与肯定字面高度重合，但阈值 0.9 仍能分开，不会被误合并。
@@ -1414,7 +1559,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pool_is_recency_ordered_and_user_isolated() {
+    async fn pool_truncates_by_recency_but_renders_append_only() {
         let (_dir, store) = open_store();
         let cat = store
             .create_memory(mem("u1", "用户养了一只叫年糕的猫", "fact"))
@@ -1426,13 +1571,15 @@ mod tests {
             .await
             .unwrap();
 
-        // 候选池按 last_seen_at 倒序：后写入的排前面。
+        // 「取哪些」和「怎么排」是两件事，这个测试盯的就是它们没被合并回一件事：
+        // 返回顺序按 created_at 正序，新记忆落在末尾——池子会被原样渲染进 system 段，
+        // 只有追加式的顺序才能让前缀缓存持续命中。
         let pool = store.memory_pool("u1".into(), 10).await.unwrap();
         assert_eq!(
             pool.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
-            vec!["用户最近在追一部剧", "用户养了一只叫年糕的猫"]
+            vec!["用户养了一只叫年糕的猫", "用户最近在追一部剧"]
         );
-        // limit 截断保留最近的那部分。
+        // 而截断仍按 last_seen_at 倒序：装不下时留下最近被提及的那条，不是最早的那条。
         let capped = store.memory_pool("u1".into(), 1).await.unwrap();
         assert_eq!(capped.len(), 1);
         assert_eq!(capped[0].text, "用户最近在追一部剧");
@@ -1453,6 +1600,145 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn core_tier_survives_truncation() {
+        let (_dir, store) = open_store();
+        // 先写一条硬约束，再写一堆更新的普通记忆把它按新近度挤到后面去。
+        store
+            .create_memory(mem("u1", "用户对花生过敏", "constraint"))
+            .await
+            .unwrap();
+        for i in 0..5 {
+            store
+                .create_memory(mem("u1", &format!("用户第{i}件小事"), "event"))
+                .await
+                .unwrap();
+        }
+        // 池子只装得下 2 条：过敏这类硬约束必须在，不能因为「不够新」被挤出去。
+        let pool = store.memory_pool("u1".into(), 2).await.unwrap();
+        assert_eq!(pool.len(), 2);
+        assert!(pool.iter().any(|c| c.text == "用户对花生过敏"));
+        // 余量给最新的那条，而不是次老的。
+        assert!(pool.iter().any(|c| c.text == "用户第4件小事"));
+    }
+
+    #[tokio::test]
+    async fn recall_touch_lifts_memory_back_up() {
+        let (_dir, store) = open_store();
+        let old = store
+            .create_memory(mem("u1", "用户养了一只叫年糕的猫", "fact"))
+            .await
+            .unwrap();
+        store
+            .create_memory(mem("u1", "用户最近在追一部剧", "event"))
+            .await
+            .unwrap();
+        // 只装得下 1 条时，默认留下更新的那条。
+        assert_eq!(
+            store.memory_pool("u1".into(), 1).await.unwrap()[0].text,
+            "用户最近在追一部剧"
+        );
+        // 精选挑中了旧的那条 → 回写命中时间 → 它重新浮上来，取代新的那条留在池里。
+        store
+            .touch_recalled("u1".into(), vec![old.id.clone()])
+            .await
+            .unwrap();
+        assert_eq!(
+            store.memory_pool("u1".into(), 1).await.unwrap()[0].text,
+            "用户养了一只叫年糕的猫"
+        );
+    }
+
+    #[tokio::test]
+    async fn entity_rescue_finds_sunken_memories() {
+        let (_dir, store) = open_store();
+        let mut with_entity = mem("u1", "用户养了一只叫年糕的猫", "fact");
+        with_entity.entities = vec![EntityView {
+            name: "年糕".into(),
+            kind: "pet".into(),
+        }];
+        store.create_memory(with_entity).await.unwrap();
+        store
+            .create_memory(mem("u1", "用户最近在追一部剧", "event"))
+            .await
+            .unwrap();
+
+        // 实体名字面出现在本轮文本里 → 命中，哪怕这条记忆按新近度早已沉底。
+        let hits = store
+            .memories_mentioning("u1".into(), "年糕最近怎么样".into(), 10)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].text, "用户养了一只叫年糕的猫");
+        // 没提到就不命中，也不会把没有实体关联的记忆一起捞出来。
+        assert!(store
+            .memories_mentioning("u1".into(), "今天天气不错".into(), 10)
+            .await
+            .unwrap()
+            .is_empty());
+        // 用户隔离。
+        assert!(store
+            .memories_mentioning("u2".into(), "年糕最近怎么样".into(), 10)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn short_id_prefix_resolves_to_full_id() {
+        let (_dir, store) = open_store();
+        let created = store
+            .create_memory(mem("u1", "用户对花生过敏", "constraint"))
+            .await
+            .unwrap();
+        let short: String = created.id.chars().take(8).collect();
+        // 短前缀、完整 id 都认。
+        assert_eq!(
+            store.resolve_memory_id("u1".into(), short).await.unwrap(),
+            Some(created.id.clone())
+        );
+        assert_eq!(
+            store
+                .resolve_memory_id("u1".into(), created.id.clone())
+                .await
+                .unwrap(),
+            Some(created.id.clone())
+        );
+        // 查无此条返回 None（交回模型报错），跨用户也取不到。
+        assert!(store
+            .resolve_memory_id("u1".into(), "ffffffff".into())
+            .await
+            .unwrap()
+            .is_none());
+        // LIKE 通配符不许混进来：`_` 若被当成单字符通配，会匹配到别的记忆并被误删。
+        let wildcard: String = created
+            .id
+            .chars()
+            .take(7)
+            .chain(std::iter::once('_'))
+            .collect();
+        assert!(store
+            .resolve_memory_id("u1".into(), wildcard)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .resolve_memory_id("u2".into(), created.id.clone())
+            .await
+            .unwrap()
+            .is_none());
+        // 遗忘后不再可解析：软删的记忆不该还能被 update/forget 指到。
+        store
+            .forget_memory("u1".into(), created.id.clone())
+            .await
+            .unwrap();
+        assert!(store
+            .resolve_memory_id("u1".into(), created.id)
+            .await
+            .unwrap()
+            .is_none());
     }
 
     #[tokio::test]
@@ -1508,7 +1794,7 @@ mod tests {
 
     #[tokio::test]
     async fn distinct_memories_are_not_merged() {
-        // 措辞不同但讲同一件事：字面相似度不够，这里应各存一条（语义合并归记忆模型管）。
+        // 措辞不同但讲同一件事：字面相似度不够，这里应各存一条（语义合并归巩固器管）。
         let (_dir, store) = open_store();
         store
             .create_memory(mem("u1", "用户养了一只叫年糕的猫", "fact"))
@@ -1595,12 +1881,12 @@ mod tests {
             )
             .unwrap();
         }
-        // Store::open 触发迁移：两列都被移除，记忆本身完好保留。
+        // Store::open 触发迁移：四列都被移除，记忆本身完好保留。
         let store = Store::open(test_config(&path_str)).unwrap();
         let pool = store.memory_pool("u1".into(), 10).await.unwrap();
         assert_eq!(pool.len(), 1);
         assert_eq!(pool[0].text, "旧记忆");
-        for column in ["embedding", "level"] {
+        for column in ["embedding", "level", "access_count", "expires_at"] {
             let has_col = store
                 .run(move |conn, _| {
                     Ok(conn.query_row(

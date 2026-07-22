@@ -1,6 +1,7 @@
 //! Mneme：单进程二进制 —— HTTP API + SQLite 长期记忆 + QQ 桥接。
-//! 模型只接 DeepSeek 官方 API，思考等级固定 max。
-//! 记忆检索不用向量：候选池直接交给记忆模型精选（见 `agent::Agent::retrieve`），
+//! 模型只接 DeepSeek 官方 API，且全局只用一个模型（对话开思考、记忆侧关思考）。
+//! 记忆检索不用向量、通常也不用额外的模型调用：候选池装得下就整池挂进主模型的
+//! system 段（见 `agent::Agent::recall_for_context`），装不下才降级到精选。
 //! 进程内不再有任何本地模型推理。
 
 mod agent;
