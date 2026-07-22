@@ -182,7 +182,7 @@ impl McpManager {
                 .timeout(Duration::from_secs(30))
                 .build()?,
             call_http: reqwest::Client::builder()
-                .timeout(Duration::from_secs_f64(cfg.mcp_timeout_seconds))
+                .timeout(Duration::from_secs_f64(crate::config::MCP_TIMEOUT_SECONDS))
                 .build()?,
             cfg,
             index: Vec::new(),
@@ -278,7 +278,7 @@ impl McpManager {
         .await
         // 脱敏后再抛出：上层会把它写进 tool_events、回传给模型与 API 响应。
         .map_err(|error| anyhow!("调用 MCP 工具 {name} 失败：{}", redact_secret(&format!("{error:#}"))))?;
-        Ok(serialize_result(&result, self.cfg.mcp_result_max_chars))
+        Ok(serialize_result(&result, crate::config::MCP_RESULT_MAX_CHARS))
     }
 }
 

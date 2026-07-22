@@ -1,4 +1,5 @@
 //! Mneme：单进程二进制 —— HTTP API + SQLite 长期记忆 + QQ 桥接。
+//! 模型只接 DeepSeek 官方 API，思考等级固定 max。
 //! 记忆检索不用向量：候选池直接交给记忆模型精选（见 `agent::Agent::retrieve`），
 //! 进程内不再有任何本地模型推理。
 
@@ -7,7 +8,6 @@ mod api;
 mod cli;
 mod config;
 mod fetch;
-mod image;
 mod llm;
 mod mcp;
 mod qq;
@@ -51,9 +51,9 @@ async fn main() -> Result<()> {
     let mut mcp = mcp::McpManager::new(cfg.clone())?;
     mcp.start().await?;
     let fetcher = Arc::new(fetch::Fetcher::new(
-        cfg.fetch_timeout_seconds,
-        cfg.fetch_max_bytes,
-        cfg.fetch_result_max_chars,
+        config::FETCH_TIMEOUT_SECONDS,
+        config::FETCH_MAX_BYTES,
+        config::FETCH_RESULT_MAX_CHARS,
     )?);
     let agent = agent::Agent::new(
         cfg.clone(),
@@ -69,7 +69,7 @@ async fn main() -> Result<()> {
         cfg: cfg.clone(),
         agent: agent.clone(),
     };
-    let api_addr = format!("0.0.0.0:{}", cfg.app_port);
+    let api_addr = format!("0.0.0.0:{}", config::API_PORT);
     let listener = tokio::net::TcpListener::bind(&api_addr)
         .await
         .with_context(|| format!("监听 {api_addr} 失败"))?;
@@ -108,11 +108,11 @@ async fn main() -> Result<()> {
 
     // 停止接收新请求后，等在途消息处理与后台落库（历史/记忆/摘要/情绪）收尾。
     tracing::info!("正在优雅停机：等待在途消息与写入完成…");
-    let grace = Duration::from_secs(cfg.shutdown_timeout_seconds);
+    let grace = Duration::from_secs(config::SHUTDOWN_TIMEOUT_SECONDS);
     if tokio::time::timeout(grace, pending.wait_idle()).await.is_err() {
         tracing::warn!(
             "等待在途写入超过 {} 秒，放弃剩余任务退出",
-            cfg.shutdown_timeout_seconds
+            config::SHUTDOWN_TIMEOUT_SECONDS
         );
     }
     if let Err(error) = store.checkpoint().await {

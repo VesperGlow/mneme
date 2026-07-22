@@ -1,8 +1,10 @@
-# Qwen + SQLite 长期记忆助手
+# DeepSeek + SQLite 长期记忆助手
 
 [![Build and test](https://github.com/VesperGlow/mneme/actions/workflows/build.yml/badge.svg)](https://github.com/VesperGlow/mneme/actions/workflows/build.yml)
 
 这是一个可直接容器化部署的个人情感陪伴助手：**一个 Rust 单二进制**（axum + rusqlite）内完成一切——SQLite 单文件保存对话、长期记忆与情绪时间线；记忆**永久留存**，对话被压缩（旧消息滑出短期窗口）时便宜模型对整批对话做一次巩固——判断哪些值得记、对照已有记忆新增或更新，并抽取情绪，热路径每轮不再调记忆模型；检索也交给同一个便宜模型：候选池整池喂过去让它挑，**没有 embedding、没有重排器、没有任何本地推理**；主模型负责对话与工具调用；QQ 桥接按官方开放平台协议与私聊（C2C）通信。填好 `.env` 一条命令即可启动。
+
+模型侧只对接 **DeepSeek 官方 API**，且不做成可配置项（KISS）：对话用 `deepseek-v4-pro`、**思考等级固定 `max`**，记忆（精选 / 巩固 / 摘要）用 `deepseek-v4-flash` 并关闭思考。环境变量只剩部署真正必需的那几个，其余参数全是 `src/config.rs` 顶部的常量。
 
 ```mermaid
 flowchart LR
@@ -25,11 +27,11 @@ flowchart LR
 - **长期记忆（压缩时巩固）**：不再每轮筛选用户单句，而是在对话被压缩时（旧消息滑出短期窗口）对整批已结束的对话做一次巩固——挑出值得长期记住的信息、对照相关已有记忆决定新增或更新（避免新旧矛盾并存），值得的就永久留存。上下文比逐条判断更完整，且热路径每轮零记忆模型调用。压缩只巩固「已滑出短期窗口」的部分，最近一小段仍在窗口内；另有**尾巴 flush**（`MEMORY_FLUSH_*`）定时扫描空闲够久的会话，把这段尾巴也强制巩固掉，避免用户长期沉默时最后说的话丢失。主模型仍可按需调用记忆工具（搜索 / 记住 / 遗忘 / 取代 / 关联）响应用户「记住这个 / 忘掉那个」这类主动指令。遗忘与取代都走软删除，保留可审计留痕。
 - **短期上下文 + 滚动摘要**：每会话最近 N 条原文滑动窗口，确定顺序不丢；更早的消息后台压缩进会话摘要，超长对话也保留连续性。
 - **单文件存储**：SQLite 一个文件装下对话、记忆、实体关联与情绪时间线，全是普通关系表，备份即拷文件，所有记忆按 `user_id` 隔离。
-- **记忆精选检索（无模型）**：不做向量匹配也不做关键词匹配——把该用户按新近度取的候选池（最多 `MEMORY_SELECT_POOL_MAX` 条活跃记忆）整池交给便宜的 `MEMORY_MODEL`，让它挑出对本轮回复真正有用的几条。语义理解、指代消解（「上次说的那家店」）、否定判别都由它一并完成，这些正是关键词检索在中文闲聊里做不到的地方。候选池不超过 `MEMORY_SEARCH_LIMIT` 时直接全返、不调模型；模型调用失败或返回不可解析时回退到「最近 N 条」，**永不因检索失败中断对话**（见[数据结构](#数据结构)）。
+- **记忆精选检索（无模型）**：不做向量匹配也不做关键词匹配——把该用户按新近度取的候选池（最多 `MEMORY_SELECT_POOL_MAX` 条活跃记忆）整池交给便宜的记忆模型，让它挑出对本轮回复真正有用的几条。语义理解、指代消解（「上次说的那家店」）、否定判别都由它一并完成，这些正是关键词检索在中文闲聊里做不到的地方。候选池不超过 `MEMORY_SEARCH_LIMIT` 时直接全返、不调模型；模型调用失败或返回不可解析时回退到「最近 N 条」，**永不因检索失败中断对话**（见[数据结构](#数据结构)）。
 - **记忆演变（SUPERSEDES）**：用户情况变化时新记忆取代旧记忆并保留可回溯的时间线。
 - **记忆主体（subject）**：区分“关于用户”与“助手自己的承诺 / 人设”，检索时分组呈现、互不混淆。
 - **情绪时间线**：从对话抽取情绪按时间成链，让助手感知跨会话情绪趋势。
-- **分层提示词**：人设层（app 级 `PERSONA_PROMPT` 可整体替换口吻，对所有入口生效）与系统指令层（输出格式如禁用 Markdown、记忆/工具、安全，完整内容维护在 `.env.example` 的 `SYSTEM_INSTRUCTIONS` 里、非硬编码）分离，系统指令始终生效、优先于人设。
+- **分层提示词**：人设层（app 级 `PERSONA_PROMPT` 可整体替换口吻，对所有入口生效）与系统指令层（输出格式如禁用 Markdown、记忆/工具、安全；完整默认内容在 `src/agent.rs` 的 `DEFAULT_SYSTEM_INSTRUCTIONS`，可用 `SYSTEM_INSTRUCTIONS` 整体替换）分离，系统指令始终生效、优先于人设。
 - **网页抓取（内置）**：内置 `fetch_url` 工具直接拉取公开链接、抽正文转 Markdown 回传给模型，纯 Rust、无外部服务；只处理静态/SSR 页面，不渲染 JS（见 [网页抓取与 MCP 工具](#网页抓取与-mcp-工具)）。
 - **MCP 工具**：通过 `MCP_SERVERS_JSON` 接入 Tavily 联网搜索等远程 MCP 服务器（搜索需要索引，抓取工具替代不了，见 [网页抓取与 MCP 工具](#网页抓取与-mcp-工具)）。
 - **纯私聊定位**：个人情感陪伴，只处理 QQ 私聊（C2C），不支持群聊与频道。
@@ -49,10 +51,7 @@ flowchart LR
 3. 编辑 `.env`，至少填写：
 
    ```dotenv
-   AI_BASE_URL=https://你的供应商地址/v1
-   AI_API_KEY=你的key
-   MEMORY_MODEL=便宜模型名
-   CHAT_MODEL=支持工具调用的主模型名
+   DEEPSEEK_API_KEY=sk-你的KEY
    APP_API_KEY=一段长随机字符串
    QQ_APP_ID=QQ开放平台的AppID
    QQ_APP_SECRET=QQ开放平台的AppSecret
@@ -74,81 +73,50 @@ flowchart LR
 
 VPS 默认仅监听 `127.0.0.1`，建议用 SSH 隧道或反向代理加 HTTPS。确需对外提供应用 API 时，把 `APP_BIND_IP` 改为 `0.0.0.0`。
 
-## 关键环境变量
+## 环境变量
+
+全部就这些，没有别的：
 
 | 变量 | 默认值 | 用途 |
 |---|---|---|
-| `AI_BASE_URL` | 无 | OpenAI-compatible API 根地址，代码会拼接 `/chat/completions`；也是记忆模型的默认接入点 |
-| `AI_API_KEY` | 无 | AI 提供商密钥 |
-| `MEMORY_MODEL` | 无 | 便宜的记忆筛选模型 |
-| `CHAT_MODEL` | 无 | 对话和工具调用模型 |
-| `MEMORY_BASE_URL` | 回退 `AI_BASE_URL` | 记忆模型的独立接入点；对话用 grok、记忆用 deepseek 这类跨供应商组合时填 deepseek 地址 |
-| `MEMORY_API_KEY` | 回退 `AI_API_KEY` | 记忆模型接入点的密钥 |
-| `MEMORY_EXTRA_HEADERS_JSON` | 回退 `AI_EXTRA_HEADERS_JSON` | 记忆模型专属额外请求头（JSON） |
-| `CHAT_THINK` | `high` | 对话调用的思考深度：`off`/`low`/`medium`/`high`（别名 none/minimal/max 等自动归一）。需在 `AI_THINKING_MAP_JSON` 里配好该等级的片段才实际生效。记忆侧调用恒为 off |
-| `AI_THINKING_MAP_JSON` | `{}` | 「思考等级 → 合并进请求体的字段片段」映射，各厂商差异只填这里，代码不变。片段里值为 `null` 的键会被删除（用于去掉推理模型不接受的字段）。示例见下 |
-| `MEMORY_THINKING_MAP_JSON` | 回退 `AI_THINKING_MAP_JSON` | 记忆接入点的思考映射；跨供应商组合时单独填 |
+| `DEEPSEEK_API_KEY` | 无 | DeepSeek 官方 API 密钥，对话与记忆共用 |
+| `APP_API_KEY` | 无 | 此服务自己的 Bearer Token；留空不鉴权，公网部署必须配置 |
 | `PERSONA_PROMPT` | 无 | 全局人设（app 级），只写性格/口吻，对 QQ/网页/API 全部生效；留空用内置默认。输出格式、记忆工具与安全属独立的系统指令层，始终生效 |
-| `SYSTEM_INSTRUCTIONS` | 见 `.env.example` | 系统指令层，完整推荐内容写在 `.env.example` 里（不硬编码在代码中）；留空时代码只兜底一句极简约束，不建议留空。多行用字面量 `\n`，自定义需自含格式与安全约束 |
-| `MEMORY_CONSOLIDATE_ENABLED` | `true` | 自动记忆巩固：对话被压缩（旧消息滑出短期窗口）时，对整批对话做一次理解，喂入相关已有记忆做 reconcile、产出新增/更新并抽取情绪；热路径每轮不再调记忆模型 |
-| `MEMORY_CONSOLIDATE_BATCH` | `6` | 累计这么多条「已滑出窗口且未巩固」的消息才触发一次巩固（与摘要各用独立水位线） |
-| `MEMORY_FLUSH_ENABLED` | `true` | 尾巴 flush：定时扫描空闲会话，把最近一段仍在窗口内、平时不会 evict 的尾巴也巩固掉，避免用户长期沉默时尾巴丢失 |
-| `MEMORY_FLUSH_IDLE_SECONDS` | `900` | 会话最后活动早于「现在 - 该秒数」才算空闲、可被 flush |
-| `MEMORY_FLUSH_INTERVAL_SECONDS` | `300` | flush 扫描周期（秒） |
-| `CONVERSATION_SUMMARY_ENABLED` | `true` | 滚动摘要：旧消息后台压缩进会话摘要 |
+| `SYSTEM_INSTRUCTIONS` | 无 | 系统指令层（输出格式/记忆工具/安全），优先于人设。留空即用代码里的完整默认内容（`src/agent.rs` 的 `DEFAULT_SYSTEM_INSTRUCTIONS`），一般不必填；要整体替换时多行用字面量 `\n`，且需自含格式与安全约束 |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
 | `DB_PATH` | `/data/memory.db` | SQLite 数据库文件路径 |
-| `MEMORY_SEARCH_LIMIT` | `8` | 单轮最多注入上下文的记忆条数；候选池不超过它时直接全返、不调精选模型 |
-| `MEMORY_SELECT_POOL_MAX` | `400` | 精选候选池上限：按 `last_seen_at` 倒序取这么多条活跃记忆整池喂给 `MEMORY_MODEL`。调大让更老的记忆也进得来，代价是每轮精选的输入 token 线性增长 |
-| `MEMORY_SELECT_TEXT_MAX_CHARS` | `200` | 候选清单里每条记忆的截断长度；挑选只需看大意 |
-| `MEMORY_SELECT_QUERY_MAX_CHARS` | `2000` | 精选时查询文本的截断长度 |
-| `MEMORY_SELECT_MAX_OUTPUT_TOKENS` | `300` | 精选调用的输出上限；只输出一个编号数组 |
-| `MEMORY_DUPLICATE_THRESHOLD` | `0.9` | 近似去重阈值：与同 user+subject 已有记忆的字符三元组 Jaccard ≥ 此值即合并（比较前已滤标点，纯加句号 = 1.0） |
-| `APP_API_KEY` | 无 | 此服务自己的 Bearer Token；公网部署必须配置 |
+| `MCP_SERVERS_JSON` | `[]` | 远程 MCP 工具服务器列表，详见下方「网页抓取与 MCP 工具」 |
 | `QQ_APP_ID` | 无 | QQ 开放平台机器人 AppID |
 | `QQ_APP_SECRET` | 无 | QQ 机器人 AppSecret，用于 Access Token 和 Webhook 验签 |
 | `QQ_EVENT_MODE` | `webhook` | QQ 事件接入模式：`websocket` 或 `webhook` |
-| `QQ_WEBHOOK_PATH` | `/qqbot` | Webhook 模式下的 QQ 平台回调路径 |
-| `FETCH_URL_ENABLED` | `true` | 是否启用内置 `fetch_url` 网页抓取工具 |
-| `FETCH_TIMEOUT_SECONDS` | `30` | `fetch_url` 单次抓取超时（秒） |
-| `FETCH_MAX_BYTES` | `5242880` | `fetch_url` 单页响应体下载上限（字节，流式截断） |
-| `FETCH_RESULT_MAX_CHARS` | `12000` | `fetch_url` 回传给模型的正文字符上限 |
-| `MCP_SERVERS_JSON` | `[]` | 远程 MCP 工具服务器列表，详见下方「网页抓取与 MCP 工具」 |
-| `MCP_TIMEOUT_SECONDS` | `300` | 单次 MCP 工具调用的读超时（秒），超时会中断该次调用并把错误回传给模型 |
-| `SHUTDOWN_TIMEOUT_SECONDS` | `30` | 优雅停机：收到 SIGTERM/Ctrl-C 后等待在途消息与落库（历史/记忆/摘要/情绪）完成的上限；容器 stop 宽限期需大于该值（compose 已设 40s） |
-| `CHAT_IMAGE_ENABLED` | `true` | 图片理解：QQ 图片附件 / API `images` 以 image_url 传给 `CHAT_MODEL`（须支持视觉）。图片不落库，历史记为 `[图片×N]` |
-| `CHAT_IMAGE_MAX_COUNT` | `3` | 单条消息最多带几张图片 |
-| `CHAT_IMAGE_MAX_BYTES` | `5242880` | 发送给模型的单张上限；超限的图自动压缩（缩放 + 重编码 JPEG） |
-| `CHAT_IMAGE_FETCH_MAX_BYTES` | `31457280` | 从 QQ CDN 下载原图的上限（压缩前） |
-| `CHAT_IMAGE_MAX_EDGE` | `2048` | 图片长边像素上限，超过则等比缩放（作用于**输出**） |
-| `CHAT_IMAGE_MAX_PIXELS` | `16000000` | **解码前**的像素数闸门，超过直接拒绝。决定内存峰值：按最坏路径约 12 字节/像素，16MP ≈ 192MB。压 `mem_limit` 时要同步下调 |
-| `LOG_CONTENT_PREVIEW_CHARS` | `40` | 运行日志里消息/记忆内容预览的最大字符数；`0` 完全不记内容，日志只留长度与统计 |
 
 > 机器人定位为个人情感陪伴，仅处理 QQ 私聊（C2C），不支持群聊与频道。
 
+### 其余参数（代码常量）
+
+模型名、思考等级、超时、记忆策略、并发与限流全部固定在 `src/config.rs` 顶部，改它们要重新构建镜像。这是刻意的：这些值只有开发时才该动，暴露成 env 只会让部署面变大。常用的几个：
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `CHAT_MODEL` | `deepseek-v4-pro` | 对话与工具调用 |
+| `MEMORY_MODEL` | `deepseek-v4-flash` | 记忆精选 / 巩固 / 摘要 |
+| `REASONING_EFFORT` | `max` | 对话侧固定最高思考等级 |
+| `CHAT_MAX_OUTPUT_TOKENS` | `8192` | 思考模式下 CoT 也算输出，留足额度 |
+| `MEMORY_SEARCH_LIMIT` | `8` | 单轮最多注入上下文的记忆条数 |
+| `MEMORY_SELECT_POOL_MAX` | `400` | 精选候选池上限（按 `last_seen_at` 倒序） |
+| `MEMORY_DUPLICATE_THRESHOLD` | `0.9` | 近似去重阈值（字符三元组 Jaccard） |
+| `MEMORY_CONSOLIDATE_BATCH` | `6` | 攒够多少条已滑出窗口的消息才巩固一次 |
+| `MEMORY_FLUSH_IDLE_SECONDS` | `900` | 会话空闲多久后强制巩固尾巴 |
+| `SHUTDOWN_TIMEOUT_SECONDS` | `30` | 优雅停机等待在途写入的上限（compose 的 stop 宽限期已设 40s） |
+| `LOG_PREVIEW_CHARS` | `40` | 日志里内容预览的字符数；`0` 则完全不记内容 |
+
 ### 思考深度（reasoning / thinking）
 
-代码里只有 `off`/`low`/`medium`/`high` 四档抽象等级（`CHAT_THINK`）。各家厂商用什么字段表达思考深度，全部写在 `AI_THINKING_MAP_JSON` 里，换厂商只改这份 env、不改代码。请求前会把当前等级对应的片段深合并进请求体；片段里值为 `null` 的键会被删除。截至 2026-07 各家兼容端点的写法：
+不可配置，**恒为最高档**：对话请求固定带 `thinking: {"type":"enabled"}` + `reasoning_effort: "max"`（DeepSeek 只有 `high` / `max` 两档）。思考模式不接受 `temperature` / `top_p` / 惩罚项，所以对话请求不发温度参数。
 
-```sh
-# xAI grok-4.5：默认 high、不可关闭；开启推理时禁止 stop（用 null 删掉）
-AI_THINKING_MAP_JSON='{"low":{"reasoning_effort":"low"},"high":{"reasoning_effort":"high","stop":null}}'
+记忆侧（精选、巩固、摘要）反过来固定 `thinking: {"type":"disabled"}`：这些是结构化短任务，要的是快和便宜，思考只会拖慢并烧钱。`GET /v1/config` 会回显当前模型与思考等级。
 
-# OpenAI gpt-5.x：reasoning_effort 直传；推理模型不接受 temperature，置 null 删除
-AI_THINKING_MAP_JSON='{"low":{"reasoning_effort":"low","temperature":null},"high":{"reasoning_effort":"high","temperature":null}}'
-
-# DeepSeek V4：reasoning_effort 只吃 high/max，且需伴随 thinking.type=enabled
-AI_THINKING_MAP_JSON='{"off":{"thinking":{"type":"disabled"}},"high":{"reasoning_effort":"high","thinking":{"type":"enabled"}}}'
-
-# Qwen3.x：非标字段 enable_thinking（本项目直拼裸 JSON，直接顶层放即可，无需 extra_body）
-AI_THINKING_MAP_JSON='{"off":{"enable_thinking":false},"high":{"enable_thinking":true}}'
-
-# Gemini 3 兼容层：低/高映射到思考预算；medium 部分模型会 400，谨慎用
-AI_THINKING_MAP_JSON='{"low":{"reasoning_effort":"low"},"high":{"reasoning_effort":"high"}}'
-```
-
-某个等级在映射里没有对应片段时，请求体就不带任何思考字段，由厂商用自己的默认值决定。`DeepSeek-reasoner` 那种「靠换模型名开思考、无参数」的旧法不属于这一维，用 `MEMORY_MODEL`/`CHAT_MODEL` 直接选型即可。`GET /v1/config` 会回显当前 `chat_think` 与已配置的等级列表。
-
-检索没有需要重建的索引：候选池是直接从 `memories` 表按 `last_seen_at` 查出来的，换 `MEMORY_MODEL`、调 `MEMORY_SELECT_POOL_MAX` 都是改完即生效，不涉及任何数据重算。
+检索没有需要重建的索引：候选池是直接从 `memories` 表按 `last_seen_at` 查出来的，调 `MEMORY_SELECT_POOL_MAX` 重新构建即生效，不涉及任何数据重算。
 
 ### 查看已存记忆（CLI 子命令）
 
@@ -179,7 +147,7 @@ curl http://127.0.0.1:8000/v1/chat \
   }'
 ```
 
-可选 `images` 字段附带图片（需 `CHAT_MODEL` 支持视觉）：元素可以是裸 base64、`data:image/…;base64,…` data URI，或 http(s) 图片 URL；带图片时 `message` 可以为空。数量与大小上限见 `CHAT_IMAGE_MAX_COUNT` / `CHAT_IMAGE_MAX_BYTES`。QQ 私聊里直接发图即可，图文混发会一起理解。
+只吃纯文本：DeepSeek 没有视觉接口，图片理解已整体移除（QQ 收到图片附件会礼貌说明看不了）。
 
 响应会包含：
 
@@ -212,9 +180,7 @@ curl http://127.0.0.1:8000/v1/chat \
 
 - **能**：静态或服务端渲染的页面——新闻、博客、文档站、维基、GitHub 页面等，覆盖"发个链接看看内容"的绝大多数场景。
 - **不能**：不执行页面 JS，所以纯前端渲染的 SPA、以及被 Cloudflare「Just a moment...」这类 JS 验证墙挡住的站点抓不到正文；也不能替代**搜索**——搜索依赖索引，不是抓取能替代的（这也是为什么保留 Tavily）。
-- **安全**：内置 SSRF 防护，只放行 http/https，且解析出的目标地址必须是公网地址，拒绝 localhost、内网、链路本地与云元数据地址（`169.254.169.254` 等）；逐跳校验重定向，响应体按 `FETCH_MAX_BYTES` 流式截断。
-
-用 `FETCH_URL_ENABLED=false` 可整体关闭。
+- **安全**：内置 SSRF 防护，只放行 http/https，且解析出的目标地址必须是公网地址，拒绝 localhost、内网、链路本地与云元数据地址（`169.254.169.254` 等）；逐跳校验重定向，响应体按 `FETCH_MAX_BYTES`（代码常量，5 MiB）流式截断。
 
 ### MCP 工具（远程，联网搜索等）
 
@@ -234,7 +200,7 @@ TAVILY_KEY=tvly-你的KEY
 MCP_SERVERS_JSON=[{"name":"tavily","url":"https://mcp.tavily.com/mcp/?tavilyApiKey=${TAVILY_KEY}","tools":["tavily_search"]}]
 ```
 
-`CHAT_MODEL` 需支持 OpenAI tool calling；`GET /health` 的 `mcp_tools` 字段会显示已注册的 MCP 工具数量。
+`GET /health` 的 `mcp_tools` 字段会显示已注册的 MCP 工具数量。
 
 ## 数据结构
 
@@ -247,7 +213,7 @@ MCP_SERVERS_JSON=[{"name":"tavily","url":"https://mcp.tavily.com/mcp/?tavilyApiK
 - 记忆演变：`superseded_by` 链记录取代关系，旧记忆软停用但保留，可经 `/history` 回溯时间线；
 - `moods`：情绪时间线，从每条消息抽取的情绪（label/valence/note）按时间排列。
 
-情绪识别折叠进"记忆巩固"那一次廉价模型调用里（不额外耗 token），压缩时从整批对话中提炼明显流露的情绪。每轮对话前会把近期情绪趋势压成一行注入上下文，让助手自然体察用户状态。由 `MOOD_TRACKING_ENABLED` 开关、`MOOD_TREND_DAYS` 控制回看窗口。
+情绪识别折叠进"记忆巩固"那一次廉价模型调用里（不额外耗 token），压缩时从整批对话中提炼明显流露的情绪。每轮对话前会把近期情绪趋势压成一行注入上下文，让助手自然体察用户状态。回看窗口是常量 `MOOD_TREND_DAYS`（7 天）。
 
 所有记忆操作都按 `user_id` 隔离。遗忘采用软删除，节点仍可审计但不会再被检索。
 
@@ -258,7 +224,7 @@ MCP_SERVERS_JSON=[{"name":"tavily","url":"https://mcp.tavily.com/mcp/?tavilyApiK
 检索路径没有向量、没有倒排索引、没有本地模型，就两步：
 
 1. **候选池**：从 `memories` 取该用户的活跃记忆，按 `last_seen_at` 倒序最多 `MEMORY_SELECT_POOL_MAX` 条（默认 400），只取 id/正文/kind/subject。超出上限时截断保留最近被提及的那部分——没有语义信息可用时，新近度是最合理的取舍。
-2. **精选**：整池编号后交给 `MEMORY_MODEL`，让它返回相关记忆的编号，再按编号映射回真实 id、取回正文（最多 `MEMORY_SEARCH_LIMIT` 条，顺序即模型给出的相关性顺序）。
+2. **精选**：整池编号后交给记忆模型（`deepseek-v4-flash`），让它返回相关记忆的编号，再按编号映射回真实 id、取回正文（最多 `MEMORY_SEARCH_LIMIT` 条，顺序即模型给出的相关性顺序）。
 
 几个刻意的设计：
 
@@ -267,25 +233,15 @@ MCP_SERVERS_JSON=[{"name":"tavily","url":"https://mcp.tavily.com/mcp/?tavilyApiK
 - **永不因检索失败中断对话**（与它取代的重排器同一原则）：模型调用失败、返回不可解析、编号全部越界，一律回退到「按新近度取前 N 条」并打一条 warn。模型明确返回空数组则尊重它，返回空——那是「确实没有相关记忆」的正常结果，不该硬塞最近几条。
 - **记忆清单放在 system 段、查询放在 user 段**。追加式记忆下清单是稳定前缀，支持 prompt caching 的供应商可以整段命中缓存，每轮只有末尾的查询在变。
 
-代价说清楚：每轮对话多一次 LLM 往返。它与历史/摘要/情绪的查询并发（`tokio::join!`），但整轮延迟会被它拖住，量级取决于 `MEMORY_MODEL` 的速度。换来的是真正的语义理解——指代消解、否定判别、跨措辞匹配，这些是关键词检索在中文闲聊里做不到、而向量检索也只能部分做到的。
+代价说清楚：每轮对话多一次 LLM 往返。它与历史/摘要/情绪的查询并发（`tokio::join!`），但整轮延迟会被它拖住，量级取决于记忆模型的速度（flash 且关思考，通常是秒级）。换来的是真正的语义理解——指代消解、否定判别、跨措辞匹配，这些是关键词检索在中文闲聊里做不到、而向量检索也只能部分做到的。
 
 `MemoryView.score` 字段在这条路径下不再有值（没有可比的数值分数），序列化时直接省略。
 
 ## 资源建议
 
-- CPU 部署：1 核起步。进程里只有 axum + SQLite，没有本地推理，**稳态匿名内存约 20–40 MB**（含 4 条 SQLite 连接各 512 KiB 页缓存、rustls 根证书库、tokio 运行时）。
-- 但 `mem_limit` 要按**峰值**定，默认 `512m`，峰值由图片解码决定。`CHAT_IMAGE_MAX_EDGE` 限制的是输出，缩放发生在解码之后，所以内存由原图分辨率决定而非输出分辨率——这由 `CHAT_IMAGE_MAX_PIXELS` 把关（见下）。`fetch_url` 的 5 MiB HTML 进 DOM 另有几十 MB 的瞬时占用。
-- **想压到 256m**：把 `CHAT_IMAGE_MAX_PIXELS` 降到 `8000000`（≈96MB 峰值，仍覆盖 4K 截图），或直接 `CHAT_IMAGE_ENABLED=false` + `FETCH_URL_ENABLED=false`，那时几十 MB 就够。
+- CPU 部署：1 核起步。进程里只有 axum + SQLite，没有本地推理也没有图片解码，**稳态匿名内存约 20–40 MB**（含 4 条 SQLite 连接各 512 KiB 页缓存、rustls 根证书库、tokio 运行时）。`mem_limit` 默认 `256m`，峰值只剩 `fetch_url` 的 5 MiB HTML 进 DOM 时那几十 MB 的瞬时占用。
 - 磁盘：镜像百 MB 级，数据库按聊天量增长，预留 1 GB 绰绰有余。
-
-### 图片解码的内存账
-
-`prepare()` 在解码前先读文件头拿尺寸，像素数超过 `CHAT_IMAGE_MAX_PIXELS` 就直接报错拒绝，不进解码器。这道闸是必需的：`image` crate 自带的 `Limits::default()` 分配上限是 512 MiB，对一个几百 MB 上限的容器等于没有。
-
-每像素 12 字节的估算来自最坏路径（带透明通道的 PNG）：`DynamicImage` 本身 4 字节/像素，`flatten_to_rgb` 里 `to_rgba8()` 再复制一份 4 字节/像素，输出的 `RgbImage` 3 字节/像素，三者同时在世约 11 字节。不带透明的 JPEG 走 `DynamicImage::ImageRgb8` 直接移动，实际只有 3 字节/像素，所以这个估算对常见情况是保守的。缩放结果受 `MAX_EDGE` 约束（2048² × 3 ≈ 12 MB），不参与峰值。
-
-文件头读不出尺寸、或头部尺寸与实际数据不符的格式会绕过闸门，所以解码器上还额外设了 `Limits::max_alloc` 兜底。
-- 真正的成本在 token 而不是内存：每轮对话多一次 `MEMORY_MODEL` 精选调用，输入约等于候选池大小。记忆多到觉得贵时，调小 `MEMORY_SELECT_POOL_MAX` 或 `MEMORY_SELECT_TEXT_MAX_CHARS`；用支持 prompt caching 的供应商能显著摊薄这部分（候选清单是稳定前缀）。
+- 真正的成本在 token 而不是内存：每轮对话多一次记忆精选调用，输入约等于候选池大小。记忆多到觉得贵时，调小 `MEMORY_SELECT_POOL_MAX` 或 `MEMORY_SELECT_TEXT_MAX_CHARS`；DeepSeek 的 prompt caching 能显著摊薄这部分（候选清单是稳定前缀，命中价约为未命中的 1/50）。
 
 ## 备份与更新
 
@@ -305,8 +261,6 @@ docker compose stop
 docker compose ps
 docker compose logs --tail=200 agent
 ```
-
-如果主模型供应商不接受 `tools` 参数，服务会保留自动记忆检索并降级为普通对话，同时在 `warnings` 中说明；要完整使用“记住/遗忘/关联”工具，应选择支持 OpenAI tool calling 格式的模型。
 
 ## 接入 QQ 机器人
 

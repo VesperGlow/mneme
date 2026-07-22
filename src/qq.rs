@@ -18,7 +18,7 @@ use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 
 use crate::agent::Agent;
-use crate::config::{Config, QqEventMode};
+use crate::config::{self, Config, QqEventMode};
 use crate::shutdown::{Listener, Pending};
 
 const TOKEN_URL: &str = "https://bots.qq.com/app/getAppAccessToken";
@@ -108,8 +108,6 @@ struct MessageJob {
     conversation_id: String,
     content: String,
     has_attachments: bool,
-    /// 图片附件的 CDN 下载地址（已截断到配置的张数上限）。
-    image_urls: Vec<String>,
 }
 
 struct Deduper {
@@ -261,12 +259,12 @@ impl QqBridge {
             bail!("QQ_APP_ID 和 QQ_APP_SECRET 不能为空");
         }
         let http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(cfg.qq_openapi_timeout_seconds))
+            .timeout(Duration::from_secs(config::QQ_OPENAPI_TIMEOUT_SECONDS))
             .build()?;
-        let (jobs_tx, jobs_rx) = mpsc::channel(cfg.qq_queue_size);
+        let (jobs_tx, jobs_rx) = mpsc::channel(config::QQ_QUEUE_SIZE);
         Ok(Arc::new(Self {
             token: Arc::new(TokenManager::new(cfg.clone(), http.clone())),
-            deduper: Deduper::new(Duration::from_secs(cfg.qq_dedup_ttl_seconds)),
+            deduper: Deduper::new(Duration::from_secs(config::QQ_DEDUP_TTL_SECONDS)),
             locks: Arc::new(KeyedMutex::default()),
             cfg,
             agent,
@@ -290,7 +288,7 @@ impl QqBridge {
             .ok_or_else(|| anyhow!("QQ 桥接重复启动"))?;
         {
             let bridge = self.clone();
-            let permits = Arc::new(tokio::sync::Semaphore::new(self.cfg.qq_workers));
+            let permits = Arc::new(tokio::sync::Semaphore::new(config::QQ_WORKERS));
             tokio::spawn(async move {
                 loop {
                     // 停机信号后不再取新消息；已在处理的消息由 pending guard
@@ -314,7 +312,7 @@ impl QqBridge {
         }
 
         // HTTP 端：healthz（两种模式都有）+ webhook 回调（仅 webhook 模式）。
-        let listen = normalize_listen_addr(&self.cfg.qq_listen_addr);
+        let listen = config::QQ_LISTEN_ADDR;
         let mut router = Router::new().route(
             "/healthz",
             get({
@@ -327,11 +325,11 @@ impl QqBridge {
         );
         if self.cfg.qq_event_mode == QqEventMode::Webhook {
             router = router
-                .route(&self.cfg.qq_webhook_path, post(webhook_handler))
-                .layer(axum::extract::DefaultBodyLimit::max(self.cfg.qq_max_webhook_bytes));
+                .route(config::QQ_WEBHOOK_PATH, post(webhook_handler))
+                .layer(axum::extract::DefaultBodyLimit::max(config::QQ_MAX_WEBHOOK_BYTES));
         }
         let router = router.with_state(self.clone());
-        let listener = tokio::net::TcpListener::bind(&listen)
+        let listener = tokio::net::TcpListener::bind(listen)
             .await
             .with_context(|| format!("QQ 桥接监听 {listen} 失败"))?;
         let graceful = self.shutdown.clone();
@@ -345,7 +343,7 @@ impl QqBridge {
             QqEventMode::Webhook => {
                 tracing::info!(
                     "QQ Bot Webhook 已启动: {listen}{} (私聊 C2C)",
-                    self.cfg.qq_webhook_path
+                    config::QQ_WEBHOOK_PATH
                 );
                 server.await??;
                 Ok(())
@@ -375,42 +373,26 @@ impl QqBridge {
         let content = job.content.trim().to_string();
         let received_at = std::time::Instant::now();
         tracing::info!(
-            "收到 QQ 消息 msg={} 文字{}字 图片{}张",
+            "收到 QQ 消息 msg={} {}字",
             job.message_id,
             content.chars().count(),
-            job.image_urls.len(),
         );
 
-        // 下载图片附件转 data URI；单张失败只记日志，尽量把拿到的图带上。
-        let mut images: Vec<String> = Vec::new();
-        for url in &job.image_urls {
-            match self.fetch_image(url).await {
-                Ok(uri) => images.push(uri),
-                Err(error) => {
-                    tracing::warn!("下载 QQ 图片附件失败: msg={} err={error:#}", job.message_id)
-                }
+        if content.is_empty() {
+            if job.has_attachments {
+                let _ = self
+                    .send_text(&job, "我目前只能处理文字，图片和其它附件还看不了。")
+                    .await;
             }
-        }
-
-        if content.is_empty() && images.is_empty() {
-            let hint = if !job.image_urls.is_empty() {
-                "刚才的图片我没能加载出来，可以再发一次吗？"
-            } else if job.has_attachments {
-                "我目前只能处理文字和图片，这类附件暂时还看不了。"
-            } else {
-                return;
-            };
-            let _ = self.send_text(&job, hint).await;
             return;
         }
         let reply = tokio::time::timeout(
-            Duration::from_secs(self.cfg.qq_ai_timeout_seconds),
+            Duration::from_secs(config::QQ_AI_TIMEOUT_SECONDS),
             self.agent.chat(
                 &job.user_id,
                 &content,
                 Some(job.conversation_id.clone()),
                 None,
-                &images,
             ),
         )
         .await;
@@ -437,42 +419,8 @@ impl QqBridge {
         }
     }
 
-    /// 从 QQ CDN 下载图片并转成 data URI；超过发送上限或分辨率过大的先压缩。
-    async fn fetch_image(&self, url: &str) -> Result<String> {
-        let response = self.http.get(url).send().await?.error_for_status()?;
-        let fetch_limit = self.cfg.chat_image_fetch_max_bytes;
-        if let Some(length) = response.content_length() {
-            if length as usize > fetch_limit {
-                bail!("图片 {length} 字节，超过下载上限 {fetch_limit}");
-            }
-        }
-        let bytes = response.bytes().await?;
-        if bytes.is_empty() {
-            bail!("图片内容为空");
-        }
-        if bytes.len() > fetch_limit {
-            bail!("图片 {} 字节，超过下载上限 {fetch_limit}", bytes.len());
-        }
-        let original = bytes.len();
-        let max_bytes = self.cfg.chat_image_max_bytes;
-        let max_edge = self.cfg.chat_image_max_edge;
-        let max_pixels = self.cfg.chat_image_max_pixels;
-        // 解码/缩放/重编码是 CPU 密集操作，放阻塞线程池执行，不堵 async worker。
-        let prepared = tokio::task::spawn_blocking(move || {
-            crate::image::prepare(bytes.to_vec(), max_bytes, max_edge, max_pixels)
-        })
-        .await
-        .context("图片压缩任务被取消")??;
-        if prepared.len() != original {
-            tracing::info!("图片已压缩 {original} → {} 字节", prepared.len());
-        } else {
-            tracing::debug!("QQ 图片下载完成 {original} 字节");
-        }
-        Ok(crate::image::to_data_uri(&prepared))
-    }
-
     async fn send_text(&self, job: &MessageJob, text: &str) -> Result<()> {
-        let parts = split_message(text, self.cfg.qq_reply_max_runes, self.cfg.qq_reply_max_parts);
+        let parts = split_message(text, config::QQ_REPLY_MAX_RUNES, config::QQ_REPLY_MAX_PARTS);
         let total = parts.len();
         for (index, part) in parts.into_iter().enumerate() {
             let token = self.token.token().await?;
@@ -521,32 +469,9 @@ impl QqBridge {
             .to_string();
         let message_id = data["id"].as_str().unwrap_or("").trim().to_string();
         let content = data["content"].as_str().unwrap_or("").to_string();
-        let attachments = data["attachments"].as_array().cloned().unwrap_or_default();
-        let has_attachments = !attachments.is_empty();
-        // 只取图片类附件；QQ 的 url 字段可能不带协议前缀。
-        let image_urls: Vec<String> = if self.cfg.chat_image_enabled {
-            attachments
-                .iter()
-                .filter(|item| {
-                    // 平台一般给 image/jpeg 等完整 MIME，个别场景只给 "image"。
-                    item["content_type"]
-                        .as_str()
-                        .unwrap_or("")
-                        .starts_with("image")
-                })
-                .filter_map(|item| item["url"].as_str())
-                .map(|url| {
-                    if url.starts_with("http://") || url.starts_with("https://") {
-                        url.to_string()
-                    } else {
-                        format!("https://{url}")
-                    }
-                })
-                .take(self.cfg.chat_image_max_count)
-                .collect()
-        } else {
-            Vec::new()
-        };
+        let has_attachments = data["attachments"]
+            .as_array()
+            .is_some_and(|items| !items.is_empty());
         let (user_id, conversation_id) = stable_ids(&sender_id);
         self.submit(MessageJob {
             message_id,
@@ -555,7 +480,6 @@ impl QqBridge {
             conversation_id,
             content,
             has_attachments,
-            image_urls,
         });
     }
 
@@ -687,14 +611,6 @@ impl QqBridge {
                 }
             }
         }
-    }
-}
-
-fn normalize_listen_addr(addr: &str) -> String {
-    if let Some(port) = addr.strip_prefix(':') {
-        format!("0.0.0.0:{port}")
-    } else {
-        addr.to_string()
     }
 }
 

@@ -24,16 +24,14 @@
     .meta { color:var(--muted); font-size:12px; margin-top:7px; }
     .composer button { align-self:stretch; }
     .composer .text { flex:1; min-width:240px; }
-    .attach { display:flex; align-items:center; padding:0 13px; border:1px solid var(--line); border-radius:12px; background:var(--panel); cursor:pointer; }
-    .attach.has { border-color:var(--accent); }
     details { margin-top:18px; color:var(--muted); }
     code { color:var(--accent); }
   </style>
 </head>
 <body>
 <main>
-  <h1>Graph Memory Agent</h1>
-  <p class="lead">进程内 Qwen Embedding × SQLite 分级记忆 × 你的 AI API</p>
+  <h1>Mneme</h1>
+  <p class="lead">SQLite 长期记忆 × DeepSeek（思考等级 max）</p>
   <div class="bar">
     <input id="user" value="demo-user" aria-label="用户 ID" placeholder="用户 ID">
     <input id="key" type="password" aria-label="API Key" placeholder="APP_API_KEY">
@@ -41,7 +39,6 @@
   <section id="messages"></section>
   <form id="form" class="composer">
     <div class="text"><textarea id="message" placeholder="说点什么，比如：请记住我偏好简洁的中文回答。"></textarea></div>
-    <label class="attach" for="images" title="附带图片（需对话模型支持视觉）">📷<input id="images" type="file" accept="image/*" multiple hidden></label>
     <button id="send">发送</button>
   </form>
   <details><summary>连接状态与提示</summary><p id="status">正在检查服务……</p></details>
@@ -54,9 +51,7 @@
   const headers = () => ({'Content-Type':'application/json', ...($('key').value ? {'Authorization':`Bearer ${$('key').value}`} : {})});
   function add(role,text,meta='') { const el=document.createElement('div'); el.className=`msg ${role}`; el.textContent=text; if(meta){const m=document.createElement('div');m.className='meta';m.textContent=meta;el.append(m)} $('messages').append(el); el.scrollIntoView({behavior:'smooth'}); }
   async function health(){ try { const r=await fetch('/health'); const d=await r.json(); $('status').textContent=`${d.status} · 数据库 ${d.database?'✓':'×'} · AI 配置 ${d.llm_configured?'✓':'×'}`; } catch(e){ $('status').textContent=`无法连接：${e}`; } }
-  $('images').addEventListener('change', () => $('images').closest('.attach').classList.toggle('has', $('images').files.length > 0));
-  const readImages = files => Promise.all([...files].map(f => new Promise((ok,err) => { const r=new FileReader(); r.onload=()=>ok(r.result); r.onerror=err; r.readAsDataURL(f); })));
-  $('form').addEventListener('submit', async e => { e.preventDefault(); const text=$('message').value.trim(); const files=$('images').files; if(!text&&!files.length)return; localStorage.setItem('appKey',$('key').value); localStorage.setItem('userId',$('user').value); add('user',(files.length?`[图片×${files.length}] `:'')+text); $('send').disabled=true; try { const images=await readImages(files); const r=await fetch('/v1/chat',{method:'POST',headers:headers(),body:JSON.stringify({user_id:$('user').value,message:text,conversation_id:conversationId,images})}); const d=await r.json(); if(!r.ok) throw new Error(d.detail||JSON.stringify(d)); conversationId=d.conversation_id; localStorage.setItem('conversationId',conversationId); $('message').value=''; $('images').value=''; $('images').dispatchEvent(new Event('change')); const meta=`检索 ${d.retrieved_memories.length} 条 · 新记忆 ${d.saved_memories.length} 条${d.warnings.length?' · '+d.warnings.join('；'):''}`; add('assistant',d.message,meta); } catch(err) { add('assistant',`请求失败：${err.message}`); } finally { $('send').disabled=false; $('message').focus(); } });
+  $('form').addEventListener('submit', async e => { e.preventDefault(); const text=$('message').value.trim(); if(!text)return; localStorage.setItem('appKey',$('key').value); localStorage.setItem('userId',$('user').value); add('user',text); $('send').disabled=true; try { const r=await fetch('/v1/chat',{method:'POST',headers:headers(),body:JSON.stringify({user_id:$('user').value,message:text,conversation_id:conversationId})}); const d=await r.json(); if(!r.ok) throw new Error(d.detail||JSON.stringify(d)); conversationId=d.conversation_id; localStorage.setItem('conversationId',conversationId); $('message').value=''; const meta=`检索 ${d.retrieved_memories.length} 条 · 新记忆 ${d.saved_memories.length} 条${d.warnings.length?' · '+d.warnings.join('；'):''}`; add('assistant',d.message,meta); } catch(err) { add('assistant',`请求失败：${err.message}`); } finally { $('send').disabled=false; $('message').focus(); } });
   health();
 </script>
 </body>

@@ -1,22 +1,20 @@
 name: memory-graph-agent
 
 # 单容器单进程部署：Rust 二进制内含 HTTP API、SQLite 长期记忆与 QQ 桥接，
-# 只需填好 .env 即可启动。没有本地模型，记忆检索与巩固都走 MEMORY_MODEL 远程接口。
+# 只需填好 .env 即可启动。没有本地模型，模型调用全部走 DeepSeek 官方 API。
 services:
   agent:
     image: ${APP_IMAGE:-ghcr.io/vesperglow/mneme:latest}
     build:
       context: .
     restart: unless-stopped
-    # 优雅停机：给进程留出 flush 在途消息与落库的时间（须 > SHUTDOWN_TIMEOUT_SECONDS，默认 30s），
+    # 优雅停机：给进程留出 flush 在途消息与落库的时间（代码里的 SHUTDOWN_TIMEOUT_SECONDS 是 30s），
     # 否则默认 10s 后就 SIGKILL，等于白等。
     stop_grace_period: 40s
     env_file:
       - .env
-    # 稳态只有几十 MB（axum + SQLite，无本地模型）。上限按峰值定而非稳态：
-    # 图片解码是没有像素数上限的——一张大图先解成完整 RgbImage（4000×3000 = 36MB），
-    # 缩放再开一块，CHAT_IMAGE_MAX_COUNT 默认允许一轮三张。不用图片理解可降到 256m。
-    mem_limit: ${MEM_LIMIT:-512m}
+    # 纯文本进出，稳态只有几十 MB（axum + SQLite，无本地模型、无图片解码）。
+    mem_limit: ${MEM_LIMIT:-256m}
     ports:
       - "${APP_BIND_IP:-127.0.0.1}:${APP_PORT:-8000}:8000"
       - "${QQ_BOT_BIND_IP:-127.0.0.1}:${QQ_BOT_PORT:-9000}:9000"

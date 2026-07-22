@@ -681,7 +681,7 @@ impl Store {
     }
 
     pub async fn create_memory(&self, new: NewMemory) -> Result<MemoryView> {
-        self.run(move |conn, cfg| create_memory_sync(conn, cfg, new)).await
+        self.run(move |conn, _| create_memory_sync(conn, new)).await
     }
 
     pub async fn forget_memory(&self, user_id: String, memory_id: String) -> Result<bool> {
@@ -1052,7 +1052,7 @@ fn touch_memory(conn: &Connection, id: &str, now: &str) -> Result<MemoryView> {
     Ok(view)
 }
 
-fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Result<MemoryView> {
+fn create_memory_sync(conn: &mut Connection, new: NewMemory) -> Result<MemoryView> {
     let subject = if new.subject == "assistant" { "assistant" } else { "user" };
     let text = new.text.trim().to_string();
     let fingerprint = hex::encode(Sha256::digest(text.to_lowercase().as_bytes()));
@@ -1102,7 +1102,7 @@ fn create_memory_sync(conn: &mut Connection, cfg: &Config, new: NewMemory) -> Re
         }
     }
     if let Some((id, similarity)) = best {
-        if similarity >= cfg.memory_duplicate_threshold {
+        if similarity >= crate::config::MEMORY_DUPLICATE_THRESHOLD {
             return touch_memory(conn, &id, &now);
         }
     }

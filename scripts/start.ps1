@@ -7,7 +7,7 @@ if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
 }
 if (-not (Test-Path ".env")) {
     Copy-Item ".env.example" ".env"
-    Write-Host "已创建 .env。请先填入 AI_BASE_URL、AI_API_KEY、MEMORY_MODEL、CHAT_MODEL，并修改两个密码。" -ForegroundColor Yellow
+    Write-Host "已创建 .env。请先填入 DEEPSEEK_API_KEY、APP_API_KEY 与 QQ_APP_ID/QQ_APP_SECRET。" -ForegroundColor Yellow
     exit 0
 }
 

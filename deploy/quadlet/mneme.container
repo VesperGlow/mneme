@@ -10,9 +10,8 @@ PublishPort=127.0.0.1:9000:9000
 # 从旧的 qq-agent-* 卷迁移数据后再启用（见 README「切到 mneme」一节），
 # 否则会挂到新建的空卷、丢掉既有 memory.db。
 Volume=mneme-data:/data
-# 稳态只有几十 MB（axum + SQLite，无本地模型），但图片解码没有像素数上限，
-# 一张大图的 RgbImage 就能占几十 MB、缩放时翻倍。上限按峰值留；不用图片理解可降到 256m。
-PodmanArgs=--memory=512m
+# 纯文本进出，稳态只有几十 MB（axum + SQLite，无本地模型、无图片解码）。
+PodmanArgs=--memory=256m
 AutoUpdate=registry
 HealthCmd=curl -fsS http://127.0.0.1:8000/health/live >/dev/null && curl -fsS http://127.0.0.1:9000/healthz >/dev/null
 HealthInterval=15s

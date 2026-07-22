@@ -1,5 +1,5 @@
 # 单一二进制：HTTP API + SQLite 长期记忆 + QQ 桥接，全部在一个 Rust 进程里。
-# 记忆检索由 MEMORY_MODEL 远程完成，容器内没有本地模型，也不需要模型缓存卷。
+# 模型调用全部走 DeepSeek 官方 API，容器内没有本地模型，也不需要模型缓存卷。
 # 写完 .env 即可 docker run / compose up。
 # rust:1 = 最新 stable；锁文件里的依赖会随更新抬高 rust-version 下限，别钉旧小版本
 FROM rust:1-trixie AS builder

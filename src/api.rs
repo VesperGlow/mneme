@@ -11,7 +11,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::agent::Agent;
-use crate::config::Config;
+use crate::config::{self, Config};
 use crate::store::{EntityView, NewMemory};
 
 static INDEX_HTML: &str = include_str!("../static/index.html");
@@ -66,9 +66,6 @@ fn require_api_key(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError
 }
 
 pub fn router(state: AppState) -> Router {
-    // axum 默认 body 上限 2MB，装不下带图请求：按图片下载上限 × 张数的 base64 体积放宽。
-    let body_limit = state.cfg.chat_image_fetch_max_bytes * state.cfg.chat_image_max_count * 4 / 3
-        + 1_048_576;
     Router::new()
         .route("/", get(index))
         .route("/health/live", get(health_live))
@@ -83,7 +80,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/memories/{memory_id}/history", get(memory_history))
         .route("/v1/mood/{user_id}", get(mood_timeline))
         .route("/v1/graph/{user_id}", get(graph))
-        .layer(axum::extract::DefaultBodyLimit::max(body_limit))
+        .layer(axum::extract::DefaultBodyLimit::max(config::API_BODY_LIMIT))
         .with_state(state)
 }
 
@@ -97,10 +94,8 @@ async fn health_live() -> Json<Value> {
 
 async fn health(State(state): State<AppState>) -> Json<Value> {
     let database_ok = state.agent.store().ping().await;
-    // 记忆检索走 MEMORY_MODEL，没有本地模型要预热，所以就绪与否只看数据库和模型配置。
-    let llm_configured = !state.cfg.ai_base_url.is_empty()
-        && !state.cfg.chat_model.is_empty()
-        && !state.cfg.memory_model.is_empty();
+    // 没有本地模型要预热，就绪与否只看数据库和 DeepSeek key。
+    let llm_configured = !state.cfg.deepseek_api_key.is_empty();
     let status = if database_ok && llm_configured {
         "ok"
     } else {
@@ -138,50 +133,16 @@ struct ChatRequest {
     conversation_id: Option<String>,
     #[serde(default)]
     system_prompt: Option<String>,
-    /// 图片列表：裸 base64、data URI 或 http(s) URL；需 CHAT_MODEL 支持视觉。
-    #[serde(default)]
-    images: Vec<String>,
 }
 
 async fn chat(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(mut body): Json<ChatRequest>,
+    Json(body): Json<ChatRequest>,
 ) -> Result<Json<Value>, ApiError> {
     require_api_key(&state, &headers)?;
     validate_len("user_id", &body.user_id, 1, 128)?;
-    // 带图片时允许 message 为空（纯图片消息）。
-    let message_min = if body.images.is_empty() { 1 } else { 0 };
-    validate_len("message", &body.message, message_min, 200_000)?;
-    if !body.images.is_empty() && !state.cfg.chat_image_enabled {
-        return Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "图片输入未启用（CHAT_IMAGE_ENABLED=false）",
-        ));
-    }
-    if body.images.len() > state.cfg.chat_image_max_count {
-        return Err(ApiError::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("images 最多 {} 张", state.cfg.chat_image_max_count),
-        ));
-    }
-    // 归一化含解码/压缩，CPU 密集，放阻塞线程池执行。
-    let images: Vec<String> = if body.images.is_empty() {
-        Vec::new()
-    } else {
-        let raw = std::mem::take(&mut body.images);
-        let max_bytes = state.cfg.chat_image_max_bytes;
-        let max_edge = state.cfg.chat_image_max_edge;
-        let max_pixels = state.cfg.chat_image_max_pixels;
-        tokio::task::spawn_blocking(move || {
-            raw.iter()
-                .map(|item| crate::image::normalize_input(item, max_bytes, max_edge, max_pixels))
-                .collect::<Result<Vec<_>, _>>()
-        })
-        .await
-        .map_err(|_| ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "图片处理任务被取消"))?
-        .map_err(|error| ApiError::new(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()))?
-    };
+    validate_len("message", &body.message, 1, 200_000)?;
     let result = state
         .agent
         .chat(
@@ -189,7 +150,6 @@ async fn chat(
             &body.message,
             body.conversation_id,
             body.system_prompt,
-            &images,
         )
         .await
         .map_err(|error| {

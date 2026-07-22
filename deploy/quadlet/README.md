@@ -37,7 +37,7 @@ curl http://127.0.0.1:9000/healthz
 
 示例 `mneme.env` 默认使用 `QQ_EVENT_MODE=websocket`，不需要公网域名或反向代理；只有改成 `webhook` 时，才需要把 QQ 开放平台的 HTTPS 回调反向代理到 `127.0.0.1:9000/qqbot`。
 
-再精简一点的话，env 只需 8 行就能跑：`APP_API_KEY`、`AI_BASE_URL`、`AI_API_KEY`、`MEMORY_MODEL`、`CHAT_MODEL`、`QQ_APP_ID`、`QQ_APP_SECRET`、`QQ_EVENT_MODE=websocket`——存储路径、检索候选池大小、去重阈值等全部有代码默认值。
+再精简一点的话，env 只需 5 行就能跑：`DEEPSEEK_API_KEY`、`APP_API_KEY`、`QQ_APP_ID`、`QQ_APP_SECRET`、`QQ_EVENT_MODE=websocket`——模型名、思考等级、存储路径、检索候选池大小、去重阈值等全部固定在代码里。
 
 ## 从旧的 qq-agent 部署切到 mneme
 

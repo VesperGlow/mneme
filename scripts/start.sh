@@ -8,7 +8,7 @@ if ! command -v docker >/dev/null 2>&1; then
 fi
 if [ ! -f .env ]; then
   cp .env.example .env
-  echo "已创建 .env。请先填入 AI_BASE_URL、AI_API_KEY、MEMORY_MODEL、CHAT_MODEL，并修改两个密码。"
+  echo "已创建 .env。请先填入 DEEPSEEK_API_KEY、APP_API_KEY 与 QQ_APP_ID/QQ_APP_SECRET。"
   exit 0
 fi
 
