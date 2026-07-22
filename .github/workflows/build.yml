@@ -24,13 +24,25 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # TEMP：Cargo.lock 是在没有 cargo 的机器上手工裁剪的，与解析结果不符。
+      # 本次先让 cargo 自己重新解析并把结果带出来，拿到后恢复 --locked 并删掉本步骤。
+      - name: TEMP regenerate lockfile
+        run: cargo generate-lockfile
+
+      - name: TEMP upload regenerated Cargo.lock
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+
       - name: Unit tests
-        run: cargo test --locked
+        run: cargo test
 
       - name: Release build (mirrors the docker build step)
         run: |
           set -o pipefail
-          cargo build --release --locked 2>&1 | tee /tmp/build.log || {
+          cargo build --release 2>&1 | tee /tmp/build.log || {
             grep -E "^error" -A6 /tmp/build.log | head -60 | \
               while IFS= read -r line; do echo "::error::${line}"; done
             exit 1
@@ -44,6 +56,10 @@ jobs:
   docker-build:
     name: Build and publish image
     needs: test
+    # TEMP：Dockerfile 里仍是 cargo build --locked，本次 lock 还没修好必然失败；
+    # 而且这一步会把镜像推上 GHCR（quadlet 的 AutoUpdate 会自动拉），lock 定下来之前不该跑。
+    # 恢复 --locked 时一并删掉这一行。
+    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
