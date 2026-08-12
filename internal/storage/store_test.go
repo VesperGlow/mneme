@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"testing"
 )
@@ -15,13 +14,10 @@ func TestStoreMessagesAndMemories(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	ctx := context.Background()
 
-	if err := store.AddExchange(ctx, "chat-a", "你好", "你好呀"); err != nil {
+	if err := store.AddExchange(ctx, "你好", "你好呀"); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.AddExchange(ctx, "chat-b", "另一个会话", "不会串进来"); err != nil {
-		t.Fatal(err)
-	}
-	messages, err := store.RecentMessages(ctx, "chat-a", 10)
+	messages, err := store.RecentMessages(ctx, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,34 +45,5 @@ func TestStoreMessagesAndMemories(t *testing.T) {
 	}
 	if forgotten != 1 {
 		t.Fatalf("expected one forgotten memory, got %d", forgotten)
-	}
-}
-
-func TestOpenMigratesExistingMessages(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "old.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = db.Exec(`CREATE TABLE messages (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		role TEXT NOT NULL,
-		content TEXT NOT NULL,
-		created_at TEXT NOT NULL
-	)`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	store, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if err := store.AddExchange(context.Background(), "default", "旧库", "已迁移"); err != nil {
-		t.Fatal(err)
 	}
 }

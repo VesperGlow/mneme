@@ -43,17 +43,9 @@ func New(store *storage.Store, llmClient *llm.Client, searchClient *search.Clien
 }
 
 func (a *Agent) Chat(ctx context.Context, input string) (string, error) {
-	return a.ChatConversation(ctx, "default", input)
-}
-
-func (a *Agent) ChatConversation(ctx context.Context, conversationID, input string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	conversationID = strings.TrimSpace(conversationID)
-	if conversationID == "" {
-		conversationID = "default"
-	}
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return "", fmt.Errorf("message is empty")
@@ -65,7 +57,7 @@ func (a *Agent) ChatConversation(ctx context.Context, conversationID, input stri
 	if err != nil {
 		return "", err
 	}
-	recent, err := a.store.RecentMessages(ctx, conversationID, a.recentMessages)
+	recent, err := a.store.RecentMessages(ctx, a.recentMessages)
 	if err != nil {
 		return "", err
 	}
@@ -88,7 +80,7 @@ func (a *Agent) ChatConversation(ctx context.Context, conversationID, input stri
 	if err != nil {
 		return "", err
 	}
-	if err := a.store.AddExchange(ctx, conversationID, input, reply); err != nil {
+	if err := a.store.AddExchange(ctx, input, reply); err != nil {
 		return "", err
 	}
 	if a.memories != nil {

@@ -4,13 +4,12 @@
 
 ## 功能
 
-- QQ C2C 私聊、群聊 @、频道 @ 消息
+- QQ C2C 私聊消息
 - QQ WebSocket 长连接和自动重连
 - 固定使用 DeepSeek 官方 API 的 `deepseek-v4-pro`
 - 默认启用思考模式，`reasoning_effort=max`
 - Tavily `web_search`，仅在需要实时外部信息时调用
 - SQLite 最近聊天记录和 FTS5 长期记忆
-- 不同 QQ 会话分别保存最近聊天，避免上下文串线
 - `/remember`、`/memories`、`/forget`
 - `POST /chat`、`GET /health`、`GET /memories`
 
@@ -55,7 +54,7 @@ DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM
 
 在 QQ 开放平台创建机器人并取得 AppID、AppSecret，然后：
 
-1. 为机器人开通需要的消息事件：C2C、群聊 @、频道 @。
+1. 为机器人开通 `C2C_MESSAGE_CREATE` 私聊消息事件。
 2. 在沙箱阶段添加测试成员。
 3. 如果平台要求 OpenAPI IP 白名单，把 VPS 的公网出口 IP 加入白名单。
 4. 确认该机器人仍有 WebSocket 事件链路权限。

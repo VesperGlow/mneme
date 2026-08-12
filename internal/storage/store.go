@@ -64,11 +64,11 @@ func (s *Store) migrate(ctx context.Context) error {
 		`PRAGMA foreign_keys=ON`,
 		`CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			conversation_id TEXT NOT NULL DEFAULT 'default',
 			role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
 			content TEXT NOT NULL,
 			created_at TEXT NOT NULL
 		)`,
+		`CREATE INDEX IF NOT EXISTS messages_created_at ON messages(created_at)`,
 		`CREATE TABLE IF NOT EXISTS memories (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			content TEXT NOT NULL,
@@ -94,69 +94,30 @@ func (s *Store) migrate(ctx context.Context) error {
 			return fmt.Errorf("migrate database: %w", err)
 		}
 	}
-	if err := s.ensureMessagesConversationID(ctx); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS messages_conversation_id ON messages(conversation_id, id)`); err != nil {
-		return fmt.Errorf("create message index: %w", err)
-	}
 	return nil
 }
 
-func (s *Store) ensureMessagesConversationID(ctx context.Context) error {
-	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(messages)`)
-	if err != nil {
-		return fmt.Errorf("inspect messages table: %w", err)
-	}
-	defer rows.Close()
-	found := false
-	for rows.Next() {
-		var cid, notNull, primaryKey int
-		var name, kind string
-		var defaultValue any
-		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
-			return err
-		}
-		if name == "conversation_id" {
-			found = true
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := rows.Close(); err != nil {
-		return err
-	}
-	if found {
-		return nil
-	}
-	if _, err := s.db.ExecContext(ctx, `ALTER TABLE messages ADD COLUMN conversation_id TEXT NOT NULL DEFAULT 'default'`); err != nil {
-		return fmt.Errorf("add conversation_id to messages: %w", err)
-	}
-	return nil
-}
-
-func (s *Store) AddExchange(ctx context.Context, conversationID, user, assistant string) error {
+func (s *Store) AddExchange(ctx context.Context, user, assistant string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(conversation_id, role, content, created_at) VALUES (?, 'user', ?, ?)`, conversationID, user, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(role, content, created_at) VALUES ('user', ?, ?)`, user, now); err != nil {
 		return fmt.Errorf("save user message: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(conversation_id, role, content, created_at) VALUES (?, 'assistant', ?, ?)`, conversationID, assistant, now); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(role, content, created_at) VALUES ('assistant', ?, ?)`, assistant, now); err != nil {
 		return fmt.Errorf("save assistant message: %w", err)
 	}
 	return tx.Commit()
 }
 
-func (s *Store) RecentMessages(ctx context.Context, conversationID string, limit int) ([]Message, error) {
+func (s *Store) RecentMessages(ctx context.Context, limit int) ([]Message, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, role, content, created_at FROM messages WHERE conversation_id = ? ORDER BY id DESC LIMIT ?`, conversationID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT id, role, content, created_at FROM messages ORDER BY id DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("load recent messages: %w", err)
 	}

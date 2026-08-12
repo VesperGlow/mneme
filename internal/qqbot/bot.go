@@ -31,9 +31,8 @@ type Bot struct {
 }
 
 type incomingMessage struct {
-	conversationID string
-	content        string
-	reply          func(context.Context, string) error
+	content string
+	reply   func(context.Context, string) error
 }
 
 func New(appID, appSecret string, companion *agent.Agent, logger *log.Logger) *Bot {
@@ -57,8 +56,6 @@ func (b *Bot) Run(ctx context.Context) error {
 
 	intents := event.RegisterHandlers(
 		b.c2cHandler(ctx),
-		b.groupHandler(ctx),
-		b.channelHandler(ctx),
 	)
 	websocketInfo, err := b.api.WS(ctx, nil, "")
 	if err != nil {
@@ -97,7 +94,7 @@ func (b *Bot) work(ctx context.Context) {
 			return
 		case job := <-b.jobs:
 			requestCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			reply, err := b.agent.ChatConversation(requestCtx, job.conversationID, job.content)
+			reply, err := b.agent.Chat(requestCtx, job.content)
 			if err != nil {
 				b.logger.Printf("QQ message failed: %v", err)
 				reply = "处理消息时出错了，请稍后再试。"
@@ -130,49 +127,10 @@ func (b *Bot) c2cHandler(ctx context.Context) event.C2CMessageEventHandler {
 		}
 		userID, messageID := data.Author.ID, data.ID
 		return b.enqueue(ctx, incomingMessage{
-			conversationID: "qq:c2c:" + userID,
-			content:        data.Content,
+			content: data.Content,
 			reply: func(replyCtx context.Context, content string) error {
 				return sendChunks(content, func(part string, sequence uint32) error {
 					_, err := b.api.PostC2CMessage(replyCtx, userID, dto.MessageToCreate{Content: part, MsgID: messageID, MsgSeq: sequence})
-					return err
-				})
-			},
-		})
-	}
-}
-
-func (b *Bot) groupHandler(ctx context.Context) event.GroupATMessageEventHandler {
-	return func(_ *dto.WSPayload, data *dto.WSGroupATMessageData) error {
-		if data.GroupID == "" {
-			return fmt.Errorf("QQ group message has no group ID")
-		}
-		groupID, messageID := data.GroupID, data.ID
-		return b.enqueue(ctx, incomingMessage{
-			conversationID: "qq:group:" + groupID,
-			content:        data.Content,
-			reply: func(replyCtx context.Context, content string) error {
-				return sendChunks(content, func(part string, sequence uint32) error {
-					_, err := b.api.PostGroupMessage(replyCtx, groupID, dto.MessageToCreate{Content: part, MsgID: messageID, MsgSeq: sequence})
-					return err
-				})
-			},
-		})
-	}
-}
-
-func (b *Bot) channelHandler(ctx context.Context) event.ATMessageEventHandler {
-	return func(_ *dto.WSPayload, data *dto.WSATMessageData) error {
-		if data.ChannelID == "" {
-			return fmt.Errorf("QQ channel message has no channel ID")
-		}
-		channelID, messageID := data.ChannelID, data.ID
-		return b.enqueue(ctx, incomingMessage{
-			conversationID: "qq:channel:" + channelID,
-			content:        data.Content,
-			reply: func(replyCtx context.Context, content string) error {
-				return sendChunks(content, func(part string, sequence uint32) error {
-					_, err := b.api.PostMessage(replyCtx, channelID, &dto.MessageToCreate{Content: part, MsgID: messageID, MsgSeq: sequence})
 					return err
 				})
 			},
