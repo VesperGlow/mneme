@@ -13,7 +13,6 @@ import (
 	"companion/internal/memory"
 	"companion/internal/search"
 	"companion/internal/storage"
-	"companion/prompts"
 )
 
 type Agent struct {
@@ -21,6 +20,8 @@ type Agent struct {
 	llm            *llm.Client
 	search         *search.Client
 	memories       *memory.Manager
+	systemPrompt   string
+	personaPrompt  string
 	recentMessages int
 	maxMemories    int
 	maxToolCalls   int
@@ -29,12 +30,14 @@ type Agent struct {
 	memoryMu       sync.Mutex
 }
 
-func New(store *storage.Store, llmClient *llm.Client, searchClient *search.Client, memoryManager *memory.Manager, recentMessages, maxMemories, maxToolCalls int, logger *log.Logger) *Agent {
+func New(store *storage.Store, llmClient *llm.Client, searchClient *search.Client, memoryManager *memory.Manager, systemPrompt, personaPrompt string, recentMessages, maxMemories, maxToolCalls int, logger *log.Logger) *Agent {
 	return &Agent{
 		store:          store,
 		llm:            llmClient,
 		search:         searchClient,
 		memories:       memoryManager,
+		systemPrompt:   systemPrompt,
+		personaPrompt:  personaPrompt,
 		recentMessages: recentMessages,
 		maxMemories:    maxMemories,
 		maxToolCalls:   maxToolCalls,
@@ -63,8 +66,8 @@ func (a *Agent) Chat(ctx context.Context, input string) (string, error) {
 	}
 	messages := make([]llm.Message, 0, len(recent)+4)
 	messages = append(messages,
-		llm.Message{Role: "system", Content: prompts.System},
-		llm.Message{Role: "system", Content: prompts.Persona},
+		llm.Message{Role: "system", Content: a.systemPrompt},
+		llm.Message{Role: "system", Content: a.personaPrompt},
 	)
 	contextPrompt := "当前日期：" + time.Now().Format("2006-01-02")
 	if len(relevant) > 0 {

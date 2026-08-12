@@ -13,6 +13,8 @@ type Config struct {
 	QQAppID        string
 	QQAppSecret    string
 	TavilyAPIKey   string
+	SystemPrompt   string
+	PersonaPrompt  string
 	DatabasePath   string
 	ListenAddr     string
 	RecentMessages int
@@ -27,6 +29,8 @@ func Load() (Config, error) {
 		QQAppID:        strings.TrimSpace(os.Getenv("QQ_APP_ID")),
 		QQAppSecret:    strings.TrimSpace(os.Getenv("QQ_APP_SECRET")),
 		TavilyAPIKey:   strings.TrimSpace(os.Getenv("TAVILY_API_KEY")),
+		SystemPrompt:   promptEnv("system"),
+		PersonaPrompt:  promptEnv("persona"),
 		DatabasePath:   env("COMPANION_DB", "./data/companion.db"),
 		ListenAddr:     env("COMPANION_ADDR", "127.0.0.1:8787"),
 		RecentMessages: envInt("COMPANION_RECENT_MESSAGES", 20),
@@ -37,10 +41,18 @@ func Load() (Config, error) {
 	if cfg.DeepSeekAPIKey == "" || cfg.TavilyAPIKey == "" {
 		return Config{}, fmt.Errorf("DEEPSEEK_API_KEY and TAVILY_API_KEY must be set")
 	}
+	if cfg.SystemPrompt == "" || cfg.PersonaPrompt == "" {
+		return Config{}, fmt.Errorf("system and persona must be set")
+	}
 	if cfg.RecentMessages < 0 || cfg.MaxMemories < 0 || cfg.MaxToolCalls < 0 {
 		return Config{}, fmt.Errorf("COMPANION limits must not be negative")
 	}
 	return cfg, nil
+}
+
+func promptEnv(name string) string {
+	value := strings.TrimSpace(os.Getenv(name))
+	return strings.ReplaceAll(value, `\n`, "\n")
 }
 
 func (c Config) ValidateQQ() error {

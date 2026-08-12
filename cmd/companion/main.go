@@ -48,7 +48,7 @@ func run() error {
 	searchClient := search.New(cfg.TavilyAPIKey, httpClient)
 	memoryManager := memory.New(store, llmClient)
 	logger := log.New(os.Stderr, "companion: ", log.LstdFlags)
-	companion := agent.New(store, llmClient, searchClient, memoryManager, cfg.RecentMessages, cfg.MaxMemories, cfg.MaxToolCalls, logger)
+	companion := agent.New(store, llmClient, searchClient, memoryManager, cfg.SystemPrompt, cfg.PersonaPrompt, cfg.RecentMessages, cfg.MaxMemories, cfg.MaxToolCalls, logger)
 
 	switch os.Args[1] {
 	case "chat":

@@ -30,7 +30,11 @@ QQ_APP_ID=你的机器人AppID
 QQ_APP_SECRET=你的机器人AppSecret
 DEEPSEEK_API_KEY=你的DeepSeek API Key
 TAVILY_API_KEY=你的Tavily API Key
+system="系统指令"
+persona="陪伴者的人格、语气和关系风格"
 ```
+
+`system` 和 `persona` 是必填项，直接写在 `.env` 中。需要换行时可在值中写 `\n`，程序会将其转换成实际换行。不要把含真实密钥的 `.env` 提交到仓库。
 
 DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM_BASE_URL`、`LLM_MODEL` 等通用配置：
 
@@ -65,8 +69,8 @@ DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM
 
 聊天上下文按以下顺序发送给 DeepSeek：
 
-1. `prompts/system.txt`：不可违反的系统行为和工具规则
-2. `prompts/persona.txt`：陪伴者的人格、语气和关系风格
+1. `.env` 中的 `system`：系统行为和工具规则
+2. `.env` 中的 `persona`：陪伴者的人格、语气和关系风格
 3. 当前日期和本轮相关长期记忆
 4. 当前会话最近聊天与用户消息
 
