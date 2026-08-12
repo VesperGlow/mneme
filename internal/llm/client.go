@@ -17,11 +17,17 @@ type Client struct {
 	http    *http.Client
 }
 
+const (
+	DeepSeekBaseURL = "https://api.deepseek.com"
+	DeepSeekModel   = "deepseek-v4-pro"
+)
+
 type Message struct {
-	Role       string     `json:"role"`
-	Content    string     `json:"content,omitempty"`
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
+	Role             string     `json:"role"`
+	Content          string     `json:"content"`
+	ReasoningContent string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string     `json:"tool_call_id,omitempty"`
 }
 
 type ToolCall struct {
@@ -46,7 +52,11 @@ type ToolDefinition struct {
 	Parameters  map[string]any `json:"parameters"`
 }
 
-func New(baseURL, apiKey, model string, httpClient *http.Client) *Client {
+func New(apiKey string, httpClient *http.Client) *Client {
+	return NewWithBaseURL(DeepSeekBaseURL, apiKey, DeepSeekModel, httpClient)
+}
+
+func NewWithBaseURL(baseURL, apiKey, model string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
@@ -68,17 +78,17 @@ func completionURL(baseURL string) string {
 
 func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool) (Message, error) {
 	body := struct {
-		Model      string    `json:"model"`
-		Messages   []Message `json:"messages"`
-		Tools      []Tool    `json:"tools,omitempty"`
-		ToolChoice string    `json:"tool_choice,omitempty"`
+		Model           string         `json:"model"`
+		Messages        []Message      `json:"messages"`
+		Tools           []Tool         `json:"tools,omitempty"`
+		Thinking        map[string]any `json:"thinking"`
+		ReasoningEffort string         `json:"reasoning_effort"`
 	}{
-		Model:    c.model,
-		Messages: messages,
-		Tools:    tools,
-	}
-	if len(tools) > 0 {
-		body.ToolChoice = "auto"
+		Model:           c.model,
+		Messages:        messages,
+		Tools:           tools,
+		Thinking:        map[string]any{"type": "enabled"},
+		ReasoningEffort: "max",
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

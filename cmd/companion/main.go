@@ -18,6 +18,7 @@ import (
 	"companion/internal/httpapi"
 	"companion/internal/llm"
 	"companion/internal/memory"
+	"companion/internal/qqbot"
 	"companion/internal/search"
 	"companion/internal/storage"
 )
@@ -43,7 +44,7 @@ func run() error {
 	}
 	defer store.Close()
 	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
-	llmClient := llm.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel, httpClient)
+	llmClient := llm.New(cfg.DeepSeekAPIKey, httpClient)
 	searchClient := search.New(cfg.TavilyAPIKey, httpClient)
 	memoryManager := memory.New(store, llmClient)
 	logger := log.New(os.Stderr, "companion: ", log.LstdFlags)
@@ -53,7 +54,11 @@ func run() error {
 	case "chat":
 		return runChat(companion)
 	case "serve":
-		return runServer(cfg.ListenAddr, companion, store, logger)
+		if err := cfg.ValidateQQ(); err != nil {
+			return err
+		}
+		qq := qqbot.New(cfg.QQAppID, cfg.QQAppSecret, companion, logger)
+		return runServer(cfg.ListenAddr, companion, store, qq, logger)
 	default:
 		return nil
 	}
@@ -82,7 +87,7 @@ func runChat(companion *agent.Agent) error {
 	}
 }
 
-func runServer(addr string, companion *agent.Agent, store *storage.Store, logger *log.Logger) error {
+func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qqbot.Bot, logger *log.Logger) error {
 	server := &http.Server{
 		Addr:              addr,
 		Handler:           httpapi.New(companion, store),
@@ -91,18 +96,34 @@ func runServer(addr string, companion *agent.Agent, store *storage.Store, logger
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	errCh := make(chan error, 2)
 	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			logger.Printf("server shutdown: %v", err)
+		logger.Printf("HTTP API listening on http://%s", addr)
+		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- fmt.Errorf("HTTP server: %w", err)
 		}
 	}()
-	logger.Printf("listening on http://%s", addr)
-	err := server.ListenAndServe()
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	go func() {
+		err := qq.Run(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		if err == nil {
+			err = fmt.Errorf("QQ websocket stopped unexpectedly")
+		}
+		errCh <- err
+	}()
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case runErr = <-errCh:
+		stop()
 	}
-	return nil
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		logger.Printf("server shutdown: %v", err)
+	}
+	return runErr
 }

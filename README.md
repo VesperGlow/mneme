@@ -1,34 +1,46 @@
-# Companion
+# Mneme
 
-一个面向单用户、可长期运行在小型 VPS 上的轻量个人陪伴 Agent。它直接调用 OpenAI Compatible Chat Completions API 和 Tavily HTTP API，不使用 Agent 框架、Redis、向量数据库等服务。
+面向单用户、可长期运行在小型 VPS 上的轻量个人陪伴 Agent。单进程同时提供 QQ 官方机器人 WebSocket 接入和简单 HTTP API，聊天记录与长期记忆保存在 SQLite。
 
-## 特点
+## 功能
 
-- 最近聊天记录与长期记忆均保存在 SQLite
-- 每轮只读取最近 20 条消息和最多 5 条 FTS5 相关记忆
-- 模型可新增、修改或失效真正长期有效的记忆
-- 支持 `/remember`、`/memories`、`/forget`
-- 仅在需要实时或外部信息时由模型调用 `web_search`
-- 工具调用默认最多 3 次，避免无限循环
-- 一个纯 Go SQLite 驱动是唯一的非标准库依赖，可在 `CGO_ENABLED=0` 下构建
+- QQ C2C 私聊、群聊 @、频道 @ 消息
+- QQ WebSocket 长连接和自动重连
+- 固定使用 DeepSeek 官方 API 的 `deepseek-v4-pro`
+- 默认启用思考模式，`reasoning_effort=max`
+- Tavily `web_search`，仅在需要实时外部信息时调用
+- SQLite 最近聊天记录和 FTS5 长期记忆
+- 不同 QQ 会话分别保存最近聊天，避免上下文串线
+- `/remember`、`/memories`、`/forget`
+- `POST /chat`、`GET /health`、`GET /memories`
+
+除 QQ 官方 `botgo` 和纯 Go SQLite 驱动外，程序不使用 Agent 框架、Redis、PostgreSQL 或向量数据库。
 
 ## 配置
 
-必需环境变量：
+复制环境变量示例：
 
 ```bash
-export LLM_BASE_URL="https://api.openai.com/v1"
-export LLM_API_KEY="your-key"
-export LLM_MODEL="your-model"
+cp .env.example .env
 ```
 
-如需联网搜索，再配置：
+填写：
 
-```bash
-export TAVILY_API_KEY="tvly-your-key"
+```dotenv
+QQ_APP_ID=你的机器人AppID
+QQ_APP_SECRET=你的机器人AppSecret
+DEEPSEEK_API_KEY=你的DeepSeek API Key
+TAVILY_API_KEY=你的Tavily API Key
 ```
 
-可选配置及默认值：
+DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM_BASE_URL`、`LLM_MODEL` 等通用配置：
+
+- API：`https://api.deepseek.com`
+- 模型：`deepseek-v4-pro`
+- thinking：`enabled`
+- reasoning effort：`max`
+
+其他可选变量：
 
 | 变量 | 默认值 |
 | --- | --- |
@@ -39,48 +51,64 @@ export TAVILY_API_KEY="tvly-your-key"
 | `COMPANION_MAX_TOOL_CALLS` | `3` |
 | `COMPANION_REQUEST_TIMEOUT_SECONDS` | `120` |
 
-`LLM_BASE_URL` 可以是类似 `https://host/v1` 的 API 根地址，也可以直接是完整的 `/chat/completions` 地址。
+## QQ 开放平台
 
-## 构建与运行
+在 QQ 开放平台创建机器人并取得 AppID、AppSecret，然后：
 
-```bash
-go mod download
-CGO_ENABLED=0 go build -o companion ./cmd/companion
-./companion chat
-```
+1. 为机器人开通需要的消息事件：C2C、群聊 @、频道 @。
+2. 在沙箱阶段添加测试成员。
+3. 如果平台要求 OpenAPI IP 白名单，把 VPS 的公网出口 IP 加入白名单。
+4. 确认该机器人仍有 WebSocket 事件链路权限。
 
-启动 HTTP 服务：
+注意：[QQ 官方 `botgo` 仓库](https://github.com/tencent-connect/botgo)已说明 WebSocket 链路停止维护，原有机器人仍可使用，但新机器人可能没有该权限。程序会按要求使用 WebSocket；如果平台返回未授权 intent 或无法取得 gateway，需要在 QQ 开放平台确认资格。
 
-```bash
-./companion serve
-```
+## Prompt 分层
+
+聊天上下文按以下顺序发送给 DeepSeek：
+
+1. `prompts/system.txt`：不可违反的系统行为和工具规则
+2. `prompts/persona.txt`：陪伴者的人格、语气和关系风格
+3. 当前日期和本轮相关长期记忆
+4. 当前会话最近聊天与用户消息
+
+长期记忆判断使用独立的 `prompts/memory.txt`，不会让 persona 干扰结构化记忆维护。
 
 ## 容器运行
 
-每次推送到 `main` 后，GitHub Actions 会运行测试并构建 `linux/amd64`、`linux/arm64` 镜像，发布到：
+GitHub Actions 会构建 `linux/amd64` 和 `linux/arm64`：
 
 ```text
 ghcr.io/vesperglow/mneme:latest
 ```
 
-在 VPS 上创建 `.env`（不要提交到 Git）：
-
-```bash
-LLM_BASE_URL=https://api.openai.com/v1
-LLM_API_KEY=your-key
-LLM_MODEL=your-model
-TAVILY_API_KEY=tvly-your-key
-```
-
-然后启动：
+启动：
 
 ```bash
 docker compose up -d
+docker compose logs -f companion
 ```
 
-数据会持久化到宿主机的 `./data`。Compose 默认只把服务映射到宿主机的 `127.0.0.1:8787`。
+数据保存在宿主机 `./data`。HTTP API 默认只映射到宿主机 `127.0.0.1:8787`；QQ WebSocket 是容器主动向外连接，不需要开放额外入站端口。
 
-接口示例：
+## 本地构建
+
+```bash
+CGO_ENABLED=0 go build -o companion ./cmd/companion
+```
+
+终端模式需要 `DEEPSEEK_API_KEY` 和 `TAVILY_API_KEY`：
+
+```bash
+./companion chat
+```
+
+同时启动 QQ WebSocket 和 HTTP API：
+
+```bash
+./companion serve
+```
+
+## HTTP API
 
 ```bash
 curl http://127.0.0.1:8787/health
@@ -90,20 +118,4 @@ curl -X POST http://127.0.0.1:8787/chat \
   -d '{"message":"今天有什么 AI 新闻？"}'
 ```
 
-终端和 `/chat` 都接受以下命令：
-
-```text
-/remember 我喝咖啡不加糖
-/memories
-/forget 咖啡
-```
-
-`/forget` 会把最多 5 条 FTS5 匹配记忆标记为失效，不物理删除，便于以后检查数据库和恢复。
-
-## HTTP API
-
-- `POST /chat`：请求体 `{"message":"..."}`，返回 `{"reply":"..."}`
-- `GET /health`：检查进程与数据库
-- `GET /memories?limit=100`：列出有效长期记忆
-
-HTTP 服务默认只监听本机回环地址。若需要从公网访问，建议放在带 HTTPS 和鉴权的反向代理后，不要直接暴露。
+HTTP 服务没有内置鉴权，不要直接暴露到公网；需要公网访问时应放在带 HTTPS 和认证的反向代理后。

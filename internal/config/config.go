@@ -9,9 +9,9 @@ import (
 )
 
 type Config struct {
-	LLMBaseURL     string
-	LLMAPIKey      string
-	LLMModel       string
+	DeepSeekAPIKey string
+	QQAppID        string
+	QQAppSecret    string
 	TavilyAPIKey   string
 	DatabasePath   string
 	ListenAddr     string
@@ -23,9 +23,9 @@ type Config struct {
 
 func Load() (Config, error) {
 	cfg := Config{
-		LLMBaseURL:     strings.TrimSpace(os.Getenv("LLM_BASE_URL")),
-		LLMAPIKey:      strings.TrimSpace(os.Getenv("LLM_API_KEY")),
-		LLMModel:       strings.TrimSpace(os.Getenv("LLM_MODEL")),
+		DeepSeekAPIKey: strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
+		QQAppID:        strings.TrimSpace(os.Getenv("QQ_APP_ID")),
+		QQAppSecret:    strings.TrimSpace(os.Getenv("QQ_APP_SECRET")),
 		TavilyAPIKey:   strings.TrimSpace(os.Getenv("TAVILY_API_KEY")),
 		DatabasePath:   env("COMPANION_DB", "./data/companion.db"),
 		ListenAddr:     env("COMPANION_ADDR", "127.0.0.1:8787"),
@@ -34,13 +34,20 @@ func Load() (Config, error) {
 		MaxToolCalls:   envInt("COMPANION_MAX_TOOL_CALLS", 3),
 		RequestTimeout: time.Duration(envInt("COMPANION_REQUEST_TIMEOUT_SECONDS", 120)) * time.Second,
 	}
-	if cfg.LLMBaseURL == "" || cfg.LLMAPIKey == "" || cfg.LLMModel == "" {
-		return Config{}, fmt.Errorf("LLM_BASE_URL, LLM_API_KEY and LLM_MODEL must be set")
+	if cfg.DeepSeekAPIKey == "" || cfg.TavilyAPIKey == "" {
+		return Config{}, fmt.Errorf("DEEPSEEK_API_KEY and TAVILY_API_KEY must be set")
 	}
 	if cfg.RecentMessages < 0 || cfg.MaxMemories < 0 || cfg.MaxToolCalls < 0 {
 		return Config{}, fmt.Errorf("COMPANION limits must not be negative")
 	}
 	return cfg, nil
+}
+
+func (c Config) ValidateQQ() error {
+	if c.QQAppID == "" || c.QQAppSecret == "" {
+		return fmt.Errorf("QQ_APP_ID and QQ_APP_SECRET must be set for serve mode")
+	}
+	return nil
 }
 
 func env(name, fallback string) string {

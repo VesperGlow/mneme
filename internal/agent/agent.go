@@ -26,6 +26,7 @@ type Agent struct {
 	maxToolCalls   int
 	logger         *log.Logger
 	mu             sync.Mutex
+	memoryMu       sync.Mutex
 }
 
 func New(store *storage.Store, llmClient *llm.Client, searchClient *search.Client, memoryManager *memory.Manager, recentMessages, maxMemories, maxToolCalls int, logger *log.Logger) *Agent {
@@ -42,9 +43,17 @@ func New(store *storage.Store, llmClient *llm.Client, searchClient *search.Clien
 }
 
 func (a *Agent) Chat(ctx context.Context, input string) (string, error) {
+	return a.ChatConversation(ctx, "default", input)
+}
+
+func (a *Agent) ChatConversation(ctx context.Context, conversationID, input string) (string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	conversationID = strings.TrimSpace(conversationID)
+	if conversationID == "" {
+		conversationID = "default"
+	}
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return "", fmt.Errorf("message is empty")
@@ -56,16 +65,20 @@ func (a *Agent) Chat(ctx context.Context, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	recent, err := a.store.RecentMessages(ctx, a.recentMessages)
+	recent, err := a.store.RecentMessages(ctx, conversationID, a.recentMessages)
 	if err != nil {
 		return "", err
 	}
-	messages := make([]llm.Message, 0, len(recent)+3)
-	system := prompts.System + "\n\n当前日期：" + time.Now().Format("2006-01-02")
+	messages := make([]llm.Message, 0, len(recent)+4)
+	messages = append(messages,
+		llm.Message{Role: "system", Content: prompts.System},
+		llm.Message{Role: "system", Content: prompts.Persona},
+	)
+	contextPrompt := "当前日期：" + time.Now().Format("2006-01-02")
 	if len(relevant) > 0 {
-		system += "\n\n可能相关的长期记忆（只在确实相关时使用）：\n" + formatMemoryContext(relevant)
+		contextPrompt += "\n\n可能相关的长期记忆（只在确实相关时使用）：\n" + formatMemoryContext(relevant)
 	}
-	messages = append(messages, llm.Message{Role: "system", Content: system})
+	messages = append(messages, llm.Message{Role: "system", Content: contextPrompt})
 	for _, item := range recent {
 		messages = append(messages, llm.Message{Role: item.Role, Content: item.Content})
 	}
@@ -75,15 +88,23 @@ func (a *Agent) Chat(ctx context.Context, input string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := a.store.AddExchange(ctx, input, reply); err != nil {
+	if err := a.store.AddExchange(ctx, conversationID, input, reply); err != nil {
 		return "", err
 	}
 	if a.memories != nil {
-		if err := a.memories.Review(ctx, input, reply, relevant); err != nil && a.logger != nil {
-			a.logger.Printf("memory review skipped: %v", err)
-		}
+		go a.reviewMemories(input, reply, relevant)
 	}
 	return reply, nil
+}
+
+func (a *Agent) reviewMemories(input, reply string, relevant []storage.Memory) {
+	a.memoryMu.Lock()
+	defer a.memoryMu.Unlock()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if err := a.memories.Review(ctx, input, reply, relevant); err != nil && a.logger != nil {
+		a.logger.Printf("memory review skipped: %v", err)
+	}
 }
 
 func (a *Agent) runLoop(ctx context.Context, messages []llm.Message) (string, error) {
