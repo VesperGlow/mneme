@@ -36,6 +36,8 @@ persona="陪伴者的人格、语气和关系风格"
 
 `system` 和 `persona` 是必填项，直接写在 `.env` 中。需要换行时可在值中写 `\n`，程序会将其转换成实际换行。不要把含真实密钥的 `.env` 提交到仓库。
 
+QQ 不会渲染完整 Markdown。示例 `system` 已要求模型只输出纯文本，避免把 `**`、代码围栏等符号直接显示给用户。
+
 DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM_BASE_URL`、`LLM_MODEL` 等通用配置：
 
 - API：`https://api.deepseek.com`
