@@ -1,0 +1,14 @@
+services:
+  companion:
+    image: ghcr.io/vesperglow/mneme:latest
+    container_name: mneme
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8787:8787"
+    environment:
+      LLM_BASE_URL: ${LLM_BASE_URL}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: ${LLM_MODEL}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+    volumes:
+      - ./data:/data

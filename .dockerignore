@@ -1,0 +1,9 @@
+.git
+.github
+data
+*.db
+*.db-shm
+*.db-wal
+companion
+companion.exe
+README.md
