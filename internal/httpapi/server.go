@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -22,6 +23,7 @@ func New(agent *agent.Agent, store *storage.Store) http.Handler {
 	mux.HandleFunc("POST /chat", s.chat)
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /memories", s.memories)
+	mux.HandleFunc("GET /export", s.export)
 	return mux
 }
 
@@ -36,9 +38,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	reply, err := s.agent.Chat(r.Context(), request.Message)
+	reply, err := s.agent.ChatInput(r.Context(), agent.Input{
+		Channel: "http", MessageID: r.Header.Get("Idempotency-Key"), Content: request.Message, ReceivedAt: time.Now(),
+	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
@@ -66,13 +70,26 @@ func (s *Server) memories(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.ListMemories(r.Context(), limit, false)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err)
 		return
 	}
 	if items == nil {
 		items = []storage.Memory{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"memories": items})
+}
+
+func (s *Server) export(w http.ResponseWriter, r *http.Request) {
+	raw, err := s.store.ExportJSON(r.Context())
+	if err != nil {
+		writeInternalError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="mneme-export.json"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+	_, _ = w.Write([]byte("\n"))
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -83,4 +100,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
+}
+
+func writeInternalError(w http.ResponseWriter, err error) {
+	log.Printf("HTTP request failed: %v", err)
+	writeError(w, http.StatusInternalServerError, "internal server error")
 }

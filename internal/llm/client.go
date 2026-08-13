@@ -14,12 +14,14 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	model   string
+	effort  string
 	http    *http.Client
 }
 
 const (
-	DeepSeekBaseURL = "https://api.deepseek.com"
-	DeepSeekModel   = "deepseek-v4-pro"
+	DeepSeekBaseURL     = "https://api.deepseek.com"
+	DeepSeekChatModel   = "deepseek-v4-pro"
+	DeepSeekMemoryModel = "deepseek-v4-flash"
 )
 
 type Message struct {
@@ -53,17 +55,25 @@ type ToolDefinition struct {
 }
 
 func New(apiKey string, httpClient *http.Client) *Client {
-	return NewWithBaseURL(DeepSeekBaseURL, apiKey, DeepSeekModel, httpClient)
+	return NewWithBaseURL(DeepSeekBaseURL, apiKey, DeepSeekChatModel, "max", httpClient)
 }
 
-func NewWithBaseURL(baseURL, apiKey, model string, httpClient *http.Client) *Client {
+func NewMemory(apiKey string, httpClient *http.Client) *Client {
+	return NewWithBaseURL(DeepSeekBaseURL, apiKey, DeepSeekMemoryModel, "high", httpClient)
+}
+
+func NewWithBaseURL(baseURL, apiKey, model, effort string, httpClient *http.Client) *Client {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
+	}
+	if effort == "" {
+		effort = "high"
 	}
 	return &Client{
 		baseURL: completionURL(baseURL),
 		apiKey:  apiKey,
 		model:   model,
+		effort:  effort,
 		http:    httpClient,
 	}
 }
@@ -88,7 +98,7 @@ func (c *Client) Complete(ctx context.Context, messages []Message, tools []Tool)
 		Messages:        messages,
 		Tools:           tools,
 		Thinking:        map[string]any{"type": "enabled"},
-		ReasoningEffort: "max",
+		ReasoningEffort: c.effort,
 	}
 	payload, err := json.Marshal(body)
 	if err != nil {

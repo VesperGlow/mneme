@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -43,12 +44,37 @@ func run() error {
 		return err
 	}
 	defer store.Close()
+	if err := store.IntegrityCheck(context.Background()); err != nil {
+		return err
+	}
 	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
 	llmClient := llm.New(cfg.DeepSeekAPIKey, httpClient)
+	memoryLLMClient := llm.NewMemory(cfg.DeepSeekAPIKey, httpClient)
 	searchClient := search.New(cfg.TavilyAPIKey, httpClient)
-	memoryManager := memory.New(store, llmClient)
+	memoryManager := memory.New(store, memoryLLMClient)
 	logger := log.New(os.Stderr, "companion: ", log.LstdFlags)
-	companion := agent.New(store, llmClient, searchClient, memoryManager, cfg.SystemPrompt, cfg.PersonaPrompt, cfg.RecentMessages, cfg.MaxMemories, cfg.MaxToolCalls, logger)
+	companion := agent.NewWithOptions(store, llmClient, searchClient, memoryManager, cfg.SystemPrompt, cfg.PersonaPrompt, agent.Options{
+		RecentMessages: cfg.RecentMessages, MaxMemories: cfg.MaxMemories, MaxToolCalls: cfg.MaxToolCalls,
+		MemoryQueueSize: cfg.MemoryQueueSize, SummaryEvery: cfg.SummaryEvery,
+	}, logger)
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		if err := companion.Close(ctx); err != nil {
+			logger.Printf("agent shutdown: %v", err)
+		}
+	}()
+	backupCtx, stopBackups := context.WithCancel(context.Background())
+	var backupWG sync.WaitGroup
+	backupWG.Add(1)
+	go func() {
+		defer backupWG.Done()
+		runBackups(backupCtx, store, cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention, logger)
+	}()
+	defer func() {
+		stopBackups()
+		backupWG.Wait()
+	}()
 
 	switch os.Args[1] {
 	case "chat":
@@ -78,12 +104,36 @@ func runChat(companion *agent.Agent) error {
 		if input == "" {
 			continue
 		}
-		reply, err := companion.Chat(context.Background(), input)
+		reply, err := companion.ChatInput(context.Background(), agent.Input{Channel: "cli", Content: input, ReceivedAt: time.Now()})
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error > %v\n", err)
 			continue
 		}
 		fmt.Printf("Agent > %s\n\n", reply)
+	}
+}
+
+func runBackups(ctx context.Context, store *storage.Store, directory string, interval, retention time.Duration, logger *log.Logger) {
+	backup := func() {
+		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
+		defer cancel()
+		path, err := store.BackupIfDue(requestCtx, directory, interval, retention)
+		if err != nil && ctx.Err() == nil {
+			logger.Printf("database backup: %v", err)
+		} else if path != "" {
+			logger.Printf("database backup created: %s", path)
+		}
+	}
+	backup()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			backup()
+		}
 	}
 }
 
