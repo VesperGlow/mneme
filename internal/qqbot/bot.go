@@ -31,8 +31,9 @@ type Bot struct {
 }
 
 type incomingMessage struct {
-	content string
-	reply   func(context.Context, string) error
+	content   string
+	messageID string
+	reply     func(context.Context, string) error
 }
 
 func New(appID, appSecret string, companion *agent.Agent, logger *log.Logger) *Bot {
@@ -94,7 +95,7 @@ func (b *Bot) work(ctx context.Context) {
 			return
 		case job := <-b.jobs:
 			requestCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			reply, err := b.agent.Chat(requestCtx, job.content)
+			reply, err := b.agent.ChatInput(requestCtx, agent.Input{Channel: "qq", MessageID: job.messageID, Content: job.content, ReceivedAt: time.Now()})
 			if err != nil {
 				b.logger.Printf("QQ message failed: %v", err)
 				reply = "处理消息时出错了，请稍后再试。"
@@ -127,7 +128,8 @@ func (b *Bot) c2cHandler(ctx context.Context) event.C2CMessageEventHandler {
 		}
 		userID, messageID := data.Author.ID, data.ID
 		return b.enqueue(ctx, incomingMessage{
-			content: data.Content,
+			content:   data.Content,
+			messageID: messageID,
 			reply: func(replyCtx context.Context, content string) error {
 				return sendChunks(content, func(part string, sequence uint32) error {
 					_, err := b.api.PostC2CMessage(replyCtx, userID, dto.MessageToCreate{Content: part, MsgID: messageID, MsgSeq: sequence})

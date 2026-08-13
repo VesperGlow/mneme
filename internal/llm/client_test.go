@@ -38,7 +38,7 @@ func TestComplete(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewWithBaseURL(server.URL+"/v1", "secret", "test-model", server.Client())
+	client := NewWithBaseURL(server.URL+"/v1", "secret", "test-model", "max", server.Client())
 	message, err := client.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -48,5 +48,16 @@ func TestComplete(t *testing.T) {
 	}
 	if message.ReasoningContent != "internal" {
 		t.Fatalf("reasoning content was not preserved: %#v", message)
+	}
+}
+
+func TestChatAndMemoryModelPolicies(t *testing.T) {
+	chat := New("secret", nil)
+	if chat.model != DeepSeekChatModel || chat.effort != "max" {
+		t.Fatalf("unexpected chat policy: model=%s effort=%s", chat.model, chat.effort)
+	}
+	memory := NewMemory("secret", nil)
+	if memory.model != DeepSeekMemoryModel || memory.effort != "high" {
+		t.Fatalf("unexpected memory policy: model=%s effort=%s", memory.model, memory.effort)
 	}
 }

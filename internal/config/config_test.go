@@ -35,6 +35,26 @@ func TestLoadRequiresAPIKeys(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsSearchWithoutTavily(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "deepseek-test")
+	t.Setenv("TAVILY_API_KEY", "")
+	t.Setenv("system", "system prompt")
+	t.Setenv("persona", "persona prompt")
+	if _, err := Load(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLoadRejectsInvalidInteger(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "deepseek-test")
+	t.Setenv("system", "system prompt")
+	t.Setenv("persona", "persona prompt")
+	t.Setenv("COMPANION_MAX_MEMORIES", "many")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected invalid integer error")
+	}
+}
+
 func TestLoadRequiresPrompts(t *testing.T) {
 	t.Setenv("DEEPSEEK_API_KEY", "deepseek-test")
 	t.Setenv("TAVILY_API_KEY", "tavily-test")

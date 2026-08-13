@@ -3,49 +3,98 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Config struct {
-	DeepSeekAPIKey string
-	QQAppID        string
-	QQAppSecret    string
-	TavilyAPIKey   string
-	SystemPrompt   string
-	PersonaPrompt  string
-	DatabasePath   string
-	ListenAddr     string
-	RecentMessages int
-	MaxMemories    int
-	MaxToolCalls   int
-	RequestTimeout time.Duration
+	DeepSeekAPIKey  string
+	QQAppID         string
+	QQAppSecret     string
+	TavilyAPIKey    string
+	SystemPrompt    string
+	PersonaPrompt   string
+	DatabasePath    string
+	ListenAddr      string
+	RecentMessages  int
+	MaxMemories     int
+	MaxToolCalls    int
+	RequestTimeout  time.Duration
+	MemoryQueueSize int
+	SummaryEvery    int
+	BackupDir       string
+	BackupInterval  time.Duration
+	BackupRetention time.Duration
 }
 
 func Load() (Config, error) {
-	cfg := Config{
-		DeepSeekAPIKey: strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
-		QQAppID:        strings.TrimSpace(os.Getenv("QQ_APP_ID")),
-		QQAppSecret:    strings.TrimSpace(os.Getenv("QQ_APP_SECRET")),
-		TavilyAPIKey:   strings.TrimSpace(os.Getenv("TAVILY_API_KEY")),
-		SystemPrompt:   promptEnv("system"),
-		PersonaPrompt:  promptEnv("persona"),
-		DatabasePath:   env("COMPANION_DB", "./data/companion.db"),
-		ListenAddr:     env("COMPANION_ADDR", "127.0.0.1:8787"),
-		RecentMessages: envInt("COMPANION_RECENT_MESSAGES", 20),
-		MaxMemories:    envInt("COMPANION_MAX_MEMORIES", 5),
-		MaxToolCalls:   envInt("COMPANION_MAX_TOOL_CALLS", 3),
-		RequestTimeout: time.Duration(envInt("COMPANION_REQUEST_TIMEOUT_SECONDS", 120)) * time.Second,
+	recentMessages, err := envInt("COMPANION_RECENT_MESSAGES", 20)
+	if err != nil {
+		return Config{}, err
 	}
-	if cfg.DeepSeekAPIKey == "" || cfg.TavilyAPIKey == "" {
-		return Config{}, fmt.Errorf("DEEPSEEK_API_KEY and TAVILY_API_KEY must be set")
+	maxMemories, err := envInt("COMPANION_MAX_MEMORIES", 5)
+	if err != nil {
+		return Config{}, err
+	}
+	maxToolCalls, err := envInt("COMPANION_MAX_TOOL_CALLS", 3)
+	if err != nil {
+		return Config{}, err
+	}
+	requestTimeout, err := envInt("COMPANION_REQUEST_TIMEOUT_SECONDS", 120)
+	if err != nil {
+		return Config{}, err
+	}
+	memoryQueueSize, err := envInt("COMPANION_MEMORY_QUEUE_SIZE", 32)
+	if err != nil {
+		return Config{}, err
+	}
+	summaryEvery, err := envInt("COMPANION_SUMMARY_EVERY", 20)
+	if err != nil {
+		return Config{}, err
+	}
+	backupIntervalHours, err := envInt("COMPANION_BACKUP_INTERVAL_HOURS", 24)
+	if err != nil {
+		return Config{}, err
+	}
+	backupRetentionDays, err := envInt("COMPANION_BACKUP_RETENTION_DAYS", 14)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg := Config{
+		DeepSeekAPIKey:  strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
+		QQAppID:         strings.TrimSpace(os.Getenv("QQ_APP_ID")),
+		QQAppSecret:     strings.TrimSpace(os.Getenv("QQ_APP_SECRET")),
+		TavilyAPIKey:    strings.TrimSpace(os.Getenv("TAVILY_API_KEY")),
+		SystemPrompt:    promptEnv("system"),
+		PersonaPrompt:   promptEnv("persona"),
+		DatabasePath:    env("COMPANION_DB", "./data/companion.db"),
+		ListenAddr:      env("COMPANION_ADDR", "127.0.0.1:8787"),
+		RecentMessages:  recentMessages,
+		MaxMemories:     maxMemories,
+		MaxToolCalls:    maxToolCalls,
+		RequestTimeout:  time.Duration(requestTimeout) * time.Second,
+		MemoryQueueSize: memoryQueueSize,
+		SummaryEvery:    summaryEvery,
+		BackupDir:       strings.TrimSpace(os.Getenv("COMPANION_BACKUP_DIR")),
+		BackupInterval:  time.Duration(backupIntervalHours) * time.Hour,
+		BackupRetention: time.Duration(backupRetentionDays) * 24 * time.Hour,
+	}
+	if cfg.BackupDir == "" {
+		cfg.BackupDir = filepath.Join(filepath.Dir(cfg.DatabasePath), "backups")
+	}
+	if cfg.DeepSeekAPIKey == "" {
+		return Config{}, fmt.Errorf("DEEPSEEK_API_KEY must be set")
 	}
 	if cfg.SystemPrompt == "" || cfg.PersonaPrompt == "" {
 		return Config{}, fmt.Errorf("system and persona must be set")
 	}
-	if cfg.RecentMessages < 0 || cfg.MaxMemories < 0 || cfg.MaxToolCalls < 0 {
+	if cfg.RecentMessages < 0 || cfg.MaxMemories < 0 || cfg.MaxToolCalls < 0 || cfg.SummaryEvery < 0 {
 		return Config{}, fmt.Errorf("COMPANION limits must not be negative")
+	}
+	if cfg.RequestTimeout <= 0 || cfg.MemoryQueueSize < 1 || cfg.BackupInterval <= 0 || cfg.BackupRetention <= 0 {
+		return Config{}, fmt.Errorf("timeouts, queue size, and backup settings must be positive")
 	}
 	return cfg, nil
 }
@@ -69,14 +118,14 @@ func env(name, fallback string) string {
 	return fallback
 }
 
-func envInt(name string, fallback int) int {
+func envInt(name string, fallback int) (int, error) {
 	value := strings.TrimSpace(os.Getenv(name))
 	if value == "" {
-		return fallback
+		return fallback, nil
 	}
 	n, err := strconv.Atoi(value)
 	if err != nil {
-		return fallback
+		return 0, fmt.Errorf("%s must be an integer: %w", name, err)
 	}
-	return n
+	return n, nil
 }

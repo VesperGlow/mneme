@@ -3,6 +3,7 @@
 不要保存寒暄、一次性问题、临时情绪、模型自己的回答、搜索结果或敏感凭据。除非用户明确要求记住，否则宁可不保存。已有记忆发生变化时 update；明确过期、被否定或要求忘记时 delete；否则不动。
 
 只输出一个 JSON 对象，不要 Markdown，不要解释：
-{"actions":[{"action":"add","content":"简短、自包含的第三人称事实"},{"action":"update","id":1,"content":"更新后的完整事实"},{"action":"delete","id":1}]}
+{"actions":[{"action":"add","content":"简短、自包含的第三人称事实","kind":"preference","importance":3,"confidence":1},{"action":"update","id":1,"content":"更新后的完整事实","kind":"project","importance":4,"confidence":1},{"action":"delete","id":1}]}
 
 actions 最多 3 项；没有操作时输出 {"actions":[]}。update/delete 只能引用给出的已有记忆 ID。
+kind 只能是 preference、person、goal、project、decision、relationship、fact 之一；importance 为 1-5；confidence 为 0-1。用户明确陈述时 confidence=1，合理但未确认的推断不得高于 0.6。不要修改 pinned 记忆，除非用户本轮明确纠正或要求忘记它。
