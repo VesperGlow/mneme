@@ -119,6 +119,19 @@ docker compose logs -f companion
 
 数据保存在宿主机 `./data`。程序启动时会执行 SQLite 快速完整性检查，并在 `./data/backups` 中创建定期一致性备份，默认保留 14 天。HTTP API 默认只映射到宿主机 `127.0.0.1:8787`；QQ WebSocket 是容器主动向外连接，不需要开放额外入站端口。
 
+## 数据、备份与迁移
+
+Mneme 当前以本地 SQLite 为唯一主存储，不接入 S3 或其他对象存储后端。运行数据库位于 `./data/companion.db`，定期一致性备份位于 `./data/backups/mneme-*.db`。JSON 导出适合人工查看和长期归档，但不代替 SQLite 数据库备份。
+
+迁移到另一台机器时：
+
+1. 在旧机器执行 `docker compose down`，等待容器正常退出。
+2. 将 `.env`、`compose.yaml` 和整个 `./data` 目录复制到新机器。
+3. 在新机器保持相同目录结构，执行 `docker compose up -d`。
+4. 使用 `docker compose logs companion` 和 `curl http://127.0.0.1:8787/health` 检查启动与数据库完整性。
+
+不要在容器仍运行时只复制 `companion.db`，也不要把活动中的 SQLite 文件直接放在对象存储或不可靠的网络文件系统上。需要从定期备份恢复时，先停止容器，在一个空的数据目录中把选定的 `mneme-*.db` 复制为 `companion.db`，再启动容器。
+
 ## 本地构建
 
 ```bash
