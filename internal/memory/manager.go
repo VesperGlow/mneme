@@ -154,10 +154,10 @@ func memorySearchTool() llm.Tool {
 	}
 }
 
-func (m *Manager) Review(ctx context.Context, user, assistant, sourceMessageID string, existing []storage.Memory) error {
+func (m *Manager) Review(ctx context.Context, user, assistant, sourceMessageID string, existing []storage.Memory) (int, error) {
 	existingJSON, err := json.Marshal(existing)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	message := fmt.Sprintf("已有相关记忆：\n%s\n\n本轮用户：\n%s\n\n本轮助手：\n%s", existingJSON, user, assistant)
 	result, err := m.llm.Complete(ctx, []llm.Message{
@@ -165,16 +165,17 @@ func (m *Manager) Review(ctx context.Context, user, assistant, sourceMessageID s
 		{Role: "user", Content: message},
 	}, nil)
 	if err != nil {
-		return fmt.Errorf("review memories: %w", err)
+		return 0, fmt.Errorf("review memories: %w", err)
 	}
 	parsed, err := parseDecision(result.Content)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	allowed := make(map[int64]bool, len(existing))
 	for _, item := range existing {
 		allowed[item.ID] = true
 	}
+	changes := 0
 	for i, item := range parsed.Actions {
 		if i >= 3 {
 			break
@@ -186,8 +187,9 @@ func (m *Manager) Review(ctx context.Context, user, assistant, sourceMessageID s
 					Content: item.Content, Source: "auto", Kind: validKind(item.Kind), Importance: validImportance(item.Importance),
 					Confidence: validConfidence(item.Confidence), SourceMessageID: sourceMessageID,
 				}); err != nil {
-					return err
+					return changes, err
 				}
+				changes++
 			}
 		case "update":
 			if allowed[item.ID] && strings.TrimSpace(item.Content) != "" && !memoryPinned(existing, item.ID) {
@@ -195,18 +197,20 @@ func (m *Manager) Review(ctx context.Context, user, assistant, sourceMessageID s
 					Content: item.Content, Kind: validKind(item.Kind), Importance: validImportance(item.Importance),
 					Confidence: validConfidence(item.Confidence), SourceMessageID: sourceMessageID,
 				}); err != nil {
-					return err
+					return changes, err
 				}
+				changes++
 			}
 		case "delete":
 			if allowed[item.ID] && !memoryPinned(existing, item.ID) {
 				if err := m.store.DeactivateMemory(ctx, item.ID); err != nil {
-					return err
+					return changes, err
 				}
+				changes++
 			}
 		}
 	}
-	return nil
+	return changes, nil
 }
 
 func (m *Manager) Summarize(ctx context.Context, previous string, messages []storage.Message) (string, error) {

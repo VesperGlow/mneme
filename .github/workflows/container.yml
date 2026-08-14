@@ -31,7 +31,7 @@ jobs:
         run: go vet ./...
 
       - name: Build container
-        run: docker build --tag mneme:test .
+        run: docker build --build-arg BUILD_COMMIT=${{ github.sha }} --tag mneme:test .
 
   publish:
     if: github.event_name != 'pull_request'
@@ -68,6 +68,8 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
+          build-args: |
+            BUILD_COMMIT=${{ github.sha }}
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
