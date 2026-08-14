@@ -236,3 +236,56 @@ func TestChatInputRetriesDeferredReplyAndSendsProgress(t *testing.T) {
 		t.Fatalf("unexpected progress messages: %v", progress)
 	}
 }
+
+func TestChatInputSendsEveryToolRoundProgress(t *testing.T) {
+	var calls atomic.Int32
+	llmServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		switch call {
+		case 1:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"我先搜索一下。","tool_calls":[{"id":"call-search","type":"function","function":{"name":"web_search","arguments":"{\"query\":\"周年庆时间\"}"}}]}}]}`))
+		case 2:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"找到公告了，我再打开确认。","tool_calls":[{"id":"call-open","type":"function","function":{"name":"open_url","arguments":"{\"url\":\"https://example.com/announcement\"}"}}]}}]}`))
+		case 3:
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"最终确认：周年庆在八月底。"}}]}`))
+		default:
+			t.Fatalf("unexpected LLM call %d", call)
+		}
+	}))
+	defer llmServer.Close()
+
+	store, err := storage.Open(filepath.Join(t.TempDir(), "agent.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	llmClient := llm.NewWithBaseURL(llmServer.URL, "secret", "test-model", "max", llmServer.Client())
+	a := NewWithOptions(store, llmClient, nil, nil, "system", "persona", Options{
+		RecentMessages: 20, MaxMemories: 0, MaxToolCalls: 2, MemoryQueueSize: 2, SummaryEvery: 0,
+	}, nil)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = a.Close(ctx)
+	})
+
+	var progress []string
+	reply, err := a.ChatInput(context.Background(), Input{
+		Channel: "qq", Content: "帮我确认周年庆时间", ReceivedAt: time.Now(),
+		Progress: func(_ context.Context, content string) error {
+			progress = append(progress, content)
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply != "最终确认：周年庆在八月底。" || calls.Load() != 3 {
+		t.Fatalf("unexpected reply=%q calls=%d", reply, calls.Load())
+	}
+	want := []string{"我先搜索一下。", "找到公告了，我再打开确认。"}
+	if len(progress) != len(want) || progress[0] != want[0] || progress[1] != want[1] {
+		t.Fatalf("unexpected progress messages: got=%v want=%v", progress, want)
+	}
+}

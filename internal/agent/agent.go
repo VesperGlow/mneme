@@ -300,7 +300,6 @@ func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Me
 	started := time.Now()
 	logger := a.logger.With("request", requestID, "model", llm.DeepSeekChatModel)
 	usedTools := 0
-	progressSent := false
 	deferredRetry := false
 	tools := []llm.Tool{webSearchTool(), openURLTool()}
 	maxRounds := a.maxToolCalls + 2
@@ -319,7 +318,7 @@ func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Me
 				return "", fmt.Errorf("LLM returned an empty response")
 			}
 			if !deferredRetry && isDeferredReply(response.Content) {
-				progressSent = a.sendProgress(ctx, requestID, progress, progressSent, response.Content)
+				a.sendProgress(ctx, requestID, progress, response.Content)
 				messages = append(messages,
 					response,
 					llm.Message{Role: "system", Content: "你刚才只给出了准备查询的进度说明，但尚未完成用户请求。若需要外部信息，请现在立即调用可用工具；否则现在直接给出完整答案。不要再次只回复稍等、让我查查或稍后告知。"},
@@ -330,7 +329,7 @@ func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Me
 			logger.Info("聊天生成完成", "rounds", round+1, "tools_used", usedTools, "output_chars", utf8.RuneCountInString(response.Content), "duration", time.Since(started))
 			return response.Content, nil
 		}
-		progressSent = a.sendProgress(ctx, requestID, progress, progressSent, response.Content)
+		a.sendProgress(ctx, requestID, progress, response.Content)
 		messages = append(messages, response)
 		for _, call := range response.ToolCalls {
 			var output string
@@ -349,19 +348,18 @@ func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Me
 	return "", fmt.Errorf("agent stopped after %d model rounds", maxRounds)
 }
 
-func (a *Agent) sendProgress(ctx context.Context, requestID uint64, send func(context.Context, string) error, alreadySent bool, content string) bool {
+func (a *Agent) sendProgress(ctx context.Context, requestID uint64, send func(context.Context, string) error, content string) {
 	content = strings.TrimSpace(content)
-	if alreadySent || send == nil || content == "" {
-		return alreadySent
+	if send == nil || content == "" {
+		return
 	}
 	started := time.Now()
 	logger := a.logger.With("request", requestID)
 	if err := send(ctx, content); err != nil {
 		logger.Warn("进度消息发送失败", "duration", time.Since(started), "error", err)
-		return false
+		return
 	}
 	logger.Info("进度消息已发送", "output_chars", utf8.RuneCountInString(content), "duration", time.Since(started))
-	return true
 }
 
 func isDeferredReply(content string) bool {
