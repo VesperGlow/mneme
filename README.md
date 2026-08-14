@@ -7,7 +7,8 @@
 - QQ C2C 私聊消息
 - QQ WebSocket 长连接和自动重连
 - 核心聊天固定使用 DeepSeek `deepseek-v4-pro`，思考模式 `reasoning_effort=max`
-- 后台记忆维护使用 `deepseek-v4-flash`，不占用聊天响应时间
+- 每轮回复前由 `deepseek-v4-flash` 理解消息并按需检索长期记忆，最终回复仍由 `deepseek-v4-pro` 生成
+- 后台记忆整理和阶段摘要同样使用 `deepseek-v4-flash`
 - Tavily `web_search`，仅在需要实时外部信息时调用
 - 分层上下文：最近消息、阶段摘要、结构化 FTS5 长期记忆
 - 有界后台记忆队列、渠道消息去重、定期备份和 JSON 导出
@@ -76,14 +77,14 @@ DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM
 
 ## Prompt 分层
 
-聊天上下文按以下顺序发送给 DeepSeek：
+每轮普通消息先经过记忆检索，再进入聊天模型：
 
-1. `.env` 中的 `system`：系统行为和工具规则
-2. `.env` 中的 `persona`：陪伴者的人格、语气和关系风格
-3. 当前日期、最近阶段摘要和本轮相关长期记忆
-4. 所有渠道共享的最近聊天与用户消息
+1. `deepseek-v4-flash` 根据当前消息和最近对话判断是否需要长期记忆，并通过内部 `search_memories` 工具生成、调整检索词。
+2. Flash 从实际搜索结果中选出本轮真正相关的记忆；检索失败或超时时自动退回原句 FTS5 检索，不中断聊天。
+3. `.env` 中的 `system`、`persona`、当前日期、阶段摘要、筛选后的长期记忆、最近聊天和用户原始消息一起发送给 `deepseek-v4-pro`。
+4. `deepseek-v4-pro` 负责工具使用和最终回复；Flash 不生成面向用户的回答。
 
-QQ、HTTP 和终端只是同一个个人 Agent 的入口，不会创建彼此隔离的人格或记忆。带消息 ID 的渠道会自动去重。长期记忆判断使用独立的 `prompts/memory.txt`，不会让 persona 干扰结构化记忆维护；自动记忆包含类型、重要度、置信度和来源，手动 `/remember` 的内容会固定，避免被后台任务静默改写。
+QQ、HTTP 和终端只是同一个个人 Agent 的入口，不会创建彼此隔离的人格或记忆。带消息 ID 的渠道会自动去重。检索规划和长期记忆维护分别使用独立的 `prompts/retrieval.txt` 与 `prompts/memory.txt`，不会让 persona 干扰记忆层；自动记忆包含类型、重要度、置信度和来源，手动 `/remember` 的内容会固定，避免被后台任务静默改写。
 
 阶段摘要每累计默认 20 轮对话更新一次，用来保留近期进行中的事情；稳定事实仍由长期记忆维护。
 
