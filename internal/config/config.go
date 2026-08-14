@@ -10,30 +10,23 @@ import (
 )
 
 type Config struct {
-	DeepSeekAPIKey    string
-	QQAppID           string
-	QQAppSecret       string
-	TavilyAPIKey      string
-	SystemPrompt      string
-	PersonaPrompt     string
-	DatabasePath      string
-	ListenAddr        string
-	RecentMessages    int
-	MaxMemories       int
-	MaxToolCalls       int
-	RequestTimeout    time.Duration
-	MemoryQueueSize   int
-	SummaryEvery      int
-	BackupDir         string
-	BackupInterval    time.Duration
-	BackupRetention   time.Duration
-	S3Bucket          string
-	S3Prefix          string
-	S3Region          string
-	S3Endpoint        string
-	S3AccessKeyID     string
-	S3SecretAccessKey string
-	S3SessionToken    string
+	DeepSeekAPIKey  string
+	QQAppID         string
+	QQAppSecret     string
+	TavilyAPIKey    string
+	SystemPrompt    string
+	PersonaPrompt   string
+	DatabasePath    string
+	ListenAddr      string
+	RecentMessages  int
+	MaxMemories     int
+	MaxToolCalls    int
+	RequestTimeout  time.Duration
+	MemoryQueueSize int
+	SummaryEvery    int
+	BackupDir       string
+	BackupInterval  time.Duration
+	BackupRetention time.Duration
 }
 
 func Load() (Config, error) {
@@ -70,30 +63,23 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		DeepSeekAPIKey:    strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
-		QQAppID:           strings.TrimSpace(os.Getenv("QQ_APP_ID")),
-		QQAppSecret:       strings.TrimSpace(os.Getenv("QQ_APP_SECRET")),
-		TavilyAPIKey:      strings.TrimSpace(os.Getenv("TAVILY_API_KEY")),
-		SystemPrompt:      promptEnv("system"),
-		PersonaPrompt:     promptEnv("persona"),
-		DatabasePath:      env("COMPANION_DB", "./data/companion.db"),
-		ListenAddr:        env("COMPANION_ADDR", "127.0.0.1:8787"),
-		RecentMessages:    recentMessages,
-		MaxMemories:       maxMemories,
-		MaxToolCalls:       maxToolCalls,
-		RequestTimeout:    time.Duration(requestTimeout) * time.Second,
-		MemoryQueueSize:   memoryQueueSize,
-		SummaryEvery:      summaryEvery,
-		BackupDir:         strings.TrimSpace(os.Getenv("COMPANION_BACKUP_DIR")),
-		BackupInterval:    time.Duration(backupIntervalHours) * time.Hour,
-		BackupRetention:   time.Duration(backupRetentionDays) * 24 * time.Hour,
-		S3Bucket:          strings.TrimSpace(os.Getenv("S3_BUCKET")),
-		S3Prefix:          env("S3_PREFIX", "mneme/backups"),
-		S3Region:          s3Region(),
-		S3Endpoint:        strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
-		S3AccessKeyID:     strings.TrimSpace(os.Getenv("S3_ACCESS_KEY_ID")),
-		S3SecretAccessKey: strings.TrimSpace(os.Getenv("S3_SECRET_ACCESS_KEY")),
-		S3SessionToken:    strings.TrimSpace(os.Getenv("S3_SESSION_TOKEN")),
+		DeepSeekAPIKey:  strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY")),
+		QQAppID:         strings.TrimSpace(os.Getenv("QQ_APP_ID")),
+		QQAppSecret:     strings.TrimSpace(os.Getenv("QQ_APP_SECRET")),
+		TavilyAPIKey:    strings.TrimSpace(os.Getenv("TAVILY_API_KEY")),
+		SystemPrompt:    promptEnv("system"),
+		PersonaPrompt:   promptEnv("persona"),
+		DatabasePath:    env("COMPANION_DB", "./data/companion.db"),
+		ListenAddr:      env("COMPANION_ADDR", "127.0.0.1:8787"),
+		RecentMessages:  recentMessages,
+		MaxMemories:     maxMemories,
+		MaxToolCalls:    maxToolCalls,
+		RequestTimeout:  time.Duration(requestTimeout) * time.Second,
+		MemoryQueueSize: memoryQueueSize,
+		SummaryEvery:    summaryEvery,
+		BackupDir:       strings.TrimSpace(os.Getenv("COMPANION_BACKUP_DIR")),
+		BackupInterval:  time.Duration(backupIntervalHours) * time.Hour,
+		BackupRetention: time.Duration(backupRetentionDays) * 24 * time.Hour,
 	}
 	if cfg.BackupDir == "" {
 		cfg.BackupDir = filepath.Join(filepath.Dir(cfg.DatabasePath), "backups")
@@ -110,20 +96,7 @@ func Load() (Config, error) {
 	if cfg.RequestTimeout <= 0 || cfg.MemoryQueueSize < 1 || cfg.BackupInterval <= 0 || cfg.BackupRetention <= 0 {
 		return Config{}, fmt.Errorf("timeouts, queue size, and backup settings must be positive")
 	}
-	if (cfg.S3AccessKeyID == "") != (cfg.S3SecretAccessKey == "") {
-		return Config{}, fmt.Errorf("S3_ACCESS_KEY_ID and S3_SECRET_ACCESS_KEY must be set together")
-	}
 	return cfg, nil
-}
-
-func s3Region() string {
-	if value := strings.TrimSpace(os.Getenv("S3_REGION")); value != "" {
-		return value
-	}
-	if value := strings.TrimSpace(os.Getenv("AWS_REGION")); value != "" {
-		return value
-	}
-	return env("AWS_DEFAULT_REGION", "us-east-1")
 }
 
 func promptEnv(name string) string {
