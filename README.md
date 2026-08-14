@@ -63,6 +63,8 @@ DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM
 | `COMPANION_BACKUP_DIR` | 数据库同目录下的 `backups` |
 | `COMPANION_BACKUP_INTERVAL_HOURS` | `24` |
 | `COMPANION_BACKUP_RETENTION_DAYS` | `14` |
+| `COMPANION_LOG_FORMAT` | `pretty`（可设为 `json`） |
+| `COMPANION_LOG_LEVEL` | `info`（`debug`、`info`、`warn`、`error`） |
 
 ## QQ 开放平台
 
@@ -123,18 +125,26 @@ docker compose logs -f companion
 
 ## 运行日志
 
-Mneme 向标准错误输出单行中文 `键=值` 事件日志，Docker 和 systemd 都可以直接收集。日志会显示启动配置摘要、数据库检查、QQ 连接、每轮消息的记忆检索、Pro 生成、工具调用、保存、后台记忆整理、备份和退出阶段。例如：
+Mneme 向标准错误输出单行结构化日志，Docker 和 systemd 都可以直接收集。默认的 `pretty` 格式把时间、级别、组件和事件分列显示，字段统一使用简短的 `snake_case` 名称，耗时自动显示为 `ms` 或 `s`：
 
 ```text
-级别=信息 事件=收到聊天 请求=7 渠道="qq" 输入字符数=18 有外部消息ID=true
-级别=信息 事件=记忆检索完成 请求=7 策略=flash 选中数=2 耗时毫秒=842
-级别=信息 事件=工具调用完成 请求=7 工具=open_url 内容字符数=1530 耗时毫秒=610
-级别=信息 事件=聊天生成完成 请求=7 模型="deepseek-v4-pro" 轮数=2 已用工具数=1 输出字符数=96 耗时毫秒=2310
-级别=信息 事件=记忆复核完成 请求=7 变更数=1 耗时毫秒=675
-级别=信息 事件=QQ回复已发送 传输=7 输出字符数=96 分段数=1 耗时毫秒=3890
+2026-08-14 21:16:42.103  INFO  agent     │ 收到聊天  request=7 channel=qq input_chars=18 external_message_id=true
+2026-08-14 21:16:42.945  INFO  agent     │ 记忆检索完成  request=7 strategy=flash selected=2 duration=842ms
+2026-08-14 21:16:43.555  INFO  agent     │ 工具调用完成  request=7 tool=open_url content_chars=1530 duration=610ms
+2026-08-14 21:16:45.865  INFO  agent     │ 聊天生成完成  request=7 model=deepseek-v4-pro rounds=2 tools_used=1 output_chars=96 duration=2.31s
+2026-08-14 21:16:46.540  INFO  agent     │ 记忆复核完成  request=7 changes=1 duration=675ms
+2026-08-14 21:16:46.929  INFO  qq        │ 回复已发送  transport=7 output_chars=96 chunks=1 duration=3.89s
 ```
 
-同一个 `请求` 表示 Agent 内的一轮处理，`传输` 表示 QQ 接入层收到的一条消息。默认日志不会写入聊天正文、长期记忆正文、搜索词、网页 URL、用户 ID、系统 Prompt 或密钥，只记录字符数、数量、状态和耗时。
+`request` 表示 Agent 内的一轮处理，`transport` 表示 QQ 接入层收到的一条消息。默认 `info` 级别保留关键生命周期与结果；将 `COMPANION_LOG_LEVEL` 设为 `debug` 可查看队列、模型轮次和处理中事件。交互式终端会为级别着色，重定向、Docker 和 systemd 收集时自动禁用 ANSI 颜色；设置 `NO_COLOR=1` 也可强制禁用。
+
+如果日志需要交给 Loki、Elasticsearch 等系统处理，可切换为一行一个对象的 JSON：
+
+```dotenv
+COMPANION_LOG_FORMAT=json
+```
+
+日志不会写入聊天正文、长期记忆正文、搜索词、网页 URL、用户 ID、系统 Prompt 或密钥，只记录字符数、数量、状态和耗时。
 
 查看容器日志：
 
