@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -18,6 +17,7 @@ import (
 	"companion/internal/config"
 	"companion/internal/httpapi"
 	"companion/internal/llm"
+	"companion/internal/logging"
 	"companion/internal/memory"
 	"companion/internal/qqbot"
 	"companion/internal/search"
@@ -28,7 +28,11 @@ var buildCommit = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("错误：%v", err)
+		logger, loggerErr := logging.NewFromEnv(os.Stderr)
+		if loggerErr != nil {
+			logger = logging.New(os.Stderr, logging.Options{})
+		}
+		logger.Named("app").Error("启动失败", "error", err)
 		os.Exit(1)
 	}
 }
@@ -37,14 +41,18 @@ func run() error {
 	if len(os.Args) != 2 || (os.Args[1] != "chat" && os.Args[1] != "serve") {
 		return fmt.Errorf("usage: companion <chat|serve>")
 	}
-	logger := log.New(os.Stderr, "companion: ", log.LstdFlags|log.Lmicroseconds)
+	logger, err := logging.NewFromEnv(os.Stderr)
+	if err != nil {
+		return err
+	}
+	logger = logger.Named("app")
 	mode := os.Args[1]
-	logger.Printf("级别=信息 事件=启动开始 模式=%q 提交=%q", mode, shortCommit(buildCommit))
+	logger.Info("启动开始", "mode", mode, "commit", shortCommit(buildCommit))
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	logger.Printf("级别=信息 事件=配置已加载 模式=%q 监听地址=%q 聊天模型=%q 聊天推理强度=max 记忆模型=%q 记忆推理强度=high 最近消息数=%d 最大记忆数=%d 最大工具调用数=%d 记忆队列容量=%d 摘要间隔轮数=%d 网页搜索=%t 打开链接=%t", mode, cfg.ListenAddr, llm.DeepSeekChatModel, llm.DeepSeekMemoryModel, cfg.RecentMessages, cfg.MaxMemories, cfg.MaxToolCalls, cfg.MemoryQueueSize, cfg.SummaryEvery, cfg.TavilyAPIKey != "", cfg.TavilyAPIKey != "")
+	logger.Info("配置已加载", "mode", mode, "address", cfg.ListenAddr, "chat_model", llm.DeepSeekChatModel, "chat_effort", "max", "memory_model", llm.DeepSeekMemoryModel, "memory_effort", "high", "recent_messages", cfg.RecentMessages, "max_memories", cfg.MaxMemories, "max_tool_calls", cfg.MaxToolCalls, "memory_queue_capacity", cfg.MemoryQueueSize, "summary_every", cfg.SummaryEvery, "web_search", cfg.TavilyAPIKey != "", "open_url", cfg.TavilyAPIKey != "")
 	databaseStarted := time.Now()
 	store, err := storage.Open(cfg.DatabasePath)
 	if err != nil {
@@ -52,13 +60,13 @@ func run() error {
 	}
 	defer func() {
 		if err := store.Close(); err != nil {
-			logger.Printf("级别=警告 事件=数据库关闭失败 错误=%q", err)
+			logger.Warn("数据库关闭失败", "error", err)
 		}
 	}()
 	if err := store.IntegrityCheck(context.Background()); err != nil {
 		return err
 	}
-	logger.Printf("级别=信息 事件=数据库就绪 路径=%q 完整性=正常 耗时毫秒=%d", cfg.DatabasePath, time.Since(databaseStarted).Milliseconds())
+	logger.Named("storage").Info("数据库就绪", "path", cfg.DatabasePath, "integrity", "ok", "duration", time.Since(databaseStarted))
 	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
 	llmClient := llm.New(cfg.DeepSeekAPIKey, httpClient)
 	memoryLLMClient := llm.NewMemory(cfg.DeepSeekAPIKey, httpClient)
@@ -67,26 +75,26 @@ func run() error {
 	companion := agent.NewWithOptions(store, llmClient, searchClient, memoryManager, cfg.SystemPrompt, cfg.PersonaPrompt, agent.Options{
 		RecentMessages: cfg.RecentMessages, MaxMemories: cfg.MaxMemories, MaxToolCalls: cfg.MaxToolCalls,
 		MemoryQueueSize: cfg.MemoryQueueSize, SummaryEvery: cfg.SummaryEvery,
-	}, logger)
+	}, logger.Named("agent"))
 	defer func() {
-		logger.Printf("级别=信息 事件=Agent关闭开始 待处理记忆任务=正在清空")
+		logger.Named("agent").Info("关闭开始", "memory_jobs", "draining")
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if err := companion.Close(ctx); err != nil {
-			logger.Printf("级别=警告 事件=Agent关闭失败 错误=%q", err)
+			logger.Named("agent").Warn("关闭失败", "error", err)
 		} else {
-			logger.Printf("级别=信息 事件=Agent关闭完成")
+			logger.Named("agent").Info("关闭完成")
 		}
 	}()
-	logger.Printf("级别=信息 事件=Agent就绪 记忆工作器=运行中")
+	logger.Named("agent").Info("就绪", "memory_worker", "running")
 	backupCtx, stopBackups := context.WithCancel(context.Background())
 	var backupWG sync.WaitGroup
 	backupWG.Add(1)
 	go func() {
 		defer backupWG.Done()
-		runBackups(backupCtx, store, cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention, logger)
+		runBackups(backupCtx, store, cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention, logger.Named("backup"))
 	}()
-	logger.Printf("级别=信息 事件=备份调度器已启动 目录=%q 间隔=%q 保留期=%q", cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention)
+	logger.Named("backup").Info("调度器已启动", "directory", cfg.BackupDir, "interval", cfg.BackupInterval, "retention", cfg.BackupRetention)
 	defer func() {
 		stopBackups()
 		backupWG.Wait()
@@ -99,7 +107,7 @@ func run() error {
 		if err := cfg.ValidateQQ(); err != nil {
 			return err
 		}
-		qq := qqbot.New(cfg.QQAppID, cfg.QQAppSecret, companion, logger)
+		qq := qqbot.New(cfg.QQAppID, cfg.QQAppSecret, companion, logger.Named("qq"))
 		return runServer(cfg.ListenAddr, companion, store, qq, logger)
 	default:
 		return nil
@@ -129,18 +137,18 @@ func runChat(companion *agent.Agent) error {
 	}
 }
 
-func runBackups(ctx context.Context, store *storage.Store, directory string, interval, retention time.Duration, logger *log.Logger) {
+func runBackups(ctx context.Context, store *storage.Store, directory string, interval, retention time.Duration, logger *logging.Logger) {
 	backup := func() {
 		started := time.Now()
 		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 		path, err := store.BackupIfDue(requestCtx, directory, interval, retention)
 		if err != nil && ctx.Err() == nil {
-			logger.Printf("级别=警告 事件=数据库备份失败 耗时毫秒=%d 错误=%q", time.Since(started).Milliseconds(), err)
+			logger.Warn("数据库备份失败", "duration", time.Since(started), "error", err)
 		} else if path != "" {
-			logger.Printf("级别=信息 事件=数据库备份已创建 路径=%q 耗时毫秒=%d", path, time.Since(started).Milliseconds())
+			logger.Info("数据库备份已创建", "path", path, "duration", time.Since(started))
 		} else if ctx.Err() == nil {
-			logger.Printf("级别=信息 事件=数据库备份已检查 结果=尚未到期 耗时毫秒=%d", time.Since(started).Milliseconds())
+			logger.Debug("数据库备份已检查", "result", "not_due", "duration", time.Since(started))
 		}
 	}
 	backup()
@@ -156,10 +164,10 @@ func runBackups(ctx context.Context, store *storage.Store, directory string, int
 	}
 }
 
-func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qqbot.Bot, logger *log.Logger) error {
+func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qqbot.Bot, logger *logging.Logger) error {
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.New(companion, store, logger),
+		Handler:           httpapi.New(companion, store, logger.Named("http")),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
@@ -167,7 +175,7 @@ func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qq
 	defer stop()
 	errCh := make(chan error, 2)
 	go func() {
-		logger.Printf("级别=信息 事件=HTTP服务已启动 地址=%q", "http://"+addr)
+		logger.Named("http").Info("服务已启动", "address", "http://"+addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("HTTP server: %w", err)
 		}
@@ -186,17 +194,17 @@ func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qq
 	var runErr error
 	select {
 	case <-ctx.Done():
-		logger.Printf("级别=信息 事件=收到关闭请求 原因=%q", ctx.Err())
+		logger.Info("收到关闭请求", "reason", ctx.Err())
 	case runErr = <-errCh:
-		logger.Printf("级别=错误 事件=服务组件失败 错误=%q", runErr)
+		logger.Error("服务组件失败", "error", runErr)
 		stop()
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("级别=警告 事件=HTTP服务关闭失败 错误=%q", err)
+		logger.Named("http").Warn("服务关闭失败", "error", err)
 	} else {
-		logger.Printf("级别=信息 事件=HTTP服务已停止")
+		logger.Named("http").Info("服务已停止")
 	}
 	return runErr
 }

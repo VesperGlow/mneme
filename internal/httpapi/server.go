@@ -3,22 +3,22 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"companion/internal/agent"
+	"companion/internal/logging"
 	"companion/internal/storage"
 )
 
 type Server struct {
 	agent  *agent.Agent
 	store  *storage.Store
-	logger *log.Logger
+	logger *logging.Logger
 }
 
-func New(agent *agent.Agent, store *storage.Store, logger *log.Logger) http.Handler {
+func New(agent *agent.Agent, store *storage.Store, logger *logging.Logger) http.Handler {
 	s := &Server{agent: agent, store: store, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat", s.chat)
@@ -104,9 +104,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 }
 
 func (s *Server) writeInternalError(w http.ResponseWriter, err error) {
-	if s.logger != nil {
-		s.logger.Printf("级别=错误 事件=HTTP请求失败 错误=%q", err)
-	}
+	s.logger.Error("请求失败", "error", err)
 	writeError(w, http.StatusInternalServerError, "internal server error")
 }
 
@@ -125,8 +123,8 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		started := time.Now()
 		wrapped := &responseStatus{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(wrapped, r)
-		if s.logger != nil && (r.URL.Path != "/health" || wrapped.status >= http.StatusBadRequest) {
-			s.logger.Printf("级别=信息 事件=HTTP请求完成 方法=%q 路径=%q 状态码=%d 耗时毫秒=%d", r.Method, r.URL.Path, wrapped.status, time.Since(started).Milliseconds())
+		if r.URL.Path != "/health" || wrapped.status >= http.StatusBadRequest {
+			s.logger.Info("请求完成", "method", r.Method, "path", r.URL.Path, "status", wrapped.status, "duration", time.Since(started))
 		}
 	})
 }
