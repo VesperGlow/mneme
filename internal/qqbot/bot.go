@@ -56,7 +56,7 @@ func (b *Bot) Run(ctx context.Context) error {
 	if err := token.StartRefreshAccessToken(ctx, tokenSource); err != nil {
 		return fmt.Errorf("start QQ access token refresh: %w", err)
 	}
-	b.logger.Printf("level=info event=qq_token_refresh_started")
+	b.logger.Printf("级别=信息 事件=QQ令牌刷新已启动")
 	b.api = botgo.NewOpenAPI(b.appID, tokenSource).WithTimeout(15 * time.Second)
 
 	intents := event.RegisterHandlers(
@@ -66,9 +66,9 @@ func (b *Bot) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("get QQ websocket gateway: %w", err)
 	}
-	b.logger.Printf("level=info event=qq_gateway_ready shards=%d", websocketInfo.Shards)
+	b.logger.Printf("级别=信息 事件=QQ网关就绪 分片数=%d", websocketInfo.Shards)
 	go b.work(ctx)
-	b.logger.Printf("level=info event=qq_websocket_started shards=%d", websocketInfo.Shards)
+	b.logger.Printf("级别=信息 事件=QQ_WebSocket已启动 分片数=%d", websocketInfo.Shards)
 	if err := botgo.NewSessionManager().Start(websocketInfo, tokenSource, &intents); err != nil {
 		return fmt.Errorf("run QQ websocket: %w", err)
 	}
@@ -84,39 +84,39 @@ func (sdkLogger) Info(...interface{})           {}
 func (sdkLogger) Debugf(string, ...interface{}) {}
 func (sdkLogger) Infof(string, ...interface{})  {}
 func (l sdkLogger) Warn(v ...interface{}) {
-	l.logger.Printf("level=warn event=qq_sdk_warning message=%q", fmt.Sprint(v...))
+	l.logger.Printf("级别=警告 事件=QQ_SDK警告 消息=%q", fmt.Sprint(v...))
 }
 func (l sdkLogger) Error(v ...interface{}) {
-	l.logger.Printf("level=error event=qq_sdk_error message=%q", fmt.Sprint(v...))
+	l.logger.Printf("级别=错误 事件=QQ_SDK错误 消息=%q", fmt.Sprint(v...))
 }
 func (l sdkLogger) Warnf(format string, v ...interface{}) {
-	l.logger.Printf("level=warn event=qq_sdk_warning message=%q", fmt.Sprintf(format, v...))
+	l.logger.Printf("级别=警告 事件=QQ_SDK警告 消息=%q", fmt.Sprintf(format, v...))
 }
 func (l sdkLogger) Errorf(format string, v ...interface{}) {
-	l.logger.Printf("level=error event=qq_sdk_error message=%q", fmt.Sprintf(format, v...))
+	l.logger.Printf("级别=错误 事件=QQ_SDK错误 消息=%q", fmt.Sprintf(format, v...))
 }
 func (sdkLogger) Sync() error { return nil }
 
 func (b *Bot) work(ctx context.Context) {
-	b.logger.Printf("level=info event=qq_worker_started queue_capacity=%d", cap(b.jobs))
-	defer b.logger.Printf("level=info event=qq_worker_stopped")
+	b.logger.Printf("级别=信息 事件=QQ工作器已启动 队列容量=%d", cap(b.jobs))
+	defer b.logger.Printf("级别=信息 事件=QQ工作器已停止")
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case job := <-b.jobs:
 			started := time.Now()
-			b.logger.Printf("level=info event=qq_message_processing transport=%d queue_depth=%d", job.transportID, len(b.jobs))
+			b.logger.Printf("级别=信息 事件=QQ消息处理中 传输=%d 队列深度=%d", job.transportID, len(b.jobs))
 			requestCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 			reply, err := b.agent.ChatInput(requestCtx, agent.Input{Channel: "qq", MessageID: job.messageID, Content: job.content, ReceivedAt: time.Now()})
 			if err != nil {
-				b.logger.Printf("level=error event=qq_message_failed transport=%d duration_ms=%d error=%q", job.transportID, time.Since(started).Milliseconds(), err)
+				b.logger.Printf("级别=错误 事件=QQ消息处理失败 传输=%d 耗时毫秒=%d 错误=%q", job.transportID, time.Since(started).Milliseconds(), err)
 				reply = "处理消息时出错了，请稍后再试。"
 			}
 			if err := job.reply(requestCtx, reply); err != nil {
-				b.logger.Printf("level=error event=qq_reply_failed transport=%d duration_ms=%d error=%q", job.transportID, time.Since(started).Milliseconds(), err)
+				b.logger.Printf("级别=错误 事件=QQ回复失败 传输=%d 耗时毫秒=%d 错误=%q", job.transportID, time.Since(started).Milliseconds(), err)
 			} else {
-				b.logger.Printf("level=info event=qq_reply_sent transport=%d output_chars=%d chunks=%d duration_ms=%d", job.transportID, utf8.RuneCountInString(reply), len(splitText(reply, maxReplyBytes)), time.Since(started).Milliseconds())
+				b.logger.Printf("级别=信息 事件=QQ回复已发送 传输=%d 输出字符数=%d 分段数=%d 耗时毫秒=%d", job.transportID, utf8.RuneCountInString(reply), len(splitText(reply, maxReplyBytes)), time.Since(started).Milliseconds())
 			}
 			cancel()
 		}
@@ -131,7 +131,7 @@ func (b *Bot) enqueue(ctx context.Context, job incomingMessage) error {
 	job.transportID = b.messageSeq.Add(1)
 	select {
 	case b.jobs <- job:
-		b.logger.Printf("level=info event=qq_message_received transport=%d input_chars=%d queue_depth=%d", job.transportID, utf8.RuneCountInString(job.content), len(b.jobs))
+		b.logger.Printf("级别=信息 事件=收到QQ消息 传输=%d 输入字符数=%d 队列深度=%d", job.transportID, utf8.RuneCountInString(job.content), len(b.jobs))
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

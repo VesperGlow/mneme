@@ -28,7 +28,7 @@ var buildCommit = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		log.Printf("error: %v", err)
+		log.Printf("错误：%v", err)
 		os.Exit(1)
 	}
 }
@@ -39,12 +39,12 @@ func run() error {
 	}
 	logger := log.New(os.Stderr, "companion: ", log.LstdFlags|log.Lmicroseconds)
 	mode := os.Args[1]
-	logger.Printf("level=info event=startup_started mode=%q commit=%q", mode, shortCommit(buildCommit))
+	logger.Printf("级别=信息 事件=启动开始 模式=%q 提交=%q", mode, shortCommit(buildCommit))
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	logger.Printf("level=info event=config_loaded mode=%q listen=%q chat_model=%q chat_effort=max memory_model=%q memory_effort=high recent_messages=%d max_memories=%d max_tool_calls=%d memory_queue=%d summary_every=%d web_search=%t", mode, cfg.ListenAddr, llm.DeepSeekChatModel, llm.DeepSeekMemoryModel, cfg.RecentMessages, cfg.MaxMemories, cfg.MaxToolCalls, cfg.MemoryQueueSize, cfg.SummaryEvery, cfg.TavilyAPIKey != "")
+	logger.Printf("级别=信息 事件=配置已加载 模式=%q 监听地址=%q 聊天模型=%q 聊天推理强度=max 记忆模型=%q 记忆推理强度=high 最近消息数=%d 最大记忆数=%d 最大工具调用数=%d 记忆队列容量=%d 摘要间隔轮数=%d 网页搜索=%t 打开链接=%t", mode, cfg.ListenAddr, llm.DeepSeekChatModel, llm.DeepSeekMemoryModel, cfg.RecentMessages, cfg.MaxMemories, cfg.MaxToolCalls, cfg.MemoryQueueSize, cfg.SummaryEvery, cfg.TavilyAPIKey != "", cfg.TavilyAPIKey != "")
 	databaseStarted := time.Now()
 	store, err := storage.Open(cfg.DatabasePath)
 	if err != nil {
@@ -52,13 +52,13 @@ func run() error {
 	}
 	defer func() {
 		if err := store.Close(); err != nil {
-			logger.Printf("level=warn event=database_close_failed error=%q", err)
+			logger.Printf("级别=警告 事件=数据库关闭失败 错误=%q", err)
 		}
 	}()
 	if err := store.IntegrityCheck(context.Background()); err != nil {
 		return err
 	}
-	logger.Printf("level=info event=database_ready path=%q integrity=ok duration_ms=%d", cfg.DatabasePath, time.Since(databaseStarted).Milliseconds())
+	logger.Printf("级别=信息 事件=数据库就绪 路径=%q 完整性=正常 耗时毫秒=%d", cfg.DatabasePath, time.Since(databaseStarted).Milliseconds())
 	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
 	llmClient := llm.New(cfg.DeepSeekAPIKey, httpClient)
 	memoryLLMClient := llm.NewMemory(cfg.DeepSeekAPIKey, httpClient)
@@ -69,16 +69,16 @@ func run() error {
 		MemoryQueueSize: cfg.MemoryQueueSize, SummaryEvery: cfg.SummaryEvery,
 	}, logger)
 	defer func() {
-		logger.Printf("level=info event=agent_shutdown_started pending_memory_jobs=draining")
+		logger.Printf("级别=信息 事件=Agent关闭开始 待处理记忆任务=正在清空")
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if err := companion.Close(ctx); err != nil {
-			logger.Printf("level=warn event=agent_shutdown_failed error=%q", err)
+			logger.Printf("级别=警告 事件=Agent关闭失败 错误=%q", err)
 		} else {
-			logger.Printf("level=info event=agent_shutdown_completed")
+			logger.Printf("级别=信息 事件=Agent关闭完成")
 		}
 	}()
-	logger.Printf("level=info event=agent_ready memory_worker=running")
+	logger.Printf("级别=信息 事件=Agent就绪 记忆工作器=运行中")
 	backupCtx, stopBackups := context.WithCancel(context.Background())
 	var backupWG sync.WaitGroup
 	backupWG.Add(1)
@@ -86,7 +86,7 @@ func run() error {
 		defer backupWG.Done()
 		runBackups(backupCtx, store, cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention, logger)
 	}()
-	logger.Printf("level=info event=backup_scheduler_started directory=%q interval=%q retention=%q", cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention)
+	logger.Printf("级别=信息 事件=备份调度器已启动 目录=%q 间隔=%q 保留期=%q", cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention)
 	defer func() {
 		stopBackups()
 		backupWG.Wait()
@@ -136,11 +136,11 @@ func runBackups(ctx context.Context, store *storage.Store, directory string, int
 		defer cancel()
 		path, err := store.BackupIfDue(requestCtx, directory, interval, retention)
 		if err != nil && ctx.Err() == nil {
-			logger.Printf("level=warn event=database_backup_failed duration_ms=%d error=%q", time.Since(started).Milliseconds(), err)
+			logger.Printf("级别=警告 事件=数据库备份失败 耗时毫秒=%d 错误=%q", time.Since(started).Milliseconds(), err)
 		} else if path != "" {
-			logger.Printf("level=info event=database_backup_created path=%q duration_ms=%d", path, time.Since(started).Milliseconds())
+			logger.Printf("级别=信息 事件=数据库备份已创建 路径=%q 耗时毫秒=%d", path, time.Since(started).Milliseconds())
 		} else if ctx.Err() == nil {
-			logger.Printf("level=info event=database_backup_checked outcome=not_due duration_ms=%d", time.Since(started).Milliseconds())
+			logger.Printf("级别=信息 事件=数据库备份已检查 结果=尚未到期 耗时毫秒=%d", time.Since(started).Milliseconds())
 		}
 	}
 	backup()
@@ -167,7 +167,7 @@ func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qq
 	defer stop()
 	errCh := make(chan error, 2)
 	go func() {
-		logger.Printf("level=info event=http_server_started address=%q", "http://"+addr)
+		logger.Printf("级别=信息 事件=HTTP服务已启动 地址=%q", "http://"+addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("HTTP server: %w", err)
 		}
@@ -186,17 +186,17 @@ func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qq
 	var runErr error
 	select {
 	case <-ctx.Done():
-		logger.Printf("level=info event=shutdown_requested reason=%q", ctx.Err())
+		logger.Printf("级别=信息 事件=收到关闭请求 原因=%q", ctx.Err())
 	case runErr = <-errCh:
-		logger.Printf("level=error event=service_component_failed error=%q", runErr)
+		logger.Printf("级别=错误 事件=服务组件失败 错误=%q", runErr)
 		stop()
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("level=warn event=http_server_shutdown_failed error=%q", err)
+		logger.Printf("级别=警告 事件=HTTP服务关闭失败 错误=%q", err)
 	} else {
-		logger.Printf("level=info event=http_server_stopped")
+		logger.Printf("级别=信息 事件=HTTP服务已停止")
 	}
 	return runErr
 }

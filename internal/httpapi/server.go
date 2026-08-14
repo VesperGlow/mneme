@@ -105,7 +105,7 @@ func writeError(w http.ResponseWriter, status int, message string) {
 
 func (s *Server) writeInternalError(w http.ResponseWriter, err error) {
 	if s.logger != nil {
-		s.logger.Printf("level=error event=http_request_failed error=%q", err)
+		s.logger.Printf("级别=错误 事件=HTTP请求失败 错误=%q", err)
 	}
 	writeError(w, http.StatusInternalServerError, "internal server error")
 }
@@ -126,7 +126,7 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 		wrapped := &responseStatus{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(wrapped, r)
 		if s.logger != nil && (r.URL.Path != "/health" || wrapped.status >= http.StatusBadRequest) {
-			s.logger.Printf("level=info event=http_request_completed method=%q path=%q status=%d duration_ms=%d", r.Method, r.URL.Path, wrapped.status, time.Since(started).Milliseconds())
+			s.logger.Printf("级别=信息 事件=HTTP请求完成 方法=%q 路径=%q 状态码=%d 耗时毫秒=%d", r.Method, r.URL.Path, wrapped.status, time.Since(started).Milliseconds())
 		}
 	})
 }
