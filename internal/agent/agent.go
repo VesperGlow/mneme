@@ -46,6 +46,7 @@ type Input struct {
 	MessageID  string
 	Content    string
 	ReceivedAt time.Time
+	Progress   func(context.Context, string) error
 }
 
 type Options struct {
@@ -101,6 +102,8 @@ func (a *Agent) Chat(ctx context.Context, input string) (string, error) {
 func (a *Agent) ChatInput(ctx context.Context, request Input) (reply string, err error) {
 	started := time.Now()
 	requestID := a.requestSeq.Add(1)
+	progress := request.Progress
+	request.Progress = nil
 	if request.Channel == "" {
 		request.Channel = "unknown"
 	}
@@ -160,7 +163,7 @@ func (a *Agent) ChatInput(ctx context.Context, request Input) (reply string, err
 	messages = append(messages, llm.Message{Role: "user", Content: input})
 
 	requestLogger.Info("聊天生成开始", "model", llm.DeepSeekChatModel, "context_messages", len(messages), "memories", len(relevant))
-	reply, err = a.runLoop(ctx, requestID, messages)
+	reply, err = a.runLoop(ctx, requestID, messages, progress)
 	if err != nil {
 		return "", err
 	}
@@ -293,10 +296,12 @@ func (a *Agent) Close(ctx context.Context) error {
 	}
 }
 
-func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Message) (string, error) {
+func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Message, progress func(context.Context, string) error) (string, error) {
 	started := time.Now()
 	logger := a.logger.With("request", requestID, "model", llm.DeepSeekChatModel)
 	usedTools := 0
+	progressSent := false
+	deferredRetry := false
 	tools := []llm.Tool{webSearchTool(), openURLTool()}
 	maxRounds := a.maxToolCalls + 2
 	if maxRounds < 2 {
@@ -313,9 +318,19 @@ func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Me
 			if strings.TrimSpace(response.Content) == "" {
 				return "", fmt.Errorf("LLM returned an empty response")
 			}
+			if !deferredRetry && isDeferredReply(response.Content) {
+				progressSent = a.sendProgress(ctx, requestID, progress, progressSent, response.Content)
+				messages = append(messages,
+					response,
+					llm.Message{Role: "system", Content: "你刚才只给出了准备查询的进度说明，但尚未完成用户请求。若需要外部信息，请现在立即调用可用工具；否则现在直接给出完整答案。不要再次只回复稍等、让我查查或稍后告知。"},
+				)
+				deferredRetry = true
+				continue
+			}
 			logger.Info("聊天生成完成", "rounds", round+1, "tools_used", usedTools, "output_chars", utf8.RuneCountInString(response.Content), "duration", time.Since(started))
 			return response.Content, nil
 		}
+		progressSent = a.sendProgress(ctx, requestID, progress, progressSent, response.Content)
 		messages = append(messages, response)
 		for _, call := range response.ToolCalls {
 			var output string
@@ -332,6 +347,34 @@ func (a *Agent) runLoop(ctx context.Context, requestID uint64, messages []llm.Me
 		}
 	}
 	return "", fmt.Errorf("agent stopped after %d model rounds", maxRounds)
+}
+
+func (a *Agent) sendProgress(ctx context.Context, requestID uint64, send func(context.Context, string) error, alreadySent bool, content string) bool {
+	content = strings.TrimSpace(content)
+	if alreadySent || send == nil || content == "" {
+		return alreadySent
+	}
+	started := time.Now()
+	logger := a.logger.With("request", requestID)
+	if err := send(ctx, content); err != nil {
+		logger.Warn("进度消息发送失败", "duration", time.Since(started), "error", err)
+		return false
+	}
+	logger.Info("进度消息已发送", "output_chars", utf8.RuneCountInString(content), "duration", time.Since(started))
+	return true
+}
+
+func isDeferredReply(content string) bool {
+	content = strings.TrimSpace(content)
+	if content == "" || utf8.RuneCountInString(content) > 100 {
+		return false
+	}
+	for _, marker := range []string{"让我查", "让我帮你查", "我来查", "我帮你查", "帮你查查", "我查一下", "我查查看", "稍等", "等我", "我去查", "我去看看", "我找找"} {
+		if strings.Contains(content, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Agent) executeTool(ctx context.Context, requestID uint64, call llm.ToolCall) string {

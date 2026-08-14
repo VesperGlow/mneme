@@ -10,6 +10,7 @@
 - 每轮回复前由 `deepseek-v4-flash` 理解消息并按需检索长期记忆，最终回复仍由 `deepseek-v4-pro` 生成
 - 后台记忆整理和阶段摘要同样使用 `deepseek-v4-flash`
 - Tavily `web_search` 与 `open_url`：搜索实时外部信息，或读取并总结指定网页链接
+- QQ 工具进度回复：先发送模型的简短查询提示，工具完成后再单独发送最终答案
 - 分层上下文：最近消息、阶段摘要、结构化 FTS5 长期记忆
 - 有界后台记忆队列、渠道消息去重、定期备份和 JSON 导出
 - `/remember`、`/memories`、`/memory`、`/correct`、`/forget`、`/export`
@@ -85,7 +86,7 @@ DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM
 2. Flash 从实际搜索结果中选出本轮真正相关的记忆；检索失败或超时时自动退回原句 FTS5 检索，不中断聊天。
 3. `.env` 中的 `system`、`persona`、当前日期、阶段摘要、筛选后的长期记忆、最近聊天和用户原始消息一起发送给 `deepseek-v4-pro`。
 4. `deepseek-v4-pro` 可按需调用 `web_search` 搜索互联网，或调用 `open_url` 读取用户提供及搜索结果中的具体网页。网页内容会被标记为不可信外部资料，并限制长度后再返回模型。
-5. `deepseek-v4-pro` 负责工具使用和最终回复；Flash 不生成面向用户的回答。
+5. `deepseek-v4-pro` 负责工具使用和最终回复；如果它在调用工具前生成了简短查询提示，QQ 会立即把提示作为一条进度消息发送，工具完成后再发送最终答案。若模型只回复“让我查查”却没有实际调用工具，Agent 会保留该回复并追加一次完成请求的重试。Flash 不生成面向用户的回答。
 
 QQ、HTTP 和终端只是同一个个人 Agent 的入口，不会创建彼此隔离的人格或记忆。带消息 ID 的渠道会自动去重。检索规划和长期记忆维护分别使用独立的 `prompts/retrieval.txt` 与 `prompts/memory.txt`，不会让 persona 干扰记忆层；自动记忆包含类型、重要度、置信度和来源，手动 `/remember` 的内容会固定，避免被后台任务静默改写。
 
@@ -131,6 +132,7 @@ Mneme 向标准错误输出单行结构化日志，Docker 和 systemd 都可以�
 2026-08-14 21:16:42.103  INFO  agent     │ 收到聊天  request=7 channel=qq input_chars=18 external_message_id=true
 2026-08-14 21:16:42.945  INFO  agent     │ 记忆检索完成  request=7 strategy=flash selected=2 duration=842ms
 2026-08-14 21:16:43.555  INFO  agent     │ 工具调用完成  request=7 tool=open_url content_chars=1530 duration=610ms
+2026-08-14 21:16:43.735  INFO  agent     │ 进度消息已发送  request=7 output_chars=12 duration=180ms
 2026-08-14 21:16:45.865  INFO  agent     │ 聊天生成完成  request=7 model=deepseek-v4-pro rounds=2 tools_used=1 output_chars=96 duration=2.31s
 2026-08-14 21:16:46.540  INFO  agent     │ 记忆复核完成  request=7 changes=1 duration=675ms
 2026-08-14 21:16:46.929  INFO  qq        │ 回复已发送  transport=7 output_chars=96 chunks=1 duration=3.89s
