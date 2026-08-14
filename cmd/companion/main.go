@@ -24,6 +24,8 @@ import (
 	"companion/internal/storage"
 )
 
+var buildCommit = "dev"
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("error: %v", err)
@@ -35,35 +37,48 @@ func run() error {
 	if len(os.Args) != 2 || (os.Args[1] != "chat" && os.Args[1] != "serve") {
 		return fmt.Errorf("usage: companion <chat|serve>")
 	}
+	logger := log.New(os.Stderr, "companion: ", log.LstdFlags|log.Lmicroseconds)
+	mode := os.Args[1]
+	logger.Printf("level=info event=startup_started mode=%q commit=%q", mode, shortCommit(buildCommit))
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
+	logger.Printf("level=info event=config_loaded mode=%q listen=%q chat_model=%q chat_effort=max memory_model=%q memory_effort=high recent_messages=%d max_memories=%d max_tool_calls=%d memory_queue=%d summary_every=%d web_search=%t", mode, cfg.ListenAddr, llm.DeepSeekChatModel, llm.DeepSeekMemoryModel, cfg.RecentMessages, cfg.MaxMemories, cfg.MaxToolCalls, cfg.MemoryQueueSize, cfg.SummaryEvery, cfg.TavilyAPIKey != "")
+	databaseStarted := time.Now()
 	store, err := storage.Open(cfg.DatabasePath)
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() {
+		if err := store.Close(); err != nil {
+			logger.Printf("level=warn event=database_close_failed error=%q", err)
+		}
+	}()
 	if err := store.IntegrityCheck(context.Background()); err != nil {
 		return err
 	}
+	logger.Printf("level=info event=database_ready path=%q integrity=ok duration_ms=%d", cfg.DatabasePath, time.Since(databaseStarted).Milliseconds())
 	httpClient := &http.Client{Timeout: cfg.RequestTimeout}
 	llmClient := llm.New(cfg.DeepSeekAPIKey, httpClient)
 	memoryLLMClient := llm.NewMemory(cfg.DeepSeekAPIKey, httpClient)
 	searchClient := search.New(cfg.TavilyAPIKey, httpClient)
 	memoryManager := memory.New(store, memoryLLMClient)
-	logger := log.New(os.Stderr, "companion: ", log.LstdFlags)
 	companion := agent.NewWithOptions(store, llmClient, searchClient, memoryManager, cfg.SystemPrompt, cfg.PersonaPrompt, agent.Options{
 		RecentMessages: cfg.RecentMessages, MaxMemories: cfg.MaxMemories, MaxToolCalls: cfg.MaxToolCalls,
 		MemoryQueueSize: cfg.MemoryQueueSize, SummaryEvery: cfg.SummaryEvery,
 	}, logger)
 	defer func() {
+		logger.Printf("level=info event=agent_shutdown_started pending_memory_jobs=draining")
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		if err := companion.Close(ctx); err != nil {
-			logger.Printf("agent shutdown: %v", err)
+			logger.Printf("level=warn event=agent_shutdown_failed error=%q", err)
+		} else {
+			logger.Printf("level=info event=agent_shutdown_completed")
 		}
 	}()
+	logger.Printf("level=info event=agent_ready memory_worker=running")
 	backupCtx, stopBackups := context.WithCancel(context.Background())
 	var backupWG sync.WaitGroup
 	backupWG.Add(1)
@@ -71,6 +86,7 @@ func run() error {
 		defer backupWG.Done()
 		runBackups(backupCtx, store, cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention, logger)
 	}()
+	logger.Printf("level=info event=backup_scheduler_started directory=%q interval=%q retention=%q", cfg.BackupDir, cfg.BackupInterval, cfg.BackupRetention)
 	defer func() {
 		stopBackups()
 		backupWG.Wait()
@@ -115,13 +131,16 @@ func runChat(companion *agent.Agent) error {
 
 func runBackups(ctx context.Context, store *storage.Store, directory string, interval, retention time.Duration, logger *log.Logger) {
 	backup := func() {
+		started := time.Now()
 		requestCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 		defer cancel()
 		path, err := store.BackupIfDue(requestCtx, directory, interval, retention)
 		if err != nil && ctx.Err() == nil {
-			logger.Printf("database backup: %v", err)
+			logger.Printf("level=warn event=database_backup_failed duration_ms=%d error=%q", time.Since(started).Milliseconds(), err)
 		} else if path != "" {
-			logger.Printf("database backup created: %s", path)
+			logger.Printf("level=info event=database_backup_created path=%q duration_ms=%d", path, time.Since(started).Milliseconds())
+		} else if ctx.Err() == nil {
+			logger.Printf("level=info event=database_backup_checked outcome=not_due duration_ms=%d", time.Since(started).Milliseconds())
 		}
 	}
 	backup()
@@ -140,7 +159,7 @@ func runBackups(ctx context.Context, store *storage.Store, directory string, int
 func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qqbot.Bot, logger *log.Logger) error {
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           httpapi.New(companion, store),
+		Handler:           httpapi.New(companion, store, logger),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
@@ -148,7 +167,7 @@ func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qq
 	defer stop()
 	errCh := make(chan error, 2)
 	go func() {
-		logger.Printf("HTTP API listening on http://%s", addr)
+		logger.Printf("level=info event=http_server_started address=%q", "http://"+addr)
 		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- fmt.Errorf("HTTP server: %w", err)
 		}
@@ -167,13 +186,28 @@ func runServer(addr string, companion *agent.Agent, store *storage.Store, qq *qq
 	var runErr error
 	select {
 	case <-ctx.Done():
+		logger.Printf("level=info event=shutdown_requested reason=%q", ctx.Err())
 	case runErr = <-errCh:
+		logger.Printf("level=error event=service_component_failed error=%q", runErr)
 		stop()
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("server shutdown: %v", err)
+		logger.Printf("level=warn event=http_server_shutdown_failed error=%q", err)
+	} else {
+		logger.Printf("level=info event=http_server_stopped")
 	}
 	return runErr
+}
+
+func shortCommit(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 12 {
+		return value[:12]
+	}
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }

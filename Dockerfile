@@ -1,5 +1,7 @@
 FROM golang:1.25-alpine AS build
 
+ARG BUILD_COMMIT=unknown
+
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -11,7 +13,7 @@ COPY prompts ./prompts
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
-    -ldflags="-s -w" \
+    -ldflags="-s -w -X main.buildCommit=${BUILD_COMMIT}" \
     -o /out/companion \
     ./cmd/companion
 

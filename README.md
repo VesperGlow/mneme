@@ -120,6 +120,34 @@ docker compose logs -f companion
 
 数据保存在宿主机 `./data`。程序启动时会执行 SQLite 快速完整性检查，并在 `./data/backups` 中创建定期一致性备份，默认保留 14 天。HTTP API 默认只映射到宿主机 `127.0.0.1:8787`；QQ WebSocket 是容器主动向外连接，不需要开放额外入站端口。
 
+## 运行日志
+
+Mneme 向标准错误输出单行 `key=value` 事件日志，Docker 和 systemd 都可以直接收集。日志会显示启动配置摘要、数据库检查、QQ 连接、每轮消息的记忆检索、Pro 生成、工具调用、保存、后台记忆整理、备份和退出阶段。例如：
+
+```text
+event=chat_received request=7 channel="qq" input_chars=18 external_id=true
+event=memory_retrieval_completed request=7 strategy=flash selected=2 duration_ms=842
+event=chat_generation_completed request=7 model="deepseek-v4-pro" rounds=1 tools_used=0 output_chars=96 duration_ms=2310
+event=memory_review_completed request=7 changes=1 duration_ms=675
+event=qq_reply_sent transport=7 output_chars=96 chunks=1 duration_ms=3890
+```
+
+同一个 `request` 表示 Agent 内的一轮处理，`transport` 表示 QQ 接入层收到的一条消息。默认日志不会写入聊天正文、长期记忆正文、搜索词、用户 ID、系统 Prompt 或密钥，只记录字符数、数量、状态和耗时。
+
+查看容器日志：
+
+```bash
+docker compose logs -f companion
+```
+
+由 systemd 托管时：
+
+```bash
+journalctl --user -u mneme.service -f -o cat
+```
+
+如果 service 使用 `docker run -d`，启动时单独出现的一串 64 位十六进制字符是 Docker 返回的容器 ID，不是 Mneme 业务日志。可在 unit 的启动脚本中隐藏该命令输出，Mneme 自身日志不受影响。
+
 ## 数据、备份与迁移
 
 Mneme 当前以本地 SQLite 为唯一主存储，不接入 S3 或其他对象存储后端。运行数据库位于 `./data/companion.db`，定期一致性备份位于 `./data/backups/mneme-*.db`。JSON 导出适合人工查看和长期归档，但不代替 SQLite 数据库备份。

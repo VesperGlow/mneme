@@ -13,18 +13,19 @@ import (
 )
 
 type Server struct {
-	agent *agent.Agent
-	store *storage.Store
+	agent  *agent.Agent
+	store  *storage.Store
+	logger *log.Logger
 }
 
-func New(agent *agent.Agent, store *storage.Store) http.Handler {
-	s := &Server{agent: agent, store: store}
+func New(agent *agent.Agent, store *storage.Store, logger *log.Logger) http.Handler {
+	s := &Server{agent: agent, store: store, logger: logger}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat", s.chat)
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /memories", s.memories)
 	mux.HandleFunc("GET /export", s.export)
-	return mux
+	return s.logRequests(mux)
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
@@ -42,7 +43,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		Channel: "http", MessageID: r.Header.Get("Idempotency-Key"), Content: request.Message, ReceivedAt: time.Now(),
 	})
 	if err != nil {
-		writeInternalError(w, err)
+		s.writeInternalError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"reply": reply})
@@ -70,7 +71,7 @@ func (s *Server) memories(w http.ResponseWriter, r *http.Request) {
 	}
 	items, err := s.store.ListMemories(r.Context(), limit, false)
 	if err != nil {
-		writeInternalError(w, err)
+		s.writeInternalError(w, err)
 		return
 	}
 	if items == nil {
@@ -82,7 +83,7 @@ func (s *Server) memories(w http.ResponseWriter, r *http.Request) {
 func (s *Server) export(w http.ResponseWriter, r *http.Request) {
 	raw, err := s.store.ExportJSON(r.Context())
 	if err != nil {
-		writeInternalError(w, err)
+		s.writeInternalError(w, err)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -102,7 +103,30 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]string{"error": message})
 }
 
-func writeInternalError(w http.ResponseWriter, err error) {
-	log.Printf("HTTP request failed: %v", err)
+func (s *Server) writeInternalError(w http.ResponseWriter, err error) {
+	if s.logger != nil {
+		s.logger.Printf("level=error event=http_request_failed error=%q", err)
+	}
 	writeError(w, http.StatusInternalServerError, "internal server error")
+}
+
+type responseStatus struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *responseStatus) WriteHeader(status int) {
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (s *Server) logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		started := time.Now()
+		wrapped := &responseStatus{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(wrapped, r)
+		if s.logger != nil && (r.URL.Path != "/health" || wrapped.status >= http.StatusBadRequest) {
+			s.logger.Printf("level=info event=http_request_completed method=%q path=%q status=%d duration_ms=%d", r.Method, r.URL.Path, wrapped.status, time.Since(started).Milliseconds())
+		}
+	})
 }
