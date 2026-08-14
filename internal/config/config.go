@@ -27,6 +27,10 @@ type Config struct {
 	BackupDir       string
 	BackupInterval  time.Duration
 	BackupRetention time.Duration
+	S3Bucket        string
+	S3Prefix        string
+	S3Region        string
+	S3Endpoint      string
 }
 
 func Load() (Config, error) {
@@ -80,6 +84,10 @@ func Load() (Config, error) {
 		BackupDir:       strings.TrimSpace(os.Getenv("COMPANION_BACKUP_DIR")),
 		BackupInterval:  time.Duration(backupIntervalHours) * time.Hour,
 		BackupRetention: time.Duration(backupRetentionDays) * 24 * time.Hour,
+		S3Bucket:        strings.TrimSpace(os.Getenv("S3_BUCKET")),
+		S3Prefix:        env("S3_PREFIX", "mneme/backups"),
+		S3Region:        s3Region(),
+		S3Endpoint:      strings.TrimSpace(os.Getenv("S3_ENDPOINT")),
 	}
 	if cfg.BackupDir == "" {
 		cfg.BackupDir = filepath.Join(filepath.Dir(cfg.DatabasePath), "backups")
@@ -97,6 +105,16 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("timeouts, queue size, and backup settings must be positive")
 	}
 	return cfg, nil
+}
+
+func s3Region() string {
+	if value := strings.TrimSpace(os.Getenv("S3_REGION")); value != "" {
+		return value
+	}
+	if value := strings.TrimSpace(os.Getenv("AWS_REGION")); value != "" {
+		return value
+	}
+	return env("AWS_DEFAULT_REGION", "us-east-1")
 }
 
 func promptEnv(name string) string {
