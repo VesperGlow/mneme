@@ -109,7 +109,18 @@ func (b *Bot) work(ctx context.Context) {
 			logger := b.logger.With("transport", job.transportID)
 			logger.Debug("消息处理中", "queue_depth", len(b.jobs))
 			requestCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-			reply, err := b.agent.ChatInput(requestCtx, agent.Input{Channel: "qq", MessageID: job.messageID, Content: job.content, ReceivedAt: time.Now()})
+			reply, err := b.agent.ChatInput(requestCtx, agent.Input{
+				Channel: "qq", MessageID: job.messageID, Content: job.content, ReceivedAt: time.Now(),
+				Progress: func(progressCtx context.Context, content string) error {
+					progressStarted := time.Now()
+					if err := job.reply(progressCtx, content); err != nil {
+						logger.Error("进度回复失败", "duration", time.Since(progressStarted), "error", err)
+						return err
+					}
+					logger.Info("进度回复已发送", "output_chars", utf8.RuneCountInString(content), "chunks", len(splitText(content, maxReplyBytes)), "duration", time.Since(progressStarted))
+					return nil
+				},
+			})
 			if err != nil {
 				logger.Error("消息处理失败", "duration", time.Since(started), "error", err)
 				reply = "处理消息时出错了，请稍后再试。"
@@ -145,12 +156,13 @@ func (b *Bot) c2cHandler(ctx context.Context) event.C2CMessageEventHandler {
 			return fmt.Errorf("QQ C2C message has no author")
 		}
 		userID, messageID := data.Author.ID, data.ID
+		var sequence uint32
 		return b.enqueue(ctx, incomingMessage{
 			content:   data.Content,
 			messageID: messageID,
 			reply: func(replyCtx context.Context, content string) error {
-				return sendChunks(content, func(part string, sequence uint32) error {
-					_, err := b.api.PostC2CMessage(replyCtx, userID, dto.MessageToCreate{Content: part, MsgID: messageID, MsgSeq: sequence})
+				return sendChunks(content, &sequence, func(part string, partSequence uint32) error {
+					_, err := b.api.PostC2CMessage(replyCtx, userID, dto.MessageToCreate{Content: part, MsgID: messageID, MsgSeq: partSequence})
 					return err
 				})
 			},
@@ -158,10 +170,11 @@ func (b *Bot) c2cHandler(ctx context.Context) event.C2CMessageEventHandler {
 	}
 }
 
-func sendChunks(content string, send func(string, uint32) error) error {
+func sendChunks(content string, sequence *uint32, send func(string, uint32) error) error {
 	parts := splitText(content, maxReplyBytes)
-	for i, part := range parts {
-		if err := send(part, uint32(i+1)); err != nil {
+	for _, part := range parts {
+		*sequence = *sequence + 1
+		if err := send(part, *sequence); err != nil {
 			return err
 		}
 	}
