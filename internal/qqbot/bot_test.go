@@ -28,14 +28,25 @@ func TestSendChunksContinuesSequenceAcrossReplies(t *testing.T) {
 		received = append(received, partSequence)
 		return nil
 	}
-	if err := sendChunks("先查一下", &sequence, send); err != nil {
+	if err := sendChunks(strings.Repeat("a", maxReplyBytes+1), &sequence, send); err != nil {
+		t.Fatal(err)
+	}
+	if err := sendChunks("继续打开公告", &sequence, send); err != nil {
 		t.Fatal(err)
 	}
 	if err := sendChunks("这是最终答案", &sequence, send); err != nil {
 		t.Fatal(err)
 	}
-	if len(received) != 2 || received[0] != 1 || received[1] != 2 || sequence != 2 {
+	want := []uint32{1, 2, 3, 4}
+	if len(received) != len(want) {
+		t.Fatalf("unexpected sequences: received=%v current=%d", received, sequence)
+	}
+	for index := range want {
+		if received[index] != want[index] {
+			t.Fatalf("unexpected sequences: received=%v current=%d", received, sequence)
+		}
+	}
+	if sequence != 4 {
 		t.Fatalf("unexpected sequences: received=%v current=%d", received, sequence)
 	}
 }
-
