@@ -113,18 +113,11 @@ func (a *Agent) ChatInput(ctx context.Context, request Input) (string, error) {
 	if strings.HasPrefix(input, "/") {
 		return a.command(ctx, input)
 	}
-	candidateLimit := a.maxMemories * 4
-	if candidateLimit < a.maxMemories {
-		candidateLimit = a.maxMemories
-	}
-	relevant, err := a.store.SearchMemories(ctx, input, candidateLimit)
+	recent, err := a.store.RecentMessages(ctx, a.recentMessages)
 	if err != nil {
 		return "", err
 	}
-	if len(relevant) > a.maxMemories {
-		relevant = relevant[:a.maxMemories]
-	}
-	recent, err := a.store.RecentMessages(ctx, a.recentMessages)
+	relevant, err := a.retrieveMemories(ctx, input, recent)
 	if err != nil {
 		return "", err
 	}
@@ -160,6 +153,35 @@ func (a *Agent) ChatInput(ctx context.Context, request Input) (string, error) {
 		a.enqueueMemory(memoryJob{input: request, reply: reply, relevant: relevant})
 	}
 	return reply, nil
+}
+
+func (a *Agent) retrieveMemories(ctx context.Context, input string, recent []storage.Message) ([]storage.Memory, error) {
+	if a.maxMemories <= 0 {
+		return nil, nil
+	}
+	if a.memories != nil {
+		retrievalCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		relevant, err := a.memories.Retrieve(retrievalCtx, input, recent, a.maxMemories)
+		cancel()
+		if err == nil {
+			return relevant, nil
+		}
+		if a.logger != nil {
+			a.logger.Printf("memory retrieval fallback: %v", err)
+		}
+	}
+	candidateLimit := a.maxMemories * 4
+	if candidateLimit < a.maxMemories {
+		candidateLimit = a.maxMemories
+	}
+	relevant, err := a.store.SearchMemories(ctx, input, candidateLimit)
+	if err != nil {
+		return nil, err
+	}
+	if len(relevant) > a.maxMemories {
+		relevant = relevant[:a.maxMemories]
+	}
+	return relevant, nil
 }
 
 func (a *Agent) enqueueMemory(job memoryJob) {
