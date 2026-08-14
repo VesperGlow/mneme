@@ -9,7 +9,7 @@
 - 核心聊天固定使用 DeepSeek `deepseek-v4-pro`，思考模式 `reasoning_effort=max`
 - 每轮回复前由 `deepseek-v4-flash` 理解消息并按需检索长期记忆，最终回复仍由 `deepseek-v4-pro` 生成
 - 后台记忆整理和阶段摘要同样使用 `deepseek-v4-flash`
-- Tavily `web_search`，仅在需要实时外部信息时调用
+- Tavily `web_search` 与 `open_url`：搜索实时外部信息，或读取并总结指定网页链接
 - 分层上下文：最近消息、阶段摘要、结构化 FTS5 长期记忆
 - 有界后台记忆队列、渠道消息去重、定期备份和 JSON 导出
 - `/remember`、`/memories`、`/memory`、`/correct`、`/forget`、`/export`
@@ -36,7 +36,7 @@ system="系统指令"
 persona="陪伴者的人格、语气和关系风格"
 ```
 
-`system` 和 `persona` 是必填项，直接写在 `.env` 中。需要换行时可在值中写 `\n`，程序会将其转换成实际换行。不要把含真实密钥的 `.env` 提交到仓库。`TAVILY_API_KEY` 可选；未配置时只有联网搜索不可用。
+`system` 和 `persona` 是必填项，直接写在 `.env` 中。需要换行时可在值中写 `\n`，程序会将其转换成实际换行。不要把含真实密钥的 `.env` 提交到仓库。`TAVILY_API_KEY` 可选；未配置时联网搜索和打开链接均不可用。
 
 QQ 不会渲染完整 Markdown。示例 `system` 已要求模型只输出纯文本，避免把 `**`、代码围栏等符号直接显示给用户。
 
@@ -82,7 +82,8 @@ DeepSeek 的地址、模型和思考等级固定在程序中，不再使用 `LLM
 1. `deepseek-v4-flash` 根据当前消息和最近对话判断是否需要长期记忆，并通过内部 `search_memories` 工具生成、调整检索词。
 2. Flash 从实际搜索结果中选出本轮真正相关的记忆；检索失败或超时时自动退回原句 FTS5 检索，不中断聊天。
 3. `.env` 中的 `system`、`persona`、当前日期、阶段摘要、筛选后的长期记忆、最近聊天和用户原始消息一起发送给 `deepseek-v4-pro`。
-4. `deepseek-v4-pro` 负责工具使用和最终回复；Flash 不生成面向用户的回答。
+4. `deepseek-v4-pro` 可按需调用 `web_search` 搜索互联网，或调用 `open_url` 读取用户提供及搜索结果中的具体网页。网页内容会被标记为不可信外部资料，并限制长度后再返回模型。
+5. `deepseek-v4-pro` 负责工具使用和最终回复；Flash 不生成面向用户的回答。
 
 QQ、HTTP 和终端只是同一个个人 Agent 的入口，不会创建彼此隔离的人格或记忆。带消息 ID 的渠道会自动去重。检索规划和长期记忆维护分别使用独立的 `prompts/retrieval.txt` 与 `prompts/memory.txt`，不会让 persona 干扰记忆层；自动记忆包含类型、重要度、置信度和来源，手动 `/remember` 的内容会固定，避免被后台任务静默改写。
 
@@ -122,17 +123,18 @@ docker compose logs -f companion
 
 ## 运行日志
 
-Mneme 向标准错误输出单行 `key=value` 事件日志，Docker 和 systemd 都可以直接收集。日志会显示启动配置摘要、数据库检查、QQ 连接、每轮消息的记忆检索、Pro 生成、工具调用、保存、后台记忆整理、备份和退出阶段。例如：
+Mneme 向标准错误输出单行中文 `键=值` 事件日志，Docker 和 systemd 都可以直接收集。日志会显示启动配置摘要、数据库检查、QQ 连接、每轮消息的记忆检索、Pro 生成、工具调用、保存、后台记忆整理、备份和退出阶段。例如：
 
 ```text
-event=chat_received request=7 channel="qq" input_chars=18 external_id=true
-event=memory_retrieval_completed request=7 strategy=flash selected=2 duration_ms=842
-event=chat_generation_completed request=7 model="deepseek-v4-pro" rounds=1 tools_used=0 output_chars=96 duration_ms=2310
-event=memory_review_completed request=7 changes=1 duration_ms=675
-event=qq_reply_sent transport=7 output_chars=96 chunks=1 duration_ms=3890
+级别=信息 事件=收到聊天 请求=7 渠道="qq" 输入字符数=18 有外部消息ID=true
+级别=信息 事件=记忆检索完成 请求=7 策略=flash 选中数=2 耗时毫秒=842
+级别=信息 事件=工具调用完成 请求=7 工具=open_url 内容字符数=1530 耗时毫秒=610
+级别=信息 事件=聊天生成完成 请求=7 模型="deepseek-v4-pro" 轮数=2 已用工具数=1 输出字符数=96 耗时毫秒=2310
+级别=信息 事件=记忆复核完成 请求=7 变更数=1 耗时毫秒=675
+级别=信息 事件=QQ回复已发送 传输=7 输出字符数=96 分段数=1 耗时毫秒=3890
 ```
 
-同一个 `request` 表示 Agent 内的一轮处理，`transport` 表示 QQ 接入层收到的一条消息。默认日志不会写入聊天正文、长期记忆正文、搜索词、用户 ID、系统 Prompt 或密钥，只记录字符数、数量、状态和耗时。
+同一个 `请求` 表示 Agent 内的一轮处理，`传输` 表示 QQ 接入层收到的一条消息。默认日志不会写入聊天正文、长期记忆正文、搜索词、网页 URL、用户 ID、系统 Prompt 或密钥，只记录字符数、数量、状态和耗时。
 
 查看容器日志：
 
@@ -167,7 +169,7 @@ Mneme 当前以本地 SQLite 为唯一主存储，不接入 S3 或其他对象�
 CGO_ENABLED=0 go build -o companion ./cmd/companion
 ```
 
-终端模式需要 `DEEPSEEK_API_KEY`；只有联网搜索需要 `TAVILY_API_KEY`：
+终端模式需要 `DEEPSEEK_API_KEY`；联网搜索和打开链接需要 `TAVILY_API_KEY`：
 
 ```bash
 ./companion chat
