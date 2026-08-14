@@ -73,12 +73,27 @@ func TestLoadS3Config(t *testing.T) {
 	t.Setenv("S3_PREFIX", "prod/backups")
 	t.Setenv("S3_REGION", "ap-southeast-1")
 	t.Setenv("S3_ENDPOINT", "https://s3.example.test")
+	t.Setenv("S3_ACCESS_KEY_ID", "s3-access-key")
+	t.Setenv("S3_SECRET_ACCESS_KEY", "s3-secret-key")
+	t.Setenv("S3_SESSION_TOKEN", "s3-session-token")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.S3Bucket != "mneme-data" || cfg.S3Prefix != "prod/backups" || cfg.S3Region != "ap-southeast-1" || cfg.S3Endpoint != "https://s3.example.test" {
+	if cfg.S3Bucket != "mneme-data" || cfg.S3Prefix != "prod/backups" || cfg.S3Region != "ap-southeast-1" || cfg.S3Endpoint != "https://s3.example.test" || cfg.S3AccessKeyID != "s3-access-key" || cfg.S3SecretAccessKey != "s3-secret-key" || cfg.S3SessionToken != "s3-session-token" {
 		t.Fatalf("unexpected S3 config: %#v", cfg)
+	}
+}
+
+func TestLoadRejectsIncompleteS3Credentials(t *testing.T) {
+	t.Setenv("DEEPSEEK_API_KEY", "deepseek-test")
+	t.Setenv("system", "system prompt")
+	t.Setenv("persona", "persona prompt")
+	t.Setenv("S3_ACCESS_KEY_ID", "s3-access-key")
+	t.Setenv("S3_SECRET_ACCESS_KEY", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("expected incomplete S3 credentials error")
 	}
 }

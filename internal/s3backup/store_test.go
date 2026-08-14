@@ -122,11 +122,14 @@ func TestUploadUsesPrefixAndRejectsEmptyFile(t *testing.T) {
 }
 
 func TestAWSBackendWithPathStyleEndpoint(t *testing.T) {
-	t.Setenv("AWS_ACCESS_KEY_ID", "test-access-key")
-	t.Setenv("AWS_SECRET_ACCESS_KEY", "test-secret-key")
-	t.Setenv("AWS_EC2_METADATA_DISABLED", "true")
 	var uploaded []byte
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if request.Header.Get("Authorization") == "" {
+			t.Error("S3 request was not signed")
+		}
+		if token := request.Header.Get("X-Amz-Security-Token"); token != "test-session-token" {
+			t.Errorf("unexpected S3 session token: %q", token)
+		}
 		switch {
 		case request.Method == http.MethodGet && request.URL.Query().Get("list-type") == "2":
 			response.Header().Set("Content-Type", "application/xml")
@@ -146,6 +149,7 @@ func TestAWSBackendWithPathStyleEndpoint(t *testing.T) {
 
 	store, err := New(context.Background(), Config{
 		Bucket: "bucket", Prefix: "prod/backups", Region: "us-east-1", Endpoint: server.URL,
+		AccessKeyID: "test-access-key", SecretAccessKey: "test-secret-key", SessionToken: "test-session-token",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -159,5 +163,12 @@ func TestAWSBackendWithPathStyleEndpoint(t *testing.T) {
 	}
 	if !bytes.Contains(uploaded, []byte("remote sqlite")) {
 		t.Fatalf("unexpected uploaded data: %q", uploaded)
+	}
+}
+
+func TestNewRejectsIncompleteCredentials(t *testing.T) {
+	_, err := New(context.Background(), Config{Bucket: "bucket", AccessKeyID: "test-access-key"})
+	if err == nil {
+		t.Fatal("expected incomplete S3 credentials error")
 	}
 }

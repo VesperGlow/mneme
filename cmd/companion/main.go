@@ -59,6 +59,7 @@ func run() error {
 	if cfg.S3Bucket != "" {
 		remoteBackups, err = s3backup.New(context.Background(), s3backup.Config{
 			Bucket: cfg.S3Bucket, Prefix: cfg.S3Prefix, Region: cfg.S3Region, Endpoint: cfg.S3Endpoint,
+			AccessKeyID: cfg.S3AccessKeyID, SecretAccessKey: cfg.S3SecretAccessKey, SessionToken: cfg.S3SessionToken,
 		})
 		if err != nil {
 			return err

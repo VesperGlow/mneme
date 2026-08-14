@@ -12,14 +12,18 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 type Config struct {
-	Bucket   string
-	Prefix   string
-	Region   string
-	Endpoint string
+	Bucket          string
+	Prefix          string
+	Region          string
+	Endpoint        string
+	AccessKeyID     string
+	SecretAccessKey string
+	SessionToken    string
 }
 
 type object struct {
@@ -43,7 +47,18 @@ func New(ctx context.Context, cfg Config) (*Store, error) {
 	if strings.TrimSpace(cfg.Bucket) == "" {
 		return nil, fmt.Errorf("S3 bucket must not be empty")
 	}
-	awsConfig, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.Region))
+	accessKeyID := strings.TrimSpace(cfg.AccessKeyID)
+	secretAccessKey := strings.TrimSpace(cfg.SecretAccessKey)
+	if (accessKeyID == "") != (secretAccessKey == "") {
+		return nil, fmt.Errorf("S3 access key ID and secret access key must be set together")
+	}
+	loadOptions := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(cfg.Region)}
+	if accessKeyID != "" {
+		loadOptions = append(loadOptions, awsconfig.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, strings.TrimSpace(cfg.SessionToken)),
+		))
+	}
+	awsConfig, err := awsconfig.LoadDefaultConfig(ctx, loadOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("load AWS configuration: %w", err)
 	}
