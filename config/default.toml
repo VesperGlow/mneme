@@ -5,7 +5,7 @@ timezone = "+08:00"
 [llm]
 # 必须含 /v1；API Key 从 MNEME_LLM_API_KEY 读取。
 base_url = "https://api.example.com/v1"
-model = "replace-with-provider-model"
+model = "auto"
 temperature = 0.7
 max_tokens = 1200
 timeout_seconds = 120

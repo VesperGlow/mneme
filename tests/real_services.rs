@@ -7,6 +7,7 @@ use serde_json::json;
 async fn real_chinese_models_and_neo4j_projection() {
     let temp = tempfile::TempDir::new().unwrap();
     let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    config.llm.model = "fixture-model".into();
     config.api_token = "smoke-test-token-01234567890123456789".into();
     config.llm_key = "unused".into();
     config.neo4j_password = "mneme-smoke-only-password".into();

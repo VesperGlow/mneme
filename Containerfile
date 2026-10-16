@@ -14,4 +14,5 @@ COPY --from=builder /build/target/release/mneme /usr/local/bin/mneme
 COPY config/default.toml /app/config/default.toml
 ENV MNEME_LISTEN=0.0.0.0:8080 MNEME_DATABASE=/data/mneme.sqlite3
 EXPOSE 8080
+EXPOSE 8081
 ENTRYPOINT ["mneme"]

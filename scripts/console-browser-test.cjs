@@ -69,6 +69,13 @@ fs.mkdirSync(output, { recursive: true });
     await page.screenshot({ path: path.join(output, 'console-retrieval.png'), fullPage: true });
     await page.getByRole('link', { name: '系统状态', exact: true }).click();
     await page.getByRole('heading', { name: '后台处理队列' }).waitFor();
+    await page.getByRole('heading', { name: 'QQ 机器人', exact: true }).waitFor();
+    if (process.env.MNEME_QQ_UI_TEST === '1') {
+      await page.getByRole('button', { name: '生成一次性绑定码' }).click();
+      await page.locator('#qq-pair-code', { hasText: '/绑定 ' }).waitFor();
+      assert.match(await page.locator('#qq-pair-code').innerText(), /\/绑定 [a-f0-9]{32}/);
+      assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
+    }
     await page.screenshot({ path: path.join(output, 'console-system.png'), fullPage: true });
     await page.getByRole('button', { name: '退出登录', exact: true }).click();
     await page.getByRole('heading', { name: '进入你的记忆空间' }).waitFor();

@@ -13,12 +13,42 @@ pub struct Config {
     pub neo4j: Neo4jConfig,
     pub memory: MemoryConfig,
     pub persona: Persona,
+    #[serde(default)]
+    pub qq: QqConfig,
     #[serde(skip)]
     pub api_token: String,
     #[serde(skip)]
     pub llm_key: String,
     #[serde(skip)]
     pub neo4j_password: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct QqConfig {
+    pub listen: String,
+    pub api_base: String,
+    pub token_url: String,
+    #[serde(skip)]
+    pub app_id: String,
+    #[serde(skip)]
+    pub app_secret: String,
+}
+impl Default for QqConfig {
+    fn default() -> Self {
+        Self {
+            listen: "127.0.0.1:8081".into(),
+            api_base: "https://api.bot.qq.com".into(),
+            token_url: "https://api.bot.qq.com/app/getAppAccessToken".into(),
+            app_id: String::new(),
+            app_secret: String::new(),
+        }
+    }
+}
+impl QqConfig {
+    pub fn enabled(&self) -> bool {
+        !self.app_id.is_empty()
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -73,6 +103,9 @@ pub struct Persona {
 
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
+        if Path::new(".env").exists() {
+            dotenvy::from_path(".env").map_err(|_| anyhow::anyhow!("invalid .env file"))?;
+        }
         let mut config: Self =
             toml::from_str(&std::fs::read_to_string(path)?).context("invalid configuration")?;
         config.api_token = env::var("MNEME_API_TOKEN").context("MNEME_API_TOKEN is required")?;
@@ -88,14 +121,80 @@ impl Config {
         if let Ok(value) = env::var("MNEME_LLM_BASE_URL") {
             config.llm.base_url = value;
         }
-        if let Ok(value) = env::var("MNEME_LLM_MODEL") {
+        let base = config.llm.base_url.trim_end_matches('/');
+        config.llm.base_url = base
+            .strip_suffix("/chat/completions")
+            .unwrap_or(base)
+            .to_owned();
+        let mut llm_url = reqwest::Url::parse(&config.llm.base_url).context("invalid LLM URL")?;
+        if llm_url.path() == "/" {
+            llm_url.set_path("/v1");
+            config.llm.base_url = llm_url.to_string();
+        }
+        if let Ok(value) = env::var("MNEME_LLM_MODEL")
+            && !value.trim().is_empty()
+        {
             config.llm.model = value;
+        }
+        if config.llm.model.starts_with("replace-") {
+            config.llm.model = "auto".into();
+        }
+        config.qq.app_id = env::var("MNEME_QQ_APP_ID").unwrap_or_default();
+        config.qq.app_secret = env::var("MNEME_QQ_APP_SECRET").unwrap_or_default();
+        if let Ok(value) = env::var("MNEME_QQ_LISTEN") {
+            config.qq.listen = value;
+        }
+        if env::var("MNEME_QQ_SANDBOX").as_deref() == Ok("true") {
+            config.qq.api_base = "https://sandbox.api.sgroup.qq.com".into();
         }
         config.validate()?;
         Ok(config)
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.qq.app_id.is_empty() == self.qq.app_secret.is_empty(),
+            "QQ AppID and AppSecret must be configured together"
+        );
+        if self.qq.enabled() {
+            ensure!(
+                self.qq.app_id.len() <= 32 && self.qq.app_id.bytes().all(|b| b.is_ascii_digit()),
+                "invalid QQ AppID"
+            );
+            ensure!(
+                (8..=256).contains(&self.qq.app_secret.len())
+                    && self.qq.app_secret.is_ascii()
+                    && !self
+                        .qq
+                        .app_secret
+                        .bytes()
+                        .any(|b| b.is_ascii_whitespace() || b.is_ascii_control()),
+                "invalid QQ AppSecret"
+            );
+            self.qq
+                .listen
+                .parse::<std::net::SocketAddr>()
+                .context("invalid QQ listen address")?;
+            for url in [&self.qq.api_base, &self.qq.token_url] {
+                let parsed = reqwest::Url::parse(url)?;
+                ensure!(
+                    parsed.scheme() == "https"
+                        || (parsed.scheme() == "http"
+                            && matches!(
+                                parsed.host_str(),
+                                Some("127.0.0.1" | "localhost" | "[::1]")
+                            )),
+                    "QQ URLs require HTTPS"
+                );
+                ensure!(
+                    parsed.username().is_empty()
+                        && parsed.password().is_none()
+                        && parsed.query().is_none()
+                        && parsed.fragment().is_none(),
+                    "invalid QQ service URL"
+                );
+            }
+        }
         ensure!(
             self.api_token.len() >= 32
                 && self.api_token.is_ascii()

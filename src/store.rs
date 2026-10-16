@@ -79,6 +79,9 @@ impl Store {
         sqlx::query("UPDATE jobs SET status='pending' WHERE status='running'")
             .execute(&mut *tx)
             .await?;
+        sqlx::query("UPDATE qq_inbox SET status='pending' WHERE status='running'")
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -245,6 +248,12 @@ impl Store {
             .bind(&source.id)
             .fetch_one(&mut *tx)
             .await?;
+        let source_qq: Option<i64> =
+            sqlx::query_scalar("SELECT seq FROM qq_inbox WHERE id=? AND session_id=?")
+                .bind(&source.turn_id)
+                .bind(&source.session_id)
+                .fetch_optional(&mut *tx)
+                .await?;
         let suppressed: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM suppressed_sources WHERE message_id=?)",
         )
@@ -260,21 +269,26 @@ impl Store {
             return Ok(());
         }
         for (candidate, embedding, valid_until) in candidates {
-            let barrier: Option<i64> =
-                sqlx::query_scalar("SELECT through_seq FROM forget_barriers WHERE slot=?")
+            let barrier: Option<(i64, i64)> =
+                sqlx::query_as("SELECT through_seq,through_qq FROM forget_barriers WHERE slot=?")
                     .bind(&candidate.key)
                     .fetch_optional(&mut *tx)
                     .await?;
-            if barrier.is_some_and(|seq| source_seq <= seq) {
+            if barrier
+                .is_some_and(|(seq, qq)| source_seq <= seq || source_qq.is_some_and(|s| s <= qq))
+            {
                 continue;
             }
             let hash = content_hash(&candidate.content);
-            let content_barrier: Option<i64> =
-                sqlx::query_scalar("SELECT through_seq FROM content_barriers WHERE content_hash=?")
-                    .bind(&hash)
-                    .fetch_optional(&mut *tx)
-                    .await?;
-            if content_barrier.is_some_and(|seq| source_seq <= seq) {
+            let content_barrier: Option<(i64, i64)> = sqlx::query_as(
+                "SELECT through_seq,through_qq FROM content_barriers WHERE content_hash=?",
+            )
+            .bind(&hash)
+            .fetch_optional(&mut *tx)
+            .await?;
+            if content_barrier
+                .is_some_and(|(seq, qq)| source_seq <= seq || source_qq.is_some_and(|s| s <= qq))
+            {
                 continue;
             }
             let exact: Option<Memory> =
@@ -343,7 +357,7 @@ impl Store {
 
     pub async fn forget(&self, memory_id: &str) -> Result<bool> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        sqlx::query("INSERT INTO forget_barriers(slot,through_seq) SELECT slot,(SELECT COALESCE(MAX(seq),0) FROM messages) FROM memories WHERE id=? ON CONFLICT(slot) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq)")
+        sqlx::query("INSERT INTO forget_barriers(slot,through_seq,through_qq) SELECT slot,(SELECT COALESCE(MAX(seq),0) FROM messages),(SELECT COALESCE(MAX(seq),0) FROM qq_inbox) FROM memories WHERE id=? ON CONFLICT(slot) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
             .bind(memory_id).execute(&mut *tx).await?;
         let revision: Option<i64> = sqlx::query_scalar("UPDATE memories SET status='forgotten',revision=revision+1 WHERE id=? RETURNING revision")
             .bind(memory_id).fetch_optional(&mut *tx).await?;

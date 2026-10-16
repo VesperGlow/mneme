@@ -23,6 +23,7 @@ fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     config.database = temp.path().join("db").to_string_lossy().into();
     config.models.base_url = base.into();
     config.neo4j.base_url = base.into();
+    config.llm.model = "fixture-model".into();
     config.llm.base_url = base.into();
     config.memory.poll_seconds = 1;
     config.validate().unwrap();

@@ -12,6 +12,7 @@ Volume=%h/.config/mneme/config.toml:/app/config/default.toml:ro,Z
 EnvironmentFile=%h/.config/mneme/app.env
 Environment=MNEME_LISTEN=0.0.0.0:8080
 Environment=MNEME_DATABASE=/data/mneme.sqlite3
+Environment=MNEME_QQ_LISTEN=0.0.0.0:8081
 NoNewPrivileges=true
 DropCapability=ALL
 ReadOnly=true

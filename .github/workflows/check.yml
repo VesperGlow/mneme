@@ -30,6 +30,7 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: python3 -m py_compile services/models/*.py scripts/*.py tests/fixtures/*.py
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - run: node --check web/app.js && node --check scripts/console-browser-test.cjs
 
   containers:
@@ -110,10 +111,13 @@ jobs:
           else
             trap 'sudo podman rm -f mneme-ci >/dev/null 2>&1 || true' EXIT
             sudo podman run -d --name mneme-ci --read-only --cap-drop all --security-opt no-new-privileges \
-              --tmpfs /tmp:rw,noexec,nosuid,size=64m -p 127.0.0.1:18080:8080 \
+              --tmpfs /tmp:rw,noexec,nosuid,size=64m -p 127.0.0.1:18080:8080 -p 127.0.0.1:18081:8081 \
               -e MNEME_DATABASE=/tmp/ci.sqlite3 \
               -e MNEME_API_TOKEN=mneme-ci-only-token-01234567890123456789 \
               -e MNEME_LLM_API_KEY=ci-fixture-only \
+              -e MNEME_LLM_MODEL=ci-fixture \
+              -e MNEME_QQ_APP_ID=12345678 -e MNEME_QQ_APP_SECRET=ci-qq-fixture-secret \
+              -e MNEME_QQ_LISTEN=0.0.0.0:8081 \
               -e MNEME_NEO4J_PASSWORD=ci-fixture-only-password "$IMAGE"
             for attempt in $(seq 1 30); do
               curl -fsS -o /dev/null http://127.0.0.1:18080/health/live && break
@@ -122,6 +126,8 @@ jobs:
             curl -fsS -o /dev/null http://127.0.0.1:18080/health/live
             curl -fsS -o /dev/null http://127.0.0.1:18080/console/
             test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/v1/memories)" = 401
+            test "$(curl -s -o /dev/null -w '%{http_code}' -X POST -d '{}' http://127.0.0.1:18081/qqbot)" = 401
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/console/)" = 404
           fi
       - uses: actions/upload-artifact@v4
         with:

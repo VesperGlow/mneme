@@ -1,0 +1,8 @@
+# Include inside an existing HTTPS server block with a valid certificate.
+location = /qqbot {
+    client_max_body_size 64k;
+    proxy_pass http://127.0.0.1:8081/qqbot;
+    proxy_set_header Host $host;
+    proxy_connect_timeout 3s;
+    proxy_read_timeout 10s;
+}

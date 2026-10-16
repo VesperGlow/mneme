@@ -7,6 +7,56 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// Compatible providers still need a model ID; discover it only when explicitly automatic.
+pub async fn resolve_model(config: &mut Config) -> Result<()> {
+    if config.llm.model != "auto" {
+        return Ok(());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let response = client
+        .get(format!(
+            "{}/models",
+            config.llm.base_url.trim_end_matches('/')
+        ))
+        .bearer_auth(&config.llm_key)
+        .send()
+        .await
+        .map_err(|_| anyhow::anyhow!("model discovery failed; set MNEME_LLM_MODEL explicitly"))?;
+    ensure!(
+        response.status().is_success(),
+        "model catalog unavailable; set MNEME_LLM_MODEL explicitly"
+    );
+    let value: Value = serde_json::from_slice(&bounded_body(response, 1_048_576).await?)?;
+    let model = value["data"]
+        .as_array()
+        .and_then(|models| {
+            models.iter().filter_map(|m| m["id"].as_str()).find(|id| {
+                let lower = id.to_lowercase();
+                !id.is_empty()
+                    && id.len() <= 256
+                    && ![
+                        "embed",
+                        "rerank",
+                        "whisper",
+                        "tts",
+                        "image",
+                        "dall-e",
+                        "moderation",
+                        "transcrib",
+                    ]
+                    .iter()
+                    .any(|kind| lower.contains(kind))
+            })
+        })
+        .ok_or_else(|| anyhow::anyhow!("no chat model found; set MNEME_LLM_MODEL explicitly"))?;
+    config.llm.model = model.into();
+    tracing::info!(model=%config.llm.model,"automatically selected first chat model from provider catalog; override with MNEME_LLM_MODEL");
+    Ok(())
+}
+
 #[derive(Clone)]
 pub struct Llm {
     client: reqwest::Client,

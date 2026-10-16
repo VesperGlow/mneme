@@ -8,6 +8,7 @@ async fn main() -> anyhow::Result<()> {
     let temp = tempfile::TempDir::new()?;
     let (base, upstream) = common::fake_services().await;
     let mut config: Config = toml::from_str(include_str!("../config/default.toml"))?;
+    config.llm.model = "fixture-model".into();
     config.api_token = "console-test-token-01234567890123456789".into();
     config.llm_key = "fixture-only".into();
     config.neo4j_password = "fixture-only".into();
@@ -16,6 +17,10 @@ async fn main() -> anyhow::Result<()> {
     config.models.base_url = base.clone();
     config.neo4j.base_url = base;
     config.memory.poll_seconds = 1;
+    if std::env::var("MNEME_QQ_UI_TEST").as_deref() == Ok("1") {
+        config.qq.app_id = "12345678".into();
+        config.qq.app_secret = "console-qq-fixture-only".into();
+    }
     config.validate()?;
     let (stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(config, rx).await?;

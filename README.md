@@ -44,19 +44,18 @@ podman info --format '{{.Host.Security.Rootless}}'
 
 ```bash
 cp .env.example .env
-chmod 600 .env
-python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
-# 编辑 .env，填入 API Token、外部 LLM Key、模型名、含 /v1 的 API URL、Neo4j 密码。
-# Neo4j 密码至少 16 字符。每行 KEY=VALUE，不加引号、不使用 shell 展开。
-bash scripts/pull.sh
-bash scripts/install.sh
+# 编辑 .env，填写 LLM API Key、URL、QQ AppID、QQ AppSecret。
+# 每行 KEY=VALUE，不加引号；不使用 QQ 时，QQ 两项同时留空。
+bash scripts/start.sh
 ```
+
+安装会自动生成 Console/API Token 和 Neo4j 密码，写回权限为 0600 的 `.env` 并保存到 `~/.config/mneme/`；重复安装会保留密钥、人格和数据。LLM 模型名可选：未填时首次从提供商 `/models` 自动选择第一个排除已知 Embedding、Reranker 等专用类型的模型并缓存，重启不会重新选型；目录接口不受支持时须填写 `MNEME_LLM_MODEL`。建议明确指定常用聊天模型。
 
 GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vesperglow/mneme-api` 与 `ghcr.io/vesperglow/mneme-models`。默认使用 `latest`；固定部署版本时，先 `export MNEME_IMAGE_TAG=sha-完整提交SHA`，再执行同样的拉取和安装命令。私有 GHCR 包需要先用具有 `read:packages` 权限的 GitHub Token 执行 `podman login ghcr.io -u VesperGlow`；也可以在 GitHub 包设置中改为公开。首次发布的包默认私有，详见 [GHCR 说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。从源码构建时，用 `bash scripts/build.sh` 代替拉取步骤，仍仅构建 amd64。
 
 首次启动会下载约 2 GB 模型文件，取决于网络需要几分钟。模型权重保存在持久卷中，没有打入镜像。安装脚本保留已有 `~/.config/mneme/config.toml`。如果网络访问 Hugging Face 需要代理，可在模型 Quadlet 中添加对应的代理环境变量，再重启；不要改动固定模型 revision。
 
-所有容器属于 `mneme` Pod，共用网络命名空间：内部地址为 `127.0.0.1:7474` 和 `127.0.0.1:8090`。仅 API 的 `127.0.0.1:8080` 发布到宿主机。需要远程使用时可通过 SSH 转发：`ssh -L 8080:127.0.0.1:8080 user@server`。
+所有容器属于 `mneme` Pod，共用网络命名空间：内部地址为 `127.0.0.1:7474` 和 `127.0.0.1:8090`。宿主机只发布本机 `127.0.0.1:8080`（API/Console）和 `127.0.0.1:8081`（仅 QQ 回调）；QQ 未配置时不启动第二个监听。需要远程使用 Console 时可通过 SSH 转发：`ssh -L 8080:127.0.0.1:8080 user@server`。
 
 ```bash
 systemctl --user status mneme.target
@@ -70,8 +69,10 @@ systemctl --user start mneme.target
 
 ## 开始对话
 
+QQ 接入遵循官方 BotGo 的 Webhook 协议，由同一 Rust 进程处理验签、Token 刷新和消息投递，不增加 Go 服务或容器。QQ 平台还须配置 **HTTPS 回调 `/qqbot`、`C2C_MESSAGE_CREATE` 事件和出口 IP 白名单**。在 Console 的“系统状态 → QQ 机器人”生成一次性绑定码，再用自己的 QQ 私聊发送 `/绑定 绑定码`。当前仅接收绑定账号的单聊消息；完整设置和测试边界见 [docs/qq.md](docs/qq.md)。
+
 ```bash
-export MNEME_API_TOKEN='填入 .env 中相同的 Token'
+export MNEME_API_TOKEN="$(cat ~/.config/mneme/console-token)"
 curl -sS -H "Authorization: Bearer $MNEME_API_TOKEN" http://127.0.0.1:8080/health/ready
 python3 scripts/chat.py
 # 继续旧会话：
@@ -164,6 +165,7 @@ cargo fmt --all -- --check
 cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 python3 -m py_compile services/models/*.py scripts/*.py
+python3 -m unittest discover -s tests -p 'test_*.py'
 # 构建模型镜像后，用真实 CPU 模型与临时 Neo4j 运行集成测试：
 bash scripts/smoke-services.sh
 # 完整 Pod 生命周期测试：先预热模型缓存，再验证离线模型、整个 Pod 重启和在线备份。

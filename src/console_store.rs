@@ -190,7 +190,7 @@ impl Store {
                 .bind(input.importance).bind(input.confidence).bind(serde_json::to_string(&entities)?).bind(at).bind(at).bind(seq).bind(input.valid_until).execute(&mut *tx).await?;
             new_id
         };
-        sqlx::query("INSERT INTO content_barriers(content_hash,through_seq) VALUES(?,?) ON CONFLICT(content_hash) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq)")
+        sqlx::query("INSERT INTO content_barriers(content_hash,through_seq,through_qq) VALUES(?,?,(SELECT COALESCE(MAX(seq),0) FROM qq_inbox)) ON CONFLICT(content_hash) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
             .bind(hash).bind(seq).execute(&mut *tx).await?;
         let saved: Memory = sqlx::query_as("SELECT * FROM memories WHERE id=?")
             .bind(&saved_id)
@@ -307,7 +307,7 @@ fn filter<'a>(q: &mut QueryBuilder<'a, Sqlite>, f: &'a MemoryFilter) {
 }
 
 async fn protect(tx: &mut sqlx::Transaction<'_, Sqlite>, memory: &Memory, seq: i64) -> Result<()> {
-    sqlx::query("INSERT INTO forget_barriers(slot,through_seq) VALUES(?,?) ON CONFLICT(slot) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq)")
+    sqlx::query("INSERT INTO forget_barriers(slot,through_seq,through_qq) VALUES(?,?,(SELECT COALESCE(MAX(seq),0) FROM qq_inbox)) ON CONFLICT(slot) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
         .bind(&memory.slot).bind(seq).execute(&mut **tx).await?;
     sqlx::query("INSERT OR IGNORE INTO suppressed_sources(message_id) SELECT s.message_id FROM memory_sources s JOIN memories m ON m.id=s.memory_id WHERE m.slot=?")
         .bind(&memory.slot).execute(&mut **tx).await?;
@@ -322,7 +322,7 @@ async fn protect(tx: &mut sqlx::Transaction<'_, Sqlite>, memory: &Memory, seq: i
         .into_iter()
         .chain(std::iter::once(memory.content.clone()))
     {
-        sqlx::query("INSERT INTO content_barriers(content_hash,through_seq) VALUES(?,?) ON CONFLICT(content_hash) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq)")
+        sqlx::query("INSERT INTO content_barriers(content_hash,through_seq,through_qq) VALUES(?,?,(SELECT COALESCE(MAX(seq),0) FROM qq_inbox)) ON CONFLICT(content_hash) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
             .bind(content_hash(&text)).bind(seq).execute(&mut **tx).await?;
     }
     Ok(())

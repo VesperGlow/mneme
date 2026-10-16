@@ -1,0 +1,61 @@
+# QQ 单聊接入
+
+mneme 按 [官方 BotGo](https://github.com/tencent-connect/botgo) 的签名和 Webhook 协议直接用 Rust 实现适配，不增加 Go 进程或容器。官方已经停止维护旧 WebSocket 链路，因此使用 HTTPS 回调。
+
+## 填写配置并启动
+
+先按 README 安装 Rootless Podman、启用用户 systemd，然后复制 `.env.example` 为 `.env`，填写四项：
+
+```dotenv
+MNEME_LLM_API_KEY=你的外部模型服务密钥
+MNEME_LLM_BASE_URL=https://你的模型服务域名/v1
+MNEME_QQ_APP_ID=你的数字AppID
+MNEME_QQ_APP_SECRET=你的AppSecret
+```
+
+```bash
+bash scripts/start.sh
+```
+
+脚本准备配置、拉取 amd64 镜像并启动同一个 Pod 的三个服务。Console Token 和 Neo4j 密码留空即可；自动生成并写回权限为 0600 的 `.env`，重装时保留。保存好 `.env` 和 `~/.config/mneme/`；已有 Neo4j 卷的认证密码不会因修改配置而自动改变。
+
+`MNEME_LLM_MODEL` 未填时，首次请求 `/models`，按提供商返回顺序选择第一个排除已知 Embedding、Reranker、图像、语音等专用类型的模型，并按服务地址缓存在 SQLite，重启不会重新选型。这个规则无法判断所有模型的能力、价格和参数；建议明确指定常用聊天模型。目录接口不受支持时，须填写模型名。URL 可以是 `/v1` 基础地址、服务根地址或完整 `/chat/completions` 地址，安装器会规范化；不要把密钥放进 URL。
+
+QQ 两项同时留空时关闭适配，仍可使用原有 HTTP API 和 Console。
+
+## 配置 QQ 开放平台
+
+AppID/AppSecret 不能代替平台上的以下设置：
+
+1. 创建机器人；未上线时把自己的 QQ 加入沙箱成员。
+2. 配置服务器固定公网出口 IP 白名单。
+3. 回调填写 `https://你的公网域名/qqbot`，监听 `C2C_MESSAGE_CREATE`；平台会自动发起签名挑战验证。
+4. 默认正式 OpenAPI；若平台要求沙箱 API，设置 `MNEME_QQ_SANDBOX=true` 后重新安装、重启。
+
+服务端只发布本机 `127.0.0.1:8081`，该端口仅接受 `POST /qqbot`，没有 Console 或管理 API。请用已有 HTTPS 反向代理仅转发此路径；[Nginx 示例](../deploy/nginx/qqbot.conf.example) 放入已有证书的 HTTPS server 块。管理端口 8080 继续仅供本机或 SSH 转发访问。
+
+官方参考：[Webhook 与验签](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/interface-framework/event-emit.html)、[Access Token](https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/access-token.html)、[单聊发送消息](https://bot.q.qq.com/wiki/develop/api-v2/autogen/api/v2_users_user_openid_messages.post.html)。
+
+## 绑定本人
+
+```bash
+cat ~/.config/mneme/console-token
+# 打开 http://127.0.0.1:8080/console/，用上面的本机 Token 登录。
+```
+
+进入“系统状态 → QQ 机器人”，点击“生成一次性绑定码”，用自己的 QQ 私聊发送页面显示的 `/绑定 ...`。收到“绑定成功”后即可聊天。绑定码 10 分钟有效，只保存哈希，使用后作废，不进入聊天历史或 LLM；刷新 Console 可查看绑定状态与投递队列。
+
+直接发送文字即可使用多轮对话、人格和长期记忆。`/新会话` 开始新上下文并保留长期记忆；`/帮助` 查看说明。当前只处理绑定本人账号的单聊消息，其他账号、群聊与频道事件不会进入 LLM 或私人记忆。附件不做识别，附带文字可以处理。完整回复先落库，再发送 QQ 文本；QQ 不展示尚未提交的流式片段。
+
+绑定关系、会话、内容、回复及分段投递进度均保存在 SQLite，重启后恢复。更换 AppID 需要重新绑定。个人记忆仍是单用户设计。
+
+## 投递与验证边界
+
+- 校验 AppID、Ed25519 签名和 5 分钟时间窗；入库成功才返回成功 ACK。按 AppID + 消息 ID 去重；入库失败或队列已满返回失败 ACK，请求平台重投。
+- Token 在服务端缓存，使用前自动检查有效期、到期前刷新，401 后重新获取；不写入数据库或日志。AppSecret 不进入前端。
+- 消息按接收顺序处理；网络重试复用已落库的回复，不重复调用 LLM。最多四段，使用稳定的 `msg_id + msg_seq`；超过 6000 字时 QQ 提示截断，完整内容仍在原始对话中。
+- 平台已接收但 HTTP 响应丢失时，无法保证跨系统严格恰好一次投递；重试保持序号，依赖 QQ 去重。
+- 官方文档对部分被动回复时限存在不同表述；本版保守地只在原消息 290 秒内投递，过期、永久拒绝或多次失败进入 dead 计数，不改发主动消息。需要时重新发送消息。
+- Console 编辑或删除记忆同时记录 QQ 接收队列水位；操作前已排队的旧输入不能恢复该记忆，之后明确重新告知的事实仍可正常记忆。
+
+测试覆盖官方签名向量、签名挑战、鉴权与端口隔离、绑定、去重、Token 刷新、投递失败后恢复、重启后的跨会话记忆及遗忘屏障。测试使用本地 QQ HTTP 替身，不向真实 QQ 账号发送消息。真实 AppID/AppSecret 和公网回调未提供，因此尚未完成 QQ 线上联调。

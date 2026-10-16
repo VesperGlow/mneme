@@ -17,6 +17,36 @@ BASE = "http://127.0.0.1:18080"
 VOLUMES = ("mneme-e2e-data", "mneme-e2e-neo4j")
 API_IMAGE = os.environ.get("MNEME_TEST_API_IMAGE", "localhost/mneme:0.1.0")
 MODELS_IMAGE = os.environ.get("MNEME_TEST_MODELS_IMAGE", "localhost/mneme-models:0.1.0")
+QQ_SECRET = 'mneme-qq-smoke-only-secret'
+
+
+def qq_send(message_id, content, sender='mneme-qq-owner'):
+    timestamp = str(int(time.time()))
+    body = json.dumps({'op': 0, 't': 'C2C_MESSAGE_CREATE', 'd': {
+        'id': message_id, 'content': content, 'author': {'user_openid': sender},
+        'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime())}}, ensure_ascii=False).encode()
+    with tempfile.TemporaryDirectory(prefix='mneme-qq-sign-') as temp:
+        key, data = Path(temp) / 'key.der', Path(temp) / 'data'
+        seed = (QQ_SECRET.encode() * 32)[:32]
+        key.write_bytes(bytes.fromhex('302e020100300506032b657004220420') + seed)
+        key.chmod(0o600)
+        data.write_bytes(timestamp.encode() + body)
+        signature = subprocess.check_output(['openssl', 'pkeyutl', '-sign', '-rawin', '-inkey', str(key),
+                                             '-keyform', 'DER', '-in', str(data)]).hex()
+    request = urllib.request.Request('http://127.0.0.1:18081/qqbot', data=body, headers={
+        'X-Bot-Appid': '12345678', 'X-Signature-Timestamp': timestamp,
+        'X-Signature-Ed25519': signature, 'Content-Type': 'application/json'})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        assert json.load(response) == {'op': 12, 'd': 0}
+
+
+def wait_qq_sent(count):
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        if api('/v1/qq/status')['queue']['sent'] == count:
+            return
+        time.sleep(0.2)
+    raise RuntimeError('QQ delivery timeout')
 
 
 def podman(*args, capture=False):
@@ -75,15 +105,18 @@ for volume in VOLUMES:
 
 with tempfile.TemporaryDirectory(prefix="mneme-e2e-") as temp:
     config = Path(temp) / "config.toml"
-    config.write_text((ROOT / "config/default.toml").read_text())
+    config.write_text((ROOT / "config/default.toml").read_text() +
+                      '\n[qq]\napi_base="http://127.0.0.1:18000"\ntoken_url="http://127.0.0.1:18000/app/getAppAccessToken"\n')
     env = Path(temp) / "app.env"
     env.write_text(f"MNEME_API_TOKEN={TOKEN}\nMNEME_LLM_API_KEY=fixture-only\n"
                    "MNEME_LLM_BASE_URL=http://127.0.0.1:18000/v1\nMNEME_LLM_MODEL=fixture\n"
-                   "MNEME_NEO4J_PASSWORD=mneme-e2e-only-password\n")
+                   "MNEME_NEO4J_PASSWORD=mneme-e2e-only-password\n"
+                   f"MNEME_QQ_APP_ID=12345678\nMNEME_QQ_APP_SECRET={QQ_SECRET}\nMNEME_QQ_LISTEN=0.0.0.0:8081\n")
     env.chmod(0o600)
     created = False
     try:
-        podman("pod", "create", "--name", POD, "-p", "127.0.0.1:18080:8080")
+        podman("pod", "create", "--name", POD, "-p", "127.0.0.1:18080:8080",
+               '-p', '127.0.0.1:18081:8081', '-p', '127.0.0.1:18000:18000')
         created = True
         common = ("--pod", POD, "--security-opt", "no-new-privileges")
         podman("run", "-d", "--name", "mneme-e2e-neo4j", *common,
@@ -128,18 +161,38 @@ with tempfile.TemporaryDirectory(prefix="mneme-e2e-") as temp:
         debug = api('/v1/console/retrieval', {'query': '用户喝咖啡的偏好是什么？'})
         assert all(r['memory']['id'] != manual['id'] for r in debug['results'])
         assert api('/v1/console/stats')['deleted'] == 1
+        pair = api('/v1/qq/pairing', {})
+        qq_send('qq-bind', '/绑定 ' + pair['code'])
+        wait_qq_sent(1)
+        qq_send('qq-first', '我住在成都。')
+        qq_send('qq-first', '我住在成都。')
+        wait_qq_sent(2)
         podman("pod", "stop", "--time", "30", POD)
         podman("pod", "start", POD)
         wait_ready()
         assert api(f"/v1/sessions/{session}/messages")["messages"][0]["content"] == "我住在成都。"
         assert wait_memory() == memory_id
+        assert api('/v1/qq/status')['bound']
+        qq_send('qq-new-session', '/新会话')
+        qq_send('qq-recall', '我住在哪座城市？')
+        qq_send('qq-stranger', '我的私人记忆是什么？', 'stranger')
+        wait_qq_sent(4)
+        with urllib.request.urlopen('http://127.0.0.1:18000/qq-sent') as response:
+            qq_replies = json.load(response)
+        assert len(qq_replies) == 2, qq_replies
+        assert any(r['msg_id'] == 'qq-recall' and '你住在成都' in r['content'] for r in qq_replies)
+        try:
+            urllib.request.urlopen('http://127.0.0.1:18081/console/')
+            raise AssertionError('Console exposed on QQ callback port')
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
         second = api("/v1/sessions", {})["id"]
         stream = api(f"/v1/sessions/{second}/chat", {"request_id": str(uuid.uuid4()), "message": "我住在哪座城市？"})
         assert "你住在成都" in stream and "event: done" in stream, stream
         volume = json.loads(podman("volume", "inspect", "mneme-e2e-data", capture=True).stdout)[0]["Mountpoint"]
         backup = Path(temp) / "backup.sqlite3"
         podman("unshare", "python3", str(ROOT / "scripts/backup.py"), str(Path(volume)/"mneme.sqlite3"), str(backup))
-        print("PASS: rootless Pod, CPU models, Console CRUD/index/history/debug/delete, offline reload, persistent restart, cross-session memory, online backup")
+        print("PASS: rootless Pod, CPU models, Console CRUD/index/history/debug/delete, QQ binding/dedup/privacy/restart/cross-session memory, offline reload, online backup")
     except BaseException:
         for name in ("mneme-e2e-api", "mneme-e2e-models", "mneme-e2e-neo4j"):
             subprocess.run(["podman", "logs", "--tail", "30", name], check=False)

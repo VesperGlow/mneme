@@ -26,6 +26,7 @@ fn config(temp: &TempDir, base: &str) -> Config {
     config.llm_key = "fake-key".into();
     config.neo4j_password = "fake-password".into();
     config.database = temp.path().join("mneme.sqlite3").to_str().unwrap().into();
+    config.llm.model = "fixture-model".into();
     config.llm.base_url = base.into();
     config.models.base_url = base.into();
     config.neo4j.base_url = base.into();

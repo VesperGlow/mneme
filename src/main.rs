@@ -16,9 +16,26 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| "config/default.toml".into());
     let config = Config::load(&path)?;
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
+    let qq_listener = if config.qq.enabled() {
+        Some(tokio::net::TcpListener::bind(&config.qq.listen).await?)
+    } else {
+        None
+    };
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let app = App::new(config, shutdown_rx.clone()).await?;
     let worker = tokio::spawn(mneme::memory::worker(app.clone()));
+    let qq_worker = tokio::spawn(mneme::qq::worker(app.clone()));
+    let mut qq_shutdown = shutdown_rx.clone();
+    let qq_server = qq_listener.map(|listener| {
+        let router = mneme::qq::router(app.clone());
+        tokio::spawn(async move {
+            axum::serve(listener, router)
+                .with_graceful_shutdown(async move {
+                    while !*qq_shutdown.borrow() && qq_shutdown.changed().await.is_ok() {}
+                })
+                .await
+        })
+    });
     let slots = app.generation_slots.clone();
     let server =
         axum::serve(listener, mneme::api::router(app)).with_graceful_shutdown(async move {
@@ -37,6 +54,10 @@ async fn main() -> Result<()> {
     server.await?;
     let _ = tokio::time::timeout(Duration::from_secs(15), async {
         let _ = worker.await;
+        let _ = qq_worker.await;
+        if let Some(server) = qq_server {
+            let _ = server.await;
+        }
         let _all = slots.acquire_many(4).await;
     })
     .await;

@@ -2,15 +2,46 @@
 import json
 import signal
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 
 class Handler(BaseHTTPRequestHandler):
+    sent = []
+    lock = threading.Lock()
+
+    def json_response(self, value):
+        data = json.dumps(value, ensure_ascii=False).encode()
+        self.send_response(200)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == '/qq-sent':
+            with self.lock:
+                self.json_response(self.sent)
+        else:
+            self.json_response({'data': [{'id': 'fixture'}]})
+
     def log_message(self, *args):
         pass
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == '/app/getAppAccessToken':
+            assert body == {'appId': '12345678', 'clientSecret': 'mneme-qq-smoke-only-secret'}
+            self.json_response({'access_token': 'fixture-qq-access-token', 'expires_in': '7200'})
+            return
+        if self.path.startswith('/v2/users/'):
+            assert self.headers['Authorization'] == 'QQBot fixture-qq-access-token'
+            assert self.path == '/v2/users/mneme-qq-owner/messages'
+            with self.lock:
+                if not any(m['msg_id'] == body['msg_id'] and m['msg_seq'] == body['msg_seq'] for m in self.sent):
+                    self.sent.append(body)
+            self.json_response({'id': 'fixture-qq-reply'})
+            return
         messages = body["messages"]
         self.send_response(200)
         if body.get("stream"):
