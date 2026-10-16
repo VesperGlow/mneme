@@ -1,0 +1,26 @@
+[Unit]
+Description=Mneme local CPU embedding and reranker
+PartOf=mneme.target
+
+[Container]
+Image=localhost/mneme-models:0.1.0
+ContainerName=mneme-models
+Pod=mneme.pod
+Volume=mneme-model-cache.volume:/models
+Environment=MNEME_CPU_THREADS=3
+Environment=OMP_NUM_THREADS=3
+Environment=MKL_NUM_THREADS=3
+NoNewPrivileges=true
+DropCapability=ALL
+ReadOnly=true
+Tmpfs=/tmp:rw,noexec,nosuid,size=256m
+
+[Service]
+Restart=on-failure
+RestartSec=10
+TimeoutStartSec=1800
+TimeoutStopSec=30
+MemoryMax=8G
+CPUQuota=300%
+CPUWeight=60
+UMask=0077

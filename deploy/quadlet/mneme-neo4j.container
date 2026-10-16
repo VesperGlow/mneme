@@ -1,0 +1,26 @@
+[Unit]
+Description=Mneme Neo4j retrieval projection
+PartOf=mneme.target
+
+[Container]
+Image=docker.io/library/neo4j:5.26.32-community-trixie
+ContainerName=mneme-neo4j
+Pod=mneme.pod
+Volume=mneme-neo4j-data.volume:/data
+EnvironmentFile=%h/.config/mneme/neo4j.env
+Environment=NEO4J_server_memory_heap_initial__size=512m
+Environment=NEO4J_server_memory_heap_max__size=1G
+Environment=NEO4J_server_memory_pagecache_size=768m
+Environment=NEO4J_server_bolt_enabled=false
+Environment=NEO4J_server_default__listen__address=0.0.0.0
+Environment=NEO4J_dbms_usage__report_enabled=false
+NoNewPrivileges=true
+
+[Service]
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=900
+TimeoutStopSec=60
+MemoryMax=3G
+CPUWeight=80
+UMask=0077

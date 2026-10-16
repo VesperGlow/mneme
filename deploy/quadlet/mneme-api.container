@@ -1,0 +1,27 @@
+[Unit]
+Description=Mneme Rust agent
+PartOf=mneme.target
+After=mneme-neo4j.service mneme-models.service
+
+[Container]
+Image=localhost/mneme:0.1.0
+ContainerName=mneme-api
+Pod=mneme.pod
+Volume=mneme-data.volume:/data
+Volume=%h/.config/mneme/config.toml:/app/config/default.toml:ro,Z
+EnvironmentFile=%h/.config/mneme/app.env
+Environment=MNEME_LISTEN=0.0.0.0:8080
+Environment=MNEME_DATABASE=/data/mneme.sqlite3
+NoNewPrivileges=true
+DropCapability=ALL
+ReadOnly=true
+Tmpfs=/tmp:rw,noexec,nosuid,size=64m
+
+[Service]
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=900
+TimeoutStopSec=30
+MemoryMax=2G
+CPUWeight=100
+UMask=0077

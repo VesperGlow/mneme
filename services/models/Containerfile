@@ -1,0 +1,11 @@
+FROM docker.io/library/python:3.12-slim-trixie
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HF_HOME=/models \
+    TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=3 MKL_NUM_THREADS=3 \
+    HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1
+WORKDIR /app
+COPY services/models/requirements.txt services/models/requirements.lock.txt ./
+RUN pip install --no-cache-dir torch==2.8.0+cpu --index-url https://download.pytorch.org/whl/cpu -c requirements.lock.txt \
+    && pip install --no-cache-dir -r requirements.txt -c requirements.lock.txt
+COPY services/models/engine.py services/models/app.py ./
+EXPOSE 8090
+CMD ["uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8090", "--workers", "1", "--no-access-log"]

@@ -1,0 +1,9 @@
+target
+data
+.git
+.venv
+.env
+config/local.toml
+__pycache__
+artifacts
+dist

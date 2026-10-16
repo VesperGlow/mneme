@@ -1,0 +1,8 @@
+# torch CPU wheel is installed separately from https://download.pytorch.org/whl/cpu
+fastapi==0.115.12
+uvicorn==0.34.2
+transformers==4.51.3
+accelerate==1.6.0
+safetensors==0.5.3
+numpy==2.2.5
+einops==0.8.1

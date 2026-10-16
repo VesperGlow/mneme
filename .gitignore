@@ -1,0 +1,10 @@
+/target/
+/data/
+/.venv/
+__pycache__/
+*.pyc
+.env
+config/local.toml
+*.sqlite*
+/artifacts/
+/dist/

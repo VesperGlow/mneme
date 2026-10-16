@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="Mneme Console · 私有记忆管理与检索工作台">
+  <title>Mneme Console</title>
+  <link rel="icon" href="/console/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/console/style.css">
+  <script defer src="/console/app.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <dialog id="detail" class="drawer" aria-label="记忆详情"></dialog>
+  <dialog id="editor" class="modal" aria-label="编辑记忆"></dialog>
+  <dialog id="confirm" class="modal compact" aria-label="删除记忆确认"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <noscript>Mneme Console 需要启用 JavaScript，API 仍可通过终端使用。</noscript>
+</body>
+</html>
