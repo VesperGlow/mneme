@@ -45,7 +45,7 @@ jobs:
       matrix:
         include:
           - image: mneme
-            suffix: ''
+            suffix: '-api'
             file: Containerfile
           - image: mneme-models
             suffix: '-models'

@@ -4,7 +4,7 @@ PartOf=mneme.target
 After=mneme-neo4j.service mneme-models.service
 
 [Container]
-Image=ghcr.io/vesperglow/mneme:latest
+Image=ghcr.io/vesperglow/mneme-api:latest
 ContainerName=mneme-api
 Pod=mneme.pod
 Volume=mneme-data.volume:/data
