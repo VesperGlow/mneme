@@ -60,8 +60,22 @@ impl Client {
             .json(&json!({"appId":self.config.app_id,"clientSecret":self.config.app_secret}))
             .send()
             .await?;
-        ensure!(response.status().is_success(), "QQ token HTTP error");
+        if !response.status().is_success() {
+            tracing::warn!(
+                http_status = response.status().as_u16(),
+                stage = "token",
+                "QQ API request rejected"
+            );
+            anyhow::bail!("QQ token HTTP error");
+        }
         let data: Value = serde_json::from_slice(&bounded_body(response, 65536).await?)?;
+        if data.get("code").is_some_and(|c| c.as_i64() != Some(0)) {
+            tracing::warn!(
+                code = data["code"].as_i64(),
+                stage = "token",
+                "QQ API returned an error"
+            );
+        }
         ensure!(
             data.get("code").is_none_or(|c| c.as_i64() == Some(0)),
             "QQ token API error"
@@ -100,6 +114,11 @@ impl Client {
             }
             let status = response.status();
             if !status.is_success() {
+                tracing::warn!(
+                    http_status = status.as_u16(),
+                    stage = "send",
+                    "QQ API request rejected"
+                );
                 return Err(status.is_client_error()
                     && status != StatusCode::TOO_MANY_REQUESTS
                     && status != StatusCode::UNAUTHORIZED);
@@ -107,6 +126,11 @@ impl Client {
             let bytes = bounded_body(response, 65536).await.map_err(|_| false)?;
             let data: Value = serde_json::from_slice(&bytes).map_err(|_| false)?;
             if data.get("code").is_some_and(|c| c.as_i64() != Some(0)) {
+                tracing::warn!(
+                    code = data["code"].as_i64(),
+                    stage = "send",
+                    "QQ API returned an error"
+                );
                 return Err(false);
             }
             return Ok(());
@@ -164,9 +188,7 @@ pub fn router(app: App) -> Router {
         .with_state(app)
 }
 pub fn protected_routes() -> Router<App> {
-    Router::new()
-        .route("/v1/qq/status", get(status))
-        .route("/v1/qq/pairing", post(pairing))
+    Router::new().route("/v1/qq/status", get(status))
 }
 async fn status(State(app): State<App>) -> ApiResult<Json<Value>> {
     let mut data = app.store.qq_status(&app.config.qq.app_id).await?;
@@ -174,17 +196,6 @@ async fn status(State(app): State<App>) -> ApiResult<Json<Value>> {
     data["app_id"] = json!(app.config.qq.app_id);
     data["callback_path"] = json!("/qqbot");
     Ok(Json(data))
-}
-async fn pairing(State(app): State<App>) -> ApiResult<Json<Value>> {
-    if app.qq.is_none() {
-        return Err(ApiError(StatusCode::CONFLICT, "qq_disabled"));
-    }
-    let code = app
-        .store
-        .qq_pair_code(&app.config.qq.app_id)
-        .await?
-        .ok_or(ApiError(StatusCode::CONFLICT, "qq_already_bound"))?;
-    Ok(Json(json!({"code":code,"expires_at":now()+600})))
 }
 fn header_text<'a>(headers: &'a HeaderMap, key: &str) -> &'a str {
     headers.get(key).and_then(|v| v.to_str().ok()).unwrap_or("")
@@ -254,8 +265,8 @@ async fn webhook(
                         .map(|ts| ts.timestamp())
                         .unwrap_or_else(now);
                     let expires_at = sent_at.min(now()) + 290;
-                    if expires_at > now()
-                        && app
+                    if expires_at > now() {
+                        match app
                             .store
                             .qq_accept(
                                 &config.app_id,
@@ -267,12 +278,17 @@ async fn webhook(
                                 },
                             )
                             .await
-                            .is_err()
-                    {
-                        tracing::error!(
-                            "QQ event was not committed; requesting platform redelivery"
-                        );
-                        return Ok(Json(json!({"op":12,"d":1})));
+                        {
+                            Ok(outcome) => {
+                                tracing::info!(outcome=?outcome, "QQ private message received")
+                            }
+                            Err(_) => {
+                                tracing::error!(
+                                    "QQ event was not committed; requesting platform redelivery"
+                                );
+                                return Ok(Json(json!({"op":12,"d":1})));
+                            }
+                        }
                     }
                 }
             }
@@ -323,6 +339,7 @@ async fn process(
                 match crate::chat::generate(app, &user, &output).await {
                     Ok(reply) => reply,
                     Err(_) => {
+                        tracing::warn!(delivery=%item.id, "QQ reply generation failed");
                         app.store.fail_turn(&user, "generation_failed").await?;
                         "这次回复没有完成，请稍后重新发送消息。".into()
                     }
@@ -375,7 +392,9 @@ pub async fn worker(app: App) {
         };
         let result =
             tokio::select! { r=process(&app,&client,&item)=>r,_=shutdown.changed()=>break };
-        if !matches!(result, Ok(Ok(()))) {
+        if matches!(result, Ok(Ok(()))) {
+            tracing::info!(delivery=%item.id, "QQ reply sent");
+        } else {
             let permanent = matches!(result, Ok(Err(true)));
             if app
                 .store

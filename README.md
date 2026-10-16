@@ -69,7 +69,7 @@ systemctl --user start mneme.target
 
 ## 开始对话
 
-QQ 接入遵循官方 BotGo 的 Webhook 协议，由同一 Rust 进程处理验签、Token 刷新和消息投递，不增加 Go 服务或容器。QQ 平台还须配置 **HTTPS 回调 `/qqbot`、`C2C_MESSAGE_CREATE` 事件和出口 IP 白名单**。在 Console 的“系统状态 → QQ 机器人”生成一次性绑定码，再用自己的 QQ 私聊发送 `/绑定 绑定码`。当前仅接收绑定账号的单聊消息；完整设置和测试边界见 [docs/qq.md](docs/qq.md)。
+QQ 接入遵循官方 BotGo 的 Webhook 协议，由同一 Rust 进程处理验签、Token 刷新和消息投递，不增加 Go 服务或容器。QQ 平台还须配置 **HTTPS 回调 `/qqbot`、`C2C_MESSAGE_CREATE` 事件和出口 IP 白名单**。配置完成后直接私聊即可，第一条消息会自动建立个人会话并生成回复，无需打开 Console 或发送绑定码。之后继续使用同一账号的对话与长期记忆；完整设置和测试边界见 [docs/qq.md](docs/qq.md)。
 
 ```bash
 export MNEME_API_TOKEN="$(cat ~/.config/mneme/console-token)"

@@ -23,6 +23,9 @@ async fn main() -> Result<()> {
     };
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     let app = App::new(config, shutdown_rx.clone()).await?;
+    if app.qq.is_some() {
+        tracing::info!(listen=%app.config.qq.listen, "QQ webhook enabled; first private message starts the personal session");
+    }
     let worker = tokio::spawn(mneme::memory::worker(app.clone()));
     let qq_worker = tokio::spawn(mneme::qq::worker(app.clone()));
     let mut qq_shutdown = shutdown_rx.clone();

@@ -233,8 +233,7 @@ async fn signed_challenge_auth_freshness_and_route_isolation() {
         response(
             &console,
             Request::builder()
-                .uri("/v1/qq/pairing")
-                .method("POST")
+                .uri("/v1/qq/status")
                 .body(Body::empty())
                 .unwrap()
         )
@@ -247,7 +246,7 @@ async fn signed_challenge_auth_freshness_and_route_isolation() {
 }
 
 #[tokio::test]
-async fn binding_dedup_restart_cross_session_memory_and_token_refresh() {
+async fn first_private_message_dedup_restart_cross_session_memory_and_token_refresh() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, upstream) = common::fake_services().await;
     let (platform, qq_base, server) = platform().await;
@@ -257,26 +256,31 @@ async fn binding_dedup_restart_cross_session_memory_and_token_refresh() {
     let app = App::new(cfg.clone(), rx).await.unwrap();
     let console = api::router(app.clone());
     let callbacks = qq::router(app.clone());
-    message(&callbacks, "stranger-before", "stranger", "我住在北京。").await;
-    let (_, pair) = admin(&console, "/v1/qq/pairing", "POST").await;
-    let code = pair["code"].as_str().unwrap();
-    message(&callbacks, "bind", "owner", &format!("/绑定 {code}")).await;
-    assert!(
-        app.store.qq_status(APP_ID).await.unwrap()["bound"]
-            .as_bool()
-            .unwrap()
-    );
-    assert_eq!(
-        admin(&console, "/v1/qq/pairing", "POST").await.0,
-        StatusCode::CONFLICT
-    );
-    let stored: Vec<String> = sqlx::query_scalar("SELECT content FROM qq_inbox")
-        .fetch_all(&app.store.pool)
+    assert_eq!(app.store.qq_status(APP_ID).await.unwrap()["bound"], false);
+    // An unused code from the previous version must not prevent starting a conversation.
+    sqlx::query("INSERT INTO metadata(key,value) VALUES(?,?)")
+        .bind(format!("qq.{APP_ID}.pair"))
+        .bind(r#"{"hash":"obsolete","expires":9999999999}"#)
+        .execute(&app.store.pool)
         .await
         .unwrap();
-    assert!(stored.iter().all(|s| !s.contains(code)));
     message(&callbacks, "residence", "owner", "我住在成都。").await;
     message(&callbacks, "residence", "owner", "我住在成都。").await;
+    let status = app.store.qq_status(APP_ID).await.unwrap();
+    assert_eq!(status["bound"], true);
+    assert_eq!(status["owner_openid"], "owner");
+    let (code, status) = admin(&console, "/v1/qq/status", "GET").await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(status["enabled"], true);
+    assert_eq!(status["bound"], true);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM metadata WHERE key=?")
+            .bind(format!("qq.{APP_ID}.pair"))
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+        0
+    );
     message(
         &callbacks,
         "stranger-after",
@@ -294,7 +298,7 @@ async fn binding_dedup_restart_cross_session_memory_and_token_refresh() {
             .fetch_one(&app.store.pool)
             .await
             .unwrap(),
-        2
+        1
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM turns")
@@ -305,7 +309,7 @@ async fn binding_dedup_restart_cross_session_memory_and_token_refresh() {
     );
     let worker = tokio::spawn(qq::worker(app.clone()));
     let memory = tokio::spawn(memory::worker(app.clone()));
-    wait_sent(&app, 2).await;
+    wait_sent(&app, 1).await;
     for _ in 0..100 {
         if app
             .store
@@ -328,6 +332,15 @@ async fn binding_dedup_restart_cross_session_memory_and_token_refresh() {
         1
     );
     assert_eq!(platform.tokens.load(Ordering::SeqCst), 2);
+    assert!(
+        platform
+            .sent
+            .lock()
+            .await
+            .iter()
+            .any(|m| m["msg_id"] == "residence"
+                && m["content"].as_str().unwrap().contains("我会认真记住"))
+    );
     stop.send(true).unwrap();
     worker.await.unwrap();
     memory.await.unwrap();
@@ -352,9 +365,9 @@ async fn binding_dedup_restart_cross_session_memory_and_token_refresh() {
     let app = App::new(cfg, rx).await.unwrap();
     let worker = tokio::spawn(qq::worker(app.clone()));
     let memory = tokio::spawn(memory::worker(app.clone()));
-    wait_sent(&app, 4).await;
+    wait_sent(&app, 3).await;
     let sent = platform.sent.lock().await;
-    assert_eq!(sent.len(), 4);
+    assert_eq!(sent.len(), 3);
     assert!(
         sent.iter()
             .any(|m| m["msg_id"] == "recall"
@@ -371,6 +384,94 @@ async fn binding_dedup_restart_cross_session_memory_and_token_refresh() {
     memory.await.unwrap();
     upstream.abort();
     server.abort();
+}
+
+#[tokio::test]
+async fn first_private_message_is_atomic_under_failure_and_concurrent_senders() {
+    use mneme::qq_store::{Acceptance, Incoming};
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, upstream) = common::fake_services().await;
+    let (_, rx) = watch::channel(false);
+    let app = App::new(config(&temp, &base, &base), rx).await.unwrap();
+    let incoming = |message_id: &str, sender: &str, text: &str| Incoming {
+        message_id: message_id.into(),
+        sender: sender.into(),
+        content: text.into(),
+        expires_at: now() + 290,
+    };
+    sqlx::query("CREATE TRIGGER qq_test_reject BEFORE INSERT ON qq_inbox BEGIN SELECT RAISE(ABORT, 'fixture inbox failure'); END")
+        .execute(&app.store.pool).await.unwrap();
+    assert!(
+        app.store
+            .qq_accept(APP_ID, incoming("failed", "failed-owner", "你好"))
+            .await
+            .is_err()
+    );
+    assert_eq!(app.store.qq_status(APP_ID).await.unwrap()["bound"], false);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sessions")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+        0
+    );
+    sqlx::query("DROP TRIGGER qq_test_reject")
+        .execute(&app.store.pool)
+        .await
+        .unwrap();
+
+    let (first, second) = tokio::join!(
+        app.store
+            .qq_accept(APP_ID, incoming("first-a", "owner-a", "你好 A")),
+        app.store
+            .qq_accept(APP_ID, incoming("first-b", "owner-b", "你好 B")),
+    );
+    let (first, second) = (first.unwrap(), second.unwrap());
+    assert!(matches!(
+        (&first, &second),
+        (Acceptance::Queued, Acceptance::OtherAccount)
+            | (Acceptance::OtherAccount, Acceptance::Queued)
+    ));
+    let status = app.store.qq_status(APP_ID).await.unwrap();
+    assert_eq!(status["queue"]["pending"], 1);
+    let (message_id, owner) = if first == Acceptance::Queued {
+        ("first-a", "owner-a")
+    } else {
+        ("first-b", "owner-b")
+    };
+    assert_eq!(status["owner_openid"], owner);
+    assert_eq!(
+        app.store
+            .qq_accept(APP_ID, incoming(message_id, owner, "重复事件"))
+            .await
+            .unwrap(),
+        Acceptance::Duplicate
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM qq_sessions")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        app.store
+            .qq_accept(
+                APP_ID,
+                incoming("old-command", owner, "/绑定 obsolete-fixture-code")
+            )
+            .await
+            .unwrap(),
+        Acceptance::Queued
+    );
+    let (content, reply): (String, String) =
+        sqlx::query_as("SELECT content,reply FROM qq_inbox WHERE message_id='old-command'")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    assert!(content.is_empty());
+    assert!(reply.contains("无需绑定"));
+    upstream.abort();
 }
 
 #[tokio::test]

@@ -71,9 +71,9 @@ fs.mkdirSync(output, { recursive: true });
     await page.getByRole('heading', { name: '后台处理队列' }).waitFor();
     await page.getByRole('heading', { name: 'QQ 机器人', exact: true }).waitFor();
     if (process.env.MNEME_QQ_UI_TEST === '1') {
-      await page.getByRole('button', { name: '生成一次性绑定码' }).click();
-      await page.locator('#qq-pair-code', { hasText: '/绑定 ' }).waitFor();
-      assert.match(await page.locator('#qq-pair-code').innerText(), /\/绑定 [a-f0-9]{32}/);
+      await page.getByText('等待首条私聊', { exact: true }).waitFor();
+      assert((await page.locator('#page').innerText()).includes('直接私聊即可开始，无需绑定码'));
+      assert.equal(await page.getByRole('button', { name: '生成一次性绑定码' }).count(), 0);
       assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
     }
     await page.screenshot({ path: path.join(output, 'console-system.png'), fullPage: true });
