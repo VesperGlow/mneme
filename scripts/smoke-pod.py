@@ -116,7 +116,7 @@ with tempfile.TemporaryDirectory(prefix="mneme-e2e-") as temp:
     created = False
     try:
         podman("pod", "create", "--name", POD, "-p", "127.0.0.1:18080:8080",
-               '-p', '127.0.0.1:18081:8081', '-p', '127.0.0.1:18000:18000')
+               '-p', '127.0.0.1:18081:8081')
         created = True
         common = ("--pod", POD, "--security-opt", "no-new-privileges")
         podman("run", "-d", "--name", "mneme-e2e-neo4j", *common,
@@ -177,8 +177,8 @@ with tempfile.TemporaryDirectory(prefix="mneme-e2e-") as temp:
         qq_send('qq-recall', '我住在哪座城市？')
         qq_send('qq-stranger', '我的私人记忆是什么？', 'stranger')
         wait_qq_sent(4)
-        with urllib.request.urlopen('http://127.0.0.1:18000/qq-sent') as response:
-            qq_replies = json.load(response)
+        qq_replies = json.loads(podman('exec', 'mneme-e2e-llm', 'python', '-c',
+            'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:18000/qq-sent").read().decode())', capture=True).stdout)
         assert len(qq_replies) == 2, qq_replies
         assert any(r['msg_id'] == 'qq-recall' and '你住在成都' in r['content'] for r in qq_replies)
         try:
