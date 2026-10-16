@@ -69,11 +69,12 @@ LLM 状态通过配置提供商的 `/models` 目录接口检查，不发起生�
 
 ## 升级与测试
 
-先备份 SQLite，再重建 API 镜像并重启服务：
+先备份 SQLite，再拉取新镜像并更新、重启服务。可先设置 `MNEME_IMAGE_TAG=sha-完整提交SHA` 固定版本：
 
 ```bash
-podman build -t localhost/mneme:0.1.0 -f Containerfile .
-systemctl --user restart mneme-api.service
+bash scripts/pull.sh
+bash scripts/install.sh
+systemctl --user restart mneme.target
 ```
 
 新增 `0002_console.sql` 迁移在启动时自动执行，保留旧记忆及来源，为已有行建立初始修订快照，并排队同步旧投影及其完成标记。未改写 `0001_initial.sql`。无需重新下载模型或创建新数据卷。因前端编译进二进制，修改 web/ 后也需要重新编译 API。

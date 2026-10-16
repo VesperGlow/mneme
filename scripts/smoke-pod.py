@@ -15,6 +15,8 @@ POD = "mneme-e2e"
 TOKEN = "mneme-e2e-only-token-01234567890123456789"
 BASE = "http://127.0.0.1:18080"
 VOLUMES = ("mneme-e2e-data", "mneme-e2e-neo4j")
+API_IMAGE = os.environ.get("MNEME_TEST_API_IMAGE", "localhost/mneme:0.1.0")
+MODELS_IMAGE = os.environ.get("MNEME_TEST_MODELS_IMAGE", "localhost/mneme-models:0.1.0")
 
 
 def podman(*args, capture=False):
@@ -93,13 +95,13 @@ with tempfile.TemporaryDirectory(prefix="mneme-e2e-") as temp:
                "docker.io/library/neo4j:5.26.32-community-trixie")
         podman("run", "-d", "--name", "mneme-e2e-models", *common, "--read-only", "--cap-drop", "all",
                "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m", "-v", "mneme-model-cache:/models",
-               "-e", "HF_HUB_OFFLINE=1", "localhost/mneme-models:0.1.0")
+               "-e", "HF_HUB_OFFLINE=1", MODELS_IMAGE)
         podman("run", "-d", "--name", "mneme-e2e-llm", *common, "--read-only", "--cap-drop", "all",
                "-v", f"{ROOT / 'tests/fixtures/llm.py'}:/fixture.py:ro,Z",
-               "localhost/mneme-models:0.1.0", "python", "/fixture.py")
+               MODELS_IMAGE, "python", "/fixture.py")
         podman("run", "-d", "--name", "mneme-e2e-api", *common, "--read-only", "--cap-drop", "all",
                "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "-v", "mneme-e2e-data:/data",
-               "-v", f"{config}:/app/config/default.toml:ro,Z", "--env-file", str(env), "localhost/mneme:0.1.0")
+               "-v", f"{config}:/app/config/default.toml:ro,Z", "--env-file", str(env), API_IMAGE)
         wait_ready()
         session = api("/v1/sessions", {})["id"]
         stream = api(f"/v1/sessions/{session}/chat", {"request_id": str(uuid.uuid4()), "message": "我住在成都。"})

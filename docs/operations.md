@@ -62,7 +62,7 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 
 - `app.env` 和 `neo4j.env` 权限为 0600，配置目录为 0700；不要把 `.env` 或备份纳入 Git。具备本机同用户 Podman 权限的主体能够读取容器环境，按操作系统用户边界管理访问。
 - 修改 API Token 或外部 LLM Key 后，重新执行安装脚本并重启 API。修改 `.env` 中的 Neo4j 密码不会修改已有数据卷里的认证信息，需要通过 Neo4j 管理命令先修改数据库密码，再同步环境配置。
-- 镜像 tag、Rust `Cargo.lock`、Python constraints lock、模型权重及自定义代码 revision 均固定。升级依赖前运行全部常规与真实模型测试，备份 SQLite，再构建并重启。已发布迁移不可改写，新增编号迁移；数据库结构升级后回退二进制需要匹配备份。
+- 预构建镜像仅支持 `linux/amd64`，默认 `latest` 跟随 main。生产部署建议在拉取和安装前设置 `MNEME_IMAGE_TAG=sha-完整提交SHA`，固定 API 与模型镜像到同一提交；Neo4j tag、Rust `Cargo.lock`、Python constraints lock、模型权重及自定义代码 revision 均固定。升级依赖前运行全部常规与真实模型测试，备份 SQLite，再拉取或构建并重启。已发布迁移不可改写，新增编号迁移；数据库结构升级后回退二进制需要匹配备份。
 - 初次成功下载之后模型缓存已经完整，可以给模型 Quadlet 添加 `Environment=HF_HUB_OFFLINE=1`；离线重启仍会从固定缓存加载模型。外部 LLM 仍需要网络。
 - 若替换 Embedding 模型/维度，必须重新计算全部持久化向量并重建 Neo4j 索引，不能仅修改模型服务名称。v1 固定为 Qwen3 1024 维，不暴露不安全的热切换。
 

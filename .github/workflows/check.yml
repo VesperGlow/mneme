@@ -10,7 +10,7 @@ concurrency:
 
 jobs:
   rust:
-    name: Check and build Linux amd64
+    name: Checks
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -31,24 +31,111 @@ jobs:
       - run: cargo test --locked
       - run: python3 -m py_compile services/models/*.py scripts/*.py tests/fixtures/*.py
       - run: node --check web/app.js && node --check scripts/console-browser-test.cjs
-      - name: Build release binary
-        run: cargo build --release --locked
-      - name: Package binary and configuration
+
+  containers:
+    name: Container / ${{ matrix.image }} / amd64
+    needs: rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: mneme
+            suffix: ''
+            file: Containerfile
+          - image: mneme-models
+            suffix: '-models'
+            file: services/models/Containerfile
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image name
+        id: image
         env:
-          COMMIT_SHA: ${{ github.sha }}
+          REPOSITORY: ${{ github.repository }}
+          IMAGE_SUFFIX: ${{ matrix.suffix }}
+        run: echo "name=ghcr.io/${REPOSITORY,,}${IMAGE_SUFFIX}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build amd64 image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          platforms: linux/amd64
+          load: true
+          provenance: false
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Apache-2.0
+          cache-from: type=gha,scope=${{ matrix.image }}-amd64
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-amd64
+      - name: Verify architecture and save Podman-compatible archive
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          ARCHIVE: ${{ matrix.image }}-linux-amd64.tar.gz
         run: |
-          mkdir -p dist/mneme-linux-amd64
-          install -m 755 target/release/mneme dist/mneme-linux-amd64/mneme
-          cp -R config docs README.md LICENSE .env.example dist/mneme-linux-amd64/
-          printf '%s\n' "$COMMIT_SHA" > dist/mneme-linux-amd64/COMMIT
-          tar -C dist -czf dist/mneme-linux-amd64.tar.gz mneme-linux-amd64
+          test "$(docker image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64
+          mkdir -p dist
+          docker save "$IMAGE" | gzip -1 > "dist/$ARCHIVE"
           cd dist
-          sha256sum mneme-linux-amd64.tar.gz > mneme-linux-amd64.tar.gz.sha256
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+      - name: Verify archive and runtime with Podman
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          SERVICE: ${{ matrix.image }}
+        run: |
+          if ! command -v podman >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y podman
+          fi
+          sudo podman load -i "dist/$SERVICE-linux-amd64.tar.gz"
+          test "$(sudo podman image inspect --format '{{.Os}}/{{.Architecture}}' "$IMAGE")" = linux/amd64
+          if [ "$SERVICE" = mneme-models ]; then
+            sudo podman run --rm --read-only --cap-drop all --security-opt no-new-privileges \
+              --tmpfs /tmp:rw,noexec,nosuid,size=256m "$IMAGE" \
+              python -c 'import torch, transformers, fastapi, safetensors; assert torch.version.cuda is None; print("CPU runtime ready")'
+          else
+            trap 'sudo podman rm -f mneme-ci >/dev/null 2>&1 || true' EXIT
+            sudo podman run -d --name mneme-ci --read-only --cap-drop all --security-opt no-new-privileges \
+              --tmpfs /tmp:rw,noexec,nosuid,size=64m -p 127.0.0.1:18080:8080 \
+              -e MNEME_DATABASE=/tmp/ci.sqlite3 \
+              -e MNEME_API_TOKEN=mneme-ci-only-token-01234567890123456789 \
+              -e MNEME_LLM_API_KEY=ci-fixture-only \
+              -e MNEME_NEO4J_PASSWORD=ci-fixture-only-password "$IMAGE"
+            for attempt in $(seq 1 30); do
+              curl -fsS -o /dev/null http://127.0.0.1:18080/health/live && break
+              sleep 1
+            done
+            curl -fsS -o /dev/null http://127.0.0.1:18080/health/live
+            curl -fsS -o /dev/null http://127.0.0.1:18080/console/
+            test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18080/v1/memories)" = 401
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: mneme-linux-amd64
-          path: |
-            dist/mneme-linux-amd64.tar.gz
-            dist/mneme-linux-amd64.tar.gz.sha256
+          name: ${{ matrix.image }}-linux-amd64
+          path: dist/*
           if-no-files-found: error
-          retention-days: 30
+          compression-level: 0
+          retention-days: 7
+      - name: Publish to GHCR
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          docker push "$IMAGE:sha-$COMMIT_SHA"
+          docker push "$IMAGE:latest"
+          printf '### %s (linux/amd64)\n\n`%s:sha-%s`\n' "$IMAGE" "$IMAGE" "$COMMIT_SHA" >> "$GITHUB_STEP_SUMMARY"

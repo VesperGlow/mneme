@@ -3,7 +3,7 @@ Description=Mneme local CPU embedding and reranker
 PartOf=mneme.target
 
 [Container]
-Image=localhost/mneme-models:0.1.0
+Image=ghcr.io/vesperglow/mneme-models:latest
 ContainerName=mneme-models
 Pod=mneme.pod
 Volume=mneme-model-cache.volume:/models

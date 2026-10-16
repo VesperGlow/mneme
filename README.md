@@ -48,11 +48,13 @@ chmod 600 .env
 python3 -c 'import secrets; print(secrets.token_urlsafe(32))'
 # 编辑 .env，填入 API Token、外部 LLM Key、模型名、含 /v1 的 API URL、Neo4j 密码。
 # Neo4j 密码至少 16 字符。每行 KEY=VALUE，不加引号、不使用 shell 展开。
-bash scripts/build.sh
+bash scripts/pull.sh
 bash scripts/install.sh
 ```
 
-首次启动会下载约 2 GB 模型文件，取决于网络需要几分钟。安装脚本保留已有 `~/.config/mneme/config.toml`。如果网络访问 Hugging Face 需要代理，可在模型 Quadlet 中添加对应的代理环境变量，再重启；不要改动固定模型 revision。
+GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vesperglow/mneme` 与 `ghcr.io/vesperglow/mneme-models`。默认使用 `latest`；固定部署版本时，先 `export MNEME_IMAGE_TAG=sha-完整提交SHA`，再执行同样的拉取和安装命令。私有 GHCR 包需要先用具有 `read:packages` 权限的 GitHub Token 执行 `podman login ghcr.io -u VesperGlow`；也可以在 GitHub 包设置中改为公开。首次发布的包默认私有，详见 [GHCR 说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。从源码构建时，用 `bash scripts/build.sh` 代替拉取步骤，仍仅构建 amd64。
+
+首次启动会下载约 2 GB 模型文件，取决于网络需要几分钟。模型权重保存在持久卷中，没有打入镜像。安装脚本保留已有 `~/.config/mneme/config.toml`。如果网络访问 Hugging Face 需要代理，可在模型 Quadlet 中添加对应的代理环境变量，再重启；不要改动固定模型 revision。
 
 所有容器属于 `mneme` Pod，共用网络命名空间：内部地址为 `127.0.0.1:7474` 和 `127.0.0.1:8090`。仅 API 的 `127.0.0.1:8080` 发布到宿主机。需要远程使用时可通过 SSH 转发：`ssh -L 8080:127.0.0.1:8080 user@server`。
 
@@ -142,7 +144,20 @@ SQLite 备份已经包含所有重建记忆和图谱所需的信息。配置/密
 
 ## 开发与验证
 
-GitHub 的 [build 工作流](https://github.com/VesperGlow/mneme/actions/workflows/check.yml) 在推送、Pull Request 或手动触发时执行格式检查、Clippy、测试及 Release 构建。通过后可在该次运行的 Artifacts 中下载 `mneme-linux-amd64`，包含 Linux x86_64 二进制、配置示例、文档、提交标识及 SHA-256 校验文件；构建产物保留 30 天。二进制已内嵌 Console 页面与 SQLite 迁移，适用于 Debian 13。完整 Podman 部署仍按上文从源码构建两个镜像。
+GitHub 的 [build 工作流](https://github.com/VesperGlow/mneme/actions/workflows/check.yml) 在推送、Pull Request 或手动触发时执行格式检查、Clippy 和测试，通过后构建两个 `linux/amd64` 容器。Rust Release 二进制和内嵌 Console 均封装在 API 镜像内。只有 `main` 分支的推送或手动构建会发布 GHCR，标签为 `latest` 和 `sha-完整提交SHA`；Pull Request 仅验证构建。
+
+每次构建还提供 `mneme-linux-amd64` 和 `mneme-models-linux-amd64` 两份镜像归档及 SHA-256 文件，Artifacts 保留 7 天。下载解压 GitHub Artifact ZIP 后，可离线导入（将 `完整提交SHA` 替换为该次运行的 SHA）：
+
+```bash
+sha256sum -c mneme-linux-amd64.tar.gz.sha256
+sha256sum -c mneme-models-linux-amd64.tar.gz.sha256
+podman load -i mneme-linux-amd64.tar.gz
+podman load -i mneme-models-linux-amd64.tar.gz
+export MNEME_IMAGE_TAG=sha-完整提交SHA
+bash scripts/install.sh
+```
+
+归档内使用同一 SHA 标签，无需 GHCR 登录。首次下载模型和拉取 Neo4j 仍需要网络。更新时先拉取目标版本，再安装对应 Quadlet 并执行 `systemctl --user restart mneme.target`；脚本保留配置和持久卷。
 
 ```bash
 cargo fmt --all -- --check
