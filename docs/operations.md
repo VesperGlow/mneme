@@ -15,6 +15,16 @@ curl -sS -H "Authorization: Bearer $MNEME_API_TOKEN" http://127.0.0.1:8080/healt
 
 提供商必须支持普通 Chat Completions 和 SSE 的 `[DONE]` 结束帧，流式终止原因支持 stop/length；提取请求要求完整 stop 响应和 JSON 内容，但不依赖供应商特有的 structured output 参数。`length` 回复会保存为完整已结束轮，用户可能看到因 max_tokens 截短的回答。提取 JSON 失败会退避重试，最终进入死信；如果供应商持续返回解释文本而非 JSON，需要调整模型或提取提示词。
 
+QQ 只显示“收到消息”或持续投递失败时，在项目目录运行：
+
+```bash
+python3 scripts/diagnose.py --chat
+```
+
+诊断直接读取运行中 API 容器的配置，通过现有模型容器在同一个 Pod 网络中检查 QQ Access Token、LLM 模型目录及一次最多 64 token 的流式生成。配置为自动选型时优先读取正在运行的 API 的实际模型。脚本仅输出状态码、固定错误类别及流式完成标记，密钥通过进程标准输入传递，不打印 Token、完整响应、消息或带密钥的 URL，也不跟随重定向。只运行网络和凭证检查可省略 `--chat`。容器名有改动时使用 `--api-container` 和 `--probe-container` 指定；需要 Python 3.11+ 以及两个容器均处于运行状态。
+
+新增日志中的 `stage=llm.chat` 表示生成请求，`stage=qq.token` 表示 QQ 凭证获取，`stage=qq.send` 表示消息发送。`category=timeout/dns/tls/connection_refused/network_unreachable` 定位网络层问题；`category=http` 同时附带 HTTP 状态码；`incomplete_stream` 表示提供商未正常结束流。`QQ reply generation started` 与 `QQ reply delivery started` 分别标记生成和发送阶段。`/帮助` 不调用 LLM，但仍按 QQ 接收队列顺序处理，不能据此跳过正在等待的前一条消息。
+
 修复依赖或配置后：
 
 ```bash

@@ -3,6 +3,7 @@ pub mod chat;
 pub mod config;
 pub mod console;
 pub mod console_store;
+pub mod diagnostics;
 pub mod domain;
 pub mod graph;
 pub mod llm;

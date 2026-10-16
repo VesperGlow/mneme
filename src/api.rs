@@ -187,7 +187,8 @@ async fn chat(
                     result = generation => result,
                     _ = shutdown.changed() => Err(anyhow::anyhow!("shutdown")),
                 };
-                if result.is_err() {
+                if let Err(error) = result {
+                    crate::diagnostics::warn("http.generate", &error);
                     // Partial deltas are provisional; only done means committed output.
                     if app
                         .store

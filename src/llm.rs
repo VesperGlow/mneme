@@ -92,6 +92,9 @@ impl Llm {
         let start = std::time::Instant::now();
         let result = self.complete_json_inner(system, input).await;
         self.metrics.record(start, result.is_ok());
+        if let Err(error) = &result {
+            crate::diagnostics::warn("llm.extract", error);
+        }
         result
     }
     async fn complete_json_inner(&self, system: &str, input: Value) -> Result<Value> {
@@ -125,6 +128,9 @@ impl Llm {
         let start = std::time::Instant::now();
         let result = self.stream_inner(messages, output).await;
         self.metrics.record(start, result.is_ok());
+        if let Err(error) = &result {
+            crate::diagnostics::warn("llm.chat", error);
+        }
         result
     }
     pub async fn health(&self) -> &'static str {

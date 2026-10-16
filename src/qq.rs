@@ -59,15 +59,8 @@ impl Client {
             .post(&self.config.token_url)
             .json(&json!({"appId":self.config.app_id,"clientSecret":self.config.app_secret}))
             .send()
-            .await?;
-        if !response.status().is_success() {
-            tracing::warn!(
-                http_status = response.status().as_u16(),
-                stage = "token",
-                "QQ API request rejected"
-            );
-            anyhow::bail!("QQ token HTTP error");
-        }
+            .await?
+            .error_for_status()?;
         let data: Value = serde_json::from_slice(&bounded_body(response, 65536).await?)?;
         if data.get("code").is_some_and(|c| c.as_i64() != Some(0)) {
             tracing::warn!(
@@ -102,12 +95,18 @@ impl Client {
         sequence: usize,
     ) -> std::result::Result<(), bool> {
         for attempt in 0..2 {
-            let token = self.access_token().await.map_err(|_| false)?;
+            let token = self.access_token().await.map_err(|error| {
+                crate::diagnostics::warn("qq.token", &error);
+                false
+            })?;
             let response = self.http.post(format!("{}/v2/users/{}/messages",self.config.api_base.trim_end_matches('/'),item.user_openid))
                 .header(header::AUTHORIZATION,format!("QQBot {token}"))
                 .header("X-Union-Appid",&self.config.app_id)
                 .json(&json!({"msg_type":0,"content":text,"msg_id":item.message_id,"msg_seq":sequence+1}))
-                .send().await.map_err(|_|false)?;
+                .send().await.map_err(|error| {
+                    crate::diagnostics::warn("qq.send", &error.into());
+                    false
+                })?;
             if response.status() == StatusCode::UNAUTHORIZED && attempt == 0 {
                 *self.token.lock().await = None;
                 continue;
@@ -123,8 +122,14 @@ impl Client {
                     && status != StatusCode::TOO_MANY_REQUESTS
                     && status != StatusCode::UNAUTHORIZED);
             }
-            let bytes = bounded_body(response, 65536).await.map_err(|_| false)?;
-            let data: Value = serde_json::from_slice(&bytes).map_err(|_| false)?;
+            let bytes = bounded_body(response, 65536).await.map_err(|error| {
+                crate::diagnostics::warn("qq.send", &error);
+                false
+            })?;
+            let data: Value = serde_json::from_slice(&bytes).map_err(|error| {
+                crate::diagnostics::warn("qq.send", &error.into());
+                false
+            })?;
             if data.get("code").is_some_and(|c| c.as_i64() != Some(0)) {
                 tracing::warn!(
                     code = data["code"].as_i64(),
@@ -334,11 +339,13 @@ async fn process(
             .await?
         {
             BeginTurn::Started(user) => {
+                tracing::info!(delivery=%item.id, "QQ reply generation started");
                 let (output, receiver) = mpsc::channel(1);
                 drop(receiver);
                 match crate::chat::generate(app, &user, &output).await {
                     Ok(reply) => reply,
-                    Err(_) => {
+                    Err(error) => {
+                        crate::diagnostics::warn("qq.generate", &error);
                         tracing::warn!(delivery=%item.id, "QQ reply generation failed");
                         app.store.fail_turn(&user, "generation_failed").await?;
                         "这次回复没有完成，请稍后重新发送消息。".into()
@@ -363,6 +370,7 @@ async fn process(
         if now() >= item.expires_at {
             return Ok(Err(true));
         }
+        tracing::info!(delivery=%item.id, part=index+1, "QQ reply delivery started");
         if let Err(permanent) = client.send(item, part, index).await {
             return Ok(Err(permanent));
         }
