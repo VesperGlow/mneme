@@ -19,7 +19,11 @@ use axum::{
 use ed25519_dalek::{Signature, Signer, SigningKey};
 use serde_json::{Value, json};
 use std::{
-    sync::Arc,
+    net::{IpAddr, Ipv4Addr},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 use tokio::sync::{Mutex, mpsc};
@@ -28,6 +32,8 @@ use tokio::sync::{Mutex, mpsc};
 pub struct Client {
     config: QqConfig,
     http: reqwest::Client,
+    compatible_http: reqwest::Client,
+    compatible: Arc<AtomicBool>,
     token: Arc<Mutex<Option<Token>>>,
 }
 struct Token {
@@ -39,12 +45,41 @@ impl Client {
         Ok(Self {
             config: config.clone(),
             token: Default::default(),
+            compatible: Default::default(),
             http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(5))
                 .timeout(Duration::from_secs(10))
                 .redirect(reqwest::redirect::Policy::none())
                 .build()?,
+            // Some routes stall during dual-stack/TLS negotiation. Retain certificate and
+            // hostname verification; do not pin DNS addresses or bypass configured proxies.
+            compatible_http: reqwest::Client::builder()
+                .local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+                .http1_only()
+                .min_tls_version(reqwest::tls::Version::TLS_1_2)
+                .max_tls_version(reqwest::tls::Version::TLS_1_2)
+                .connect_timeout(Duration::from_secs(10))
+                .timeout(Duration::from_secs(20))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()?,
         })
+    }
+    pub fn transport(&self) -> &'static str {
+        if self.compatible.load(Ordering::Relaxed) {
+            "ipv4_tls12"
+        } else {
+            "default"
+        }
+    }
+    fn http(&self) -> &reqwest::Client {
+        if self.compatible.load(Ordering::Relaxed) {
+            &self.compatible_http
+        } else {
+            &self.http
+        }
+    }
+    pub async fn check_token(&self) -> Result<()> {
+        self.access_token().await.map(|_| ())
     }
     async fn access_token(&self) -> Result<String> {
         let mut cached = self.token.lock().await;
@@ -54,8 +89,36 @@ impl Client {
         {
             return Ok(token.value.clone());
         }
-        let response = self
-            .http
+        let started = Instant::now();
+        let result = self.fetch_token(self.http()).await;
+        let (value, seconds) = match result {
+            Err(error)
+                if !self.compatible.load(Ordering::Relaxed)
+                    && error
+                        .downcast_ref::<reqwest::Error>()
+                        .is_some_and(|e| e.is_timeout() || e.is_connect() || e.is_body()) =>
+            {
+                crate::diagnostics::warn("qq.token.default", &error);
+                tracing::info!("QQ default connection failed; trying IPv4 TLS 1.2 transport");
+                let token = self.fetch_token(&self.compatible_http).await?;
+                self.compatible.store(true, Ordering::Relaxed);
+                token
+            }
+            result => result?,
+        };
+        *cached = Some(Token {
+            value: value.clone(),
+            expires: Instant::now() + Duration::from_secs(seconds),
+        });
+        tracing::info!(
+            transport = self.transport(),
+            elapsed_ms = started.elapsed().as_millis() as u64,
+            "QQ access token ready"
+        );
+        Ok(value)
+    }
+    async fn fetch_token(&self, http: &reqwest::Client) -> Result<(String, u64)> {
+        let response = http
             .post(&self.config.token_url)
             .json(&json!({"appId":self.config.app_id,"clientSecret":self.config.app_secret}))
             .send()
@@ -82,11 +145,7 @@ impl Client {
             .or_else(|| data["expires_in"].as_str()?.parse().ok())
             .unwrap_or(0);
         ensure!((1..=86400).contains(&seconds), "QQ token expiry invalid");
-        *cached = Some(Token {
-            value: value.into(),
-            expires: Instant::now() + Duration::from_secs(seconds),
-        });
-        Ok(value.into())
+        Ok((value.into(), seconds))
     }
     async fn send(
         &self,
@@ -99,7 +158,10 @@ impl Client {
                 crate::diagnostics::warn("qq.token", &error);
                 false
             })?;
-            let response = self.http.post(format!("{}/v2/users/{}/messages",self.config.api_base.trim_end_matches('/'),item.user_openid))
+            if now() >= item.expires_at {
+                return Err(true);
+            }
+            let response = self.http().post(format!("{}/v2/users/{}/messages",self.config.api_base.trim_end_matches('/'),item.user_openid))
                 .header(header::AUTHORIZATION,format!("QQBot {token}"))
                 .header("X-Union-Appid",&self.config.app_id)
                 .json(&json!({"msg_type":0,"content":text,"msg_id":item.message_id,"msg_seq":sequence+1}))
@@ -422,5 +484,92 @@ pub async fn worker(app: App) {
             }
             tracing::warn!(delivery=%item.id,"QQ delivery deferred or dead; inspect /v1/qq/status");
         }
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+
+    async fn fixture(deny: bool) -> (Client, Arc<AtomicUsize>, tokio::task::JoinHandle<()>) {
+        let requests = Arc::new(AtomicUsize::new(0));
+        let calls = requests.clone();
+        let router = Router::new()
+            .route("/token", post(move || {
+                let calls = calls.clone();
+                async move {
+                    let attempt = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                    if deny {
+                        return (StatusCode::UNAUTHORIZED, Json(json!({"code":401})));
+                    }
+                    if attempt == 1 {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                    }
+                    (StatusCode::OK, Json(json!({"access_token":format!("fixture-token-{attempt}"),"expires_in":"7200"})))
+                }
+            }))
+            .route("/v2/users/fixture-owner/messages", post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+                assert_eq!(headers["authorization"], "QQBot fixture-token-2");
+                assert_eq!(body["msg_id"], "fixture-message");
+                assert_eq!(body["msg_seq"], 1);
+                Json(json!({"id":"fixture-sent"}))
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let config = QqConfig {
+            app_id: "12345678".into(),
+            app_secret: "fixture-secret".into(),
+            api_base: base.clone(),
+            token_url: format!("{base}/token"),
+            ..QqConfig::default()
+        };
+        let mut client = Client::new(&config).unwrap();
+        client.http = reqwest::Client::builder()
+            .timeout(Duration::from_millis(50))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        (client, requests, server)
+    }
+
+    #[tokio::test]
+    async fn timeout_falls_back_once_and_shares_token_and_transport_with_delivery() {
+        let (client, requests, server) = fixture(false).await;
+        let (first, second) = tokio::join!(client.check_token(), client.check_token());
+        first.unwrap();
+        second.unwrap();
+        assert_eq!(client.transport(), "ipv4_tls12");
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+        let item = Delivery {
+            id: "fixture-delivery".into(),
+            message_id: "fixture-message".into(),
+            user_openid: "fixture-owner".into(),
+            content: "fixture".into(),
+            session_id: "fixture-session".into(),
+            reply: Some("fixture-reply".into()),
+            next_chunk: 0,
+            attempts: 0,
+            available_at: now(),
+            expires_at: now() + 290,
+        };
+        client.send(&item, "fixture-reply", 0).await.unwrap();
+        client.check_token().await.unwrap();
+        assert_eq!(requests.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn http_auth_rejection_does_not_retry_another_transport() {
+        let (client, requests, server) = fixture(true).await;
+        let error = client.check_token().await.unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<reqwest::Error>().unwrap().status(),
+            Some(StatusCode::UNAUTHORIZED)
+        );
+        assert_eq!(client.transport(), "default");
+        assert_eq!(requests.load(Ordering::SeqCst), 1);
+        server.abort();
     }
 }

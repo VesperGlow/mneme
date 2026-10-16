@@ -246,6 +246,62 @@ async fn signed_challenge_auth_freshness_and_route_isolation() {
 }
 
 #[tokio::test]
+async fn runtime_qq_check_uses_real_client_without_binding_ports_or_opening_the_database() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, upstream) = common::fake_services().await;
+    let (platform, qq_base, server) = platform().await;
+    let cfg = config(&temp, &base, &qq_base);
+    let (_, rx) = watch::channel(false);
+    let app = App::new(cfg, rx).await.unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config_path = temp.path().join("config.toml");
+    std::fs::write(
+        &config_path,
+        format!(
+            "{}\n[qq]\napi_base=\"{qq_base}\"\ntoken_url=\"{qq_base}/app/getAppAccessToken\"\n",
+            include_str!("../config/default.toml")
+        ),
+    )
+    .unwrap();
+    let output = tokio::time::timeout(
+        Duration::from_secs(5),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_mneme"))
+            .arg("--check-qq")
+            .current_dir(temp.path())
+            .kill_on_drop(true)
+            .env("MNEME_CONFIG", config_path)
+            .env("MNEME_DATABASE", &app.config.database)
+            .env("MNEME_LISTEN", listener.local_addr().unwrap().to_string())
+            .env("MNEME_API_TOKEN", TOKEN)
+            .env("MNEME_LLM_API_KEY", "fixture")
+            .env("MNEME_NEO4J_PASSWORD", "fixture-password-only")
+            .env("MNEME_QQ_APP_ID", APP_ID)
+            .env("MNEME_QQ_APP_SECRET", SECRET)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let result: Value = serde_json::from_str(stdout.lines().last().unwrap()).unwrap();
+    assert_eq!(
+        result,
+        json!({"qq_token":true,"transport":"default","failure":null})
+    );
+    assert!(!stdout.contains(SECRET));
+    assert!(!stdout.contains("fake-token"));
+    assert_eq!(platform.tokens.load(Ordering::SeqCst), 1);
+    assert_eq!(app.store.qq_status(APP_ID).await.unwrap()["bound"], false);
+    upstream.abort();
+    server.abort();
+}
+
+#[tokio::test]
 async fn first_private_message_dedup_restart_cross_session_memory_and_token_refresh() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, upstream) = common::fake_services().await;

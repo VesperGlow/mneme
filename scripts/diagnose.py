@@ -139,7 +139,7 @@ def run_probe(payload):
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         llm_future, qq_future = pool.submit(llm), pool.submit(qq)
-        return {'llm': llm_future.result(), 'qq_token': qq_future.result()}
+        return {'probe_runtime': 'python', 'llm': llm_future.result(), 'qq_token': qq_future.result()}
 
 
 def main():

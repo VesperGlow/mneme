@@ -15,6 +15,21 @@ async fn main() -> Result<()> {
         .map(PathBuf::from)
         .unwrap_or_else(|| "config/default.toml".into());
     let config = Config::load(&path)?;
+    if std::env::args().nth(1).as_deref() == Some("--check-qq") {
+        anyhow::ensure!(config.qq.enabled(), "QQ is not configured");
+        let client = mneme::qq::Client::new(&config.qq)?;
+        let result = client.check_token().await;
+        let failure = result.as_ref().err().map(mneme::diagnostics::describe);
+        println!(
+            "{}",
+            serde_json::json!({"qq_token":result.is_ok(),"transport":client.transport(),"failure":failure})
+        );
+        anyhow::ensure!(
+            result.is_ok(),
+            "QQ connectivity check failed; see diagnostic result"
+        );
+        return Ok(());
+    }
     let listener = tokio::net::TcpListener::bind(&config.listen).await?;
     let qq_listener = if config.qq.enabled() {
         Some(tokio::net::TcpListener::bind(&config.qq.listen).await?)

@@ -23,6 +23,14 @@ python3 scripts/diagnose.py --chat
 
 诊断直接读取运行中 API 容器的配置，通过现有模型容器在同一个 Pod 网络中检查 QQ Access Token、LLM 模型目录及一次最多 64 token 的流式生成。配置为自动选型时优先读取正在运行的 API 的实际模型。脚本仅输出状态码、固定错误类别及流式完成标记，密钥通过进程标准输入传递，不打印 Token、完整响应、消息或带密钥的 URL，也不跟随重定向。只运行网络和凭证检查可省略 `--chat`。容器名有改动时使用 `--api-container` 和 `--probe-container` 指定；需要 Python 3.11+ 以及两个容器均处于运行状态。
 
+Python 检查通过但 Rust 仍在 `qq.token` 超时时，直接使用运行容器内的真实 Rust 客户端检查：
+
+```bash
+podman exec mneme-api mneme --check-qq
+```
+
+此命令读取容器现有配置，输出 `qq_token`、成功连接方式 `transport` 和经过筛选的 `failure`，不打开数据库或监听新端口。QQ 默认连接遇到网络或握手错误后，会自动尝试 IPv4、HTTP/1.1、TLS 1.2 的兼容连接，连接超时 10 秒、请求总超时 20 秒；成功后获取 Token 和发送消息共用该连接方式。保留证书与域名验证，继续遵循已配置的代理，不写死服务 IP。HTTP 鉴权拒绝和 API 业务错误不会触发切换。Python 的成功结果用于对比网络和协议，不能代替 Rust 检查或真实 QQ 消息发送验收。
+
 新增日志中的 `stage=llm.chat` 表示生成请求，`stage=qq.token` 表示 QQ 凭证获取，`stage=qq.send` 表示消息发送。`category=timeout/dns/tls/connection_refused/network_unreachable` 定位网络层问题；`category=http` 同时附带 HTTP 状态码；`incomplete_stream` 表示提供商未正常结束流。`QQ reply generation started` 与 `QQ reply delivery started` 分别标记生成和发送阶段。`/帮助` 不调用 LLM，但仍按 QQ 接收队列顺序处理，不能据此跳过正在等待的前一条消息。
 
 修复依赖或配置后：
