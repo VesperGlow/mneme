@@ -13,7 +13,8 @@ NoNewPrivileges=true
 DropCapability=ALL
 ReadOnly=true
 Tmpfs=/tmp:rw,noexec,nosuid,size=512m
-PidsLimit=256
+PidsLimit=512
+PodmanArgs=--memory=1536m --cpus=1.5
 SeccompProfile=%h/.config/containers/systemd/mneme-tools-seccomp.json
 
 [Service]
@@ -21,7 +22,5 @@ Restart=on-failure
 RestartSec=5
 TimeoutStartSec=120
 TimeoutStopSec=30
-MemoryMax=1536M
-CPUQuota=150%
 CPUWeight=40
 UMask=0077

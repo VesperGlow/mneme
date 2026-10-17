@@ -4,10 +4,21 @@ import http from 'node:http';
 import { BrowserTools } from '../browser.mjs';
 import { NetworkPolicy, ToolError } from '../security.mjs';
 
+test('session creation is bounded and a late context is disposed', async()=>{
+  const browser=new BrowserTools({timeoutMs:50});let release,closed=0;
+  browser.browser={isConnected:()=>true,newContext:()=>new Promise(resolve=>{release=resolve;})};
+  try{
+    await assert.rejects(browser.execute('11111111-1111-4111-8111-111111111111',{action:'navigate',url:'https://example.org'}),/browser_session_timeout/);
+    assert.equal(browser.sessions.size,0);
+    release({close:async()=>{closed++;}});await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(closed,1,'a context arriving after the deadline must not leak');
+  }finally{browser.browser=null;await browser.close();}
+});
+
 test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expiry and SSRF', {skip:process.env.MNEME_BROWSER_TEST!=='1',timeout:60000}, async()=>{
   let privateReached=0;
   const server=http.createServer((req,res)=>{
-    if(req.url==='/slow'){res.writeHead(200,{'content-type':'text/html'});res.write('<html>');return;}
+    if(req.url==='/slow'){res.writeHead(200,{'content-type':'text/html; charset=utf-8'});res.write(`<html><head><title>Streaming page</title></head><body><article><p>${'正文已经加载，可以读取。'.repeat(20)}</p></article>`);return;}
     if(req.url==='/private'){privateReached++;return res.end('pod-secret');}
     if(req.url==='/redirect'){res.writeHead(302,{location:`http://127.0.0.1:${server.address().port}/private`});return res.end();}
     res.setHeader('content-type','text/html; charset=utf-8');
@@ -27,18 +38,28 @@ test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expi
     await diagnostic.close();
     const opened=await browser.execute(session,{action:'navigate',url:'http://fixture.example/'});
     assert.match(opened.text,/动态浏览测试/);assert.equal(browser.sandbox,true);assert.equal(await browser.sessions.get(session).page.evaluate(()=>typeof RTCPeerConnection),'undefined');
-    await assert.rejects(browser.execute('22222222-2222-4222-8222-222222222222',{action:'read'}),/browser_capacity/);
+    await assert.rejects(browser.execute('22222222-2222-4222-8222-222222222222',{action:'navigate',url:'http://fixture.example/'}),/browser_capacity/);
     let input=opened.elements.find(e=>e.label==='关键词');assert(input);
     const typed=await browser.execute(session,{action:'type',element:input.ref,text:'浏览器真实输入'});
     const button=typed.elements.find(e=>e.label==='运行查询');assert(button);
     const clicked=await browser.execute(session,{action:'click',element:button.ref});assert.match(clicked.text,/动态结果：浏览器真实输入/);
     await browser.execute(session,{action:'scroll',delta_y:600});
     const screenshot=await browser.execute(session,{action:'screenshot'});assert.equal(screenshot.image.mime,'image/jpeg');assert(screenshot.image.data.length>1000);
+    const live=browser.sessions.get(session);live.page.setDefaultTimeout(50);live.refs.set('e999',live.page.locator('#missing-element'));
+    await assert.rejects(browser.execute(session,{action:'click',element:'e999'}),/browser_timeout/);
+    assert.equal(browser.sessions.get(session),live,'an ordinary action timeout must keep the page');
+    live.page.setDefaultTimeout(8000);assert.match((await browser.execute(session,{action:'read'})).text,/动态结果/);
     assert.equal(privateReached,0,'subresources must not reach internal services');
     await assert.rejects(browser.execute(session,{action:'navigate',url:'http://fixture.example/redirect'}));assert.equal(privateReached,0,'redirect must be blocked');
     await browser.execute(session,{action:'navigate',url:'http://fixture.example/'});
     await new Promise(resolve=>setTimeout(resolve,50));await browser.reap();assert.equal(browser.sessions.size,0);
-    browser.timeoutMs=3000;await assert.rejects(browser.execute(session,{action:'navigate',url:'http://fixture.example/slow'}),/timeout/);assert.equal(browser.sessions.size,0);
+    await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate_or_search/);
+    browser.timeoutMs=3000;const partial=await browser.execute(session,{action:'navigate',url:'http://fixture.example/slow'});
+    assert.equal(partial.load_incomplete,true);assert.match(partial.text,/正文已经加载/);assert.equal(browser.sessions.size,1);
+    assert.match((await browser.execute(session,{action:'read'})).text,/正文已经加载/);
+    const snapshot=browser.snapshot;browser.snapshot=()=>new Promise(()=>{});browser.timeoutMs=100;
+    await assert.rejects(browser.execute(session,{action:'wait',wait_ms:0}),/tool_timeout/);assert.equal(browser.sessions.size,0);
+    browser.snapshot=snapshot;await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate_or_search/);
     const child=browser.process;
     child.kill=()=>{throw Object.assign(new Error('fixture: signals denied'),{code:'EACCES'});};
     await browser.close();assert(child.exitCode!==null || child.signalCode!==null,'CDP must terminate Chromium without signal privileges');

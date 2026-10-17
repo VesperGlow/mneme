@@ -36,6 +36,8 @@ MNEME_TOOLS_TOKEN=本机独立随机工具凭证 node services/tools/app.mjs
 
 服务通过 Playwright 的 `connectOverCDP` 控制真实 Headless Chromium。`search` 打开 Bing 页面，填写搜索框并按 Enter，不调用任何搜索 API。浏览器 DOM 返回标题、正文、结构化搜索结果、来源链接、可操作元素引用和读取时间；正文提取复用 Mozilla Readability。搜索结果中的 Bing 跳转链接会解析为实际来源地址。搜索引擎出现验证码时返回 `search_verification_required`，不绕过人机验证；部分结果只在 DOM 中存在时标记 `rendering_limited`，由 Agent 根据实际读到的资料继续浏览。可以在工具容器中设置 `MNEME_SEARCH_ENGINE=duckduckgo` 改用其 HTML 搜索表单。
 
+导航在新文档提交后，最多等待 4 秒的 DOMContentLoaded 和 2.5 秒的正文渲染；慢脚本或持续传输的页面可返回已加载正文，并标记 `load_incomplete`，无可读正文及元素时标记 `rendering_pending`。元素引用在一次 DOM 快照中批量生成，避免逐元素 CDP 往返。浏览器启动和会话创建分别有 10 秒超时，会话创建耗时计入单次操作的 25 秒预算；超时后才返回的上下文也会被关闭。普通操作超时保留页面，便于 `read`、`wait` 或换站恢复；整个调用超过 25 秒时才关闭上下文以取消挂起任务。会话不存在或已回收时，读取和交互明确返回 `browser_session_missing_navigate_or_search`，必须重新导航或搜索，不会返回空白页假装读取成功。错误日志包含阶段和会话是否已关闭，便于区分操作、内容提取与截图超时。
+
 统一工具目录位于 `services/tools/catalog.json`，HTTP 服务与 Rust Agent 共用。`browser` 支持：
 
 | action | 参数 / 结果 |
@@ -104,7 +106,7 @@ SSE 保留 meta/delta/done/error，新增 tool 事件，包含 id、name、actio
 - 浏览器所有 HTTP/HTTPS 流量经过本地代理。每次连接重新解析 DNS、检查全部地址，只允许公网单播地址的 80/443 端口，并连接已检查的 IP，避免 DNS 重绑定；跳转和子资源同样检查。回环、私网、链路本地、云元数据、IPv4 映射地址及保留网段被拒绝。
 - 禁用隐式 loopback 代理绕过、QUIC、非代理 WebRTC、WebSocket、Service Worker 和下载；页面中的 WebRTC/WebTransport 构造器也禁用。不开放任意 CDP 命令给模型。
 - 非 root 用户运行，Chromium user namespace 沙箱始终启用，启动失败即报错，生产没有 --no-sandbox 降级。定制 seccomp 仅为沙箱允许 clone/clone3/unshare/setns/chroot，保留其余默认过滤；不增加 SYS_ADMIN、privileged、宿主网络或 IPC 权限。
-- 容器只读根目录、全部 capabilities 移除、no-new-privileges；/tmp 512 MiB，PIDs 256，内存 1536 MiB，CPU 上限 150%。工具临时浏览器文件随上下文/进程清理，不挂载主数据卷。
+- 容器只读根目录、全部 capabilities 移除、no-new-privileges；/tmp 512 MiB，PIDs（含线程）512，内存 1536 MiB，CPU 上限 150%。内存及 CPU 通过容器参数限制实际工作负载，不能只限制启动 Podman 的 systemd 服务。浏览器启动后关闭未使用的空白标签页，减少渲染进程占用；工具临时浏览器文件随上下文/进程清理，不挂载主数据卷。
 - 最多 4 个浏览器上下文、同会话串行，最多 4 个并发重操作、128 个代理连接；动作超时 25 秒，空闲 10 分钟回收，每 15 秒检查。API 默认每轮最多 200 个工具调用、每请求 30 秒、整轮 1800 秒，可在 [tools] 或相应环境变量中调整有界限制。
 
 Ubuntu 等宿主机的 AppArmor/用户命名空间策略可能阻止沙箱。此时应修正宿主机策略，不能通过关闭沙箱或赋予宿主机管理权限来运行。Debian 13 rootless Podman 已做实际验证。升级前备份 SQLite，启动时自动执行 0004_tools.sql；原有迁移不改写。Agent 重置会删除图片/调用记录并设置浏览器清理标记，后续第一次工具操作先关闭旧上下文，工具离线不会丢失清理需求。

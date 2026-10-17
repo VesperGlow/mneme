@@ -12,7 +12,7 @@ podman pod create --name "$mneme_tools_pod" >/dev/null
 podman run -d --name "$mneme_tools_container" --pod "$mneme_tools_pod" \
     --read-only --user 1000:1000 --cap-drop all --security-opt no-new-privileges \
     --security-opt "seccomp=$PWD/deploy/quadlet/mneme-tools-seccomp.json" \
-    --tmpfs /tmp:rw,noexec,nosuid,size=512m --pids-limit 256 --memory 1536m --cpus 1.5 \
+    --tmpfs /tmp:rw,noexec,nosuid,size=512m --pids-limit 512 --memory 1536m --cpus 1.5 \
     -e "MNEME_TOOLS_TOKEN=$mneme_tools_token" "$mneme_tools_image" >/dev/null
 for attempt in $(seq 1 30); do
     if podman exec "$mneme_tools_container" node -e "fetch('http://127.0.0.1:8091/health',{headers:{Authorization:'Bearer $mneme_tools_token'}}).then(async r=>{const b=await r.json();if(!r.ok||!b.ready||!b.sandbox)process.exit(1)}).catch(()=>process.exit(1))" >/dev/null 2>&1; then break; fi
@@ -32,6 +32,6 @@ assert.equal(response.status,400);assert.equal((await response.json()).error,"bl
 console.log("PASS: shared Pod localhost HTTP, independent auth, Chromium sandbox, internal Neo4j SSRF rejection, no tool/CDP port publishing");'
 podman run --rm --network none --read-only --user 1000:1000 --cap-drop all \
     --security-opt no-new-privileges --security-opt "seccomp=$PWD/deploy/quadlet/mneme-tools-seccomp.json" \
-    --tmpfs /tmp:rw,noexec,nosuid,size=512m --pids-limit 256 --memory 1536m --cpus 1.5 \
+    --tmpfs /tmp:rw,noexec,nosuid,size=512m --pids-limit 512 --memory 1536m --cpus 1.5 \
     -v "$PWD/services/tools/test:/app/test:ro" -e MNEME_BROWSER_TEST=1 \
     --entrypoint node "$mneme_tools_image" --test --test-reporter=tap --test-timeout=60000 /app/test/security.test.mjs /app/test/browser.test.mjs

@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -8,6 +9,11 @@ import { ToolError, NetworkPolicy, startEgressProxy } from './security.mjs';
 const require = createRequire(import.meta.url);
 const readabilitySource = await readFile(require.resolve('@mozilla/readability/Readability.js'), 'utf8');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+async function deadline(operation, ms, code) {
+  let timer;
+  try { return await Promise.race([operation, new Promise((_, reject) => { timer = setTimeout(() => reject(new ToolError(code, 504)), ms); })]); }
+  finally { clearTimeout(timer); }
+}
 
 export class BrowserTools {
   constructor({ policy = new NetworkPolicy(), executablePath = '/usr/bin/chromium', maxSessions = 4, ttlMs = 600000, timeoutMs = 25000, engine = 'bing' } = {}) {
@@ -40,6 +46,8 @@ export class BrowserTools {
           const [port, path] = endpoint.trim().split('\n');
           this.browser = await chromium.connectOverCDP(`ws://127.0.0.1:${port}${path}`, { timeout: 10000 });
           this.browser.on('disconnected', () => { this.browser = null; this.sessions.clear(); });
+          // The startup tab consumes a renderer but is never used by a session.
+          for (const context of this.browser.contexts()) for (const page of context.pages()) await page.close();
           return;
         }
         await delay(100);
@@ -48,15 +56,17 @@ export class BrowserTools {
     } catch (error) { await this.stopBrowser(); throw error; }
   }
   async session(id) {
-    await this.start();
+    await deadline(this.start(), Math.min(10000, this.timeoutMs), 'browser_start_timeout');
     let session = this.sessions.get(id);
     if (session) return session;
     if (this.sessions.size >= this.maxSessions) throw new ToolError('browser_capacity', 429);
     // Reserve before awaiting context creation, so concurrent sessions cannot exceed the cap.
-    session = { busy: true, lastUsed: Date.now(), context: null, page: null, refs: new Map() };
+    session = { busy: true, lastUsed: Date.now(), context: null, page: null, refs: new Map(), refAttribute: `data-mneme-${randomUUID()}` };
     this.sessions.set(id, session);
-    try {
+    let expired = false;
+    const initialize = async () => {
       const context = await this.browser.newContext({ viewport: { width: 1280, height: 900 }, locale: 'zh-CN', serviceWorkers: 'block', acceptDownloads: false, ignoreHTTPSErrors: false });
+      if (expired || this.sessions.get(id) !== session) { await context.close(); throw new ToolError('browser_session_timeout', 504); }
       session.context = context;
       await context.route('**/*', async route => {
         try {
@@ -77,12 +87,15 @@ export class BrowserTools {
       await context.addInitScript(() => { for (const name of ['RTCPeerConnection','webkitRTCPeerConnection','WebTransport']) Object.defineProperty(globalThis, name, { value: undefined, writable: false, configurable: false }); });
       context.on('page', page => { if (session.page && page !== session.page) page.close().catch(() => {}); });
       session.page = await context.newPage();
+      if (expired) throw new ToolError('browser_session_timeout', 504);
       session.page.setDefaultTimeout(8000); session.page.setDefaultNavigationTimeout(this.timeoutMs - 2000);
       session.page.on('download', download => download.cancel().catch(() => {}));
       session.page.on('dialog', dialog => dialog.dismiss().catch(() => {}));
       session.busy = false;
       return session;
-    } catch (error) { await this.closeSession(id); throw error; }
+    };
+    try { return await deadline(initialize(), Math.min(10000, this.timeoutMs), 'browser_session_timeout'); }
+    catch (error) { expired = true; await this.closeSession(id); throw error; }
   }
   async closeSession(id) {
     const session = this.sessions.get(id); this.sessions.delete(id);
@@ -92,25 +105,31 @@ export class BrowserTools {
     for (const [id, session] of this.sessions) if (!session.busy && Date.now() - session.lastUsed > this.ttlMs) await this.closeSession(id);
   }
   async execute(id, input) {
+    const started = Date.now();
     if (input.action === 'close') { await this.closeSession(id); return { closed: true }; }
+    if (!this.sessions.has(id) && !['search', 'navigate'].includes(input.action)) throw new ToolError('browser_session_missing_navigate_or_search', 409);
     const session = await this.session(id);
     if (session.busy) throw new ToolError('browser_session_busy', 409);
     session.busy = true; session.lastUsed = Date.now();
-    let timer;
+    let timer, timedOut = false, phase = 'action';
     const operation = async () => {
       const page = session.page;
       const element = () => { const handle = session.refs.get(input.element); if (!handle) throw new ToolError('element_not_found_read_again'); return handle; };
+      let navigation = {};
       switch (input.action) {
         case 'search': {
           const engine = this.engine === 'duckduckgo' ? { url: 'https://html.duckduckgo.com/html/', selector: 'input[name="q"]' } : { url: 'https://www.bing.com/', selector: 'textarea[name="q"],input[name="q"]' };
           await this.policy.resolve(engine.url);
-          await page.goto(engine.url, { waitUntil: 'domcontentloaded' });
+          await this.navigate(page, engine.url);
           const box = page.locator(engine.selector).first();
-          await box.fill(input.query); await box.press('Enter');
-          await page.waitForLoadState('domcontentloaded'); await delay(1000);
+          await box.fill(input.query);
+          // Register before Enter: waiting for the old document's load state can
+          // otherwise succeed before the results navigation has even started.
+          await Promise.all([page.waitForURL(url => url.pathname.includes('search') || url.searchParams.has('q'), { waitUntil: 'domcontentloaded', timeout: Math.min(10000, this.timeoutMs - 2000) }), box.press('Enter')]);
+          await page.waitForSelector('li.b_algo, [data-testid="result"], article[data-testid]', { state: 'attached', timeout: 3500 }).catch(error => { if (error.name !== 'TimeoutError') throw error; });
           break;
         }
-        case 'navigate': await this.policy.resolve(input.url); await page.goto(input.url, { waitUntil: 'domcontentloaded' }); await delay(400); break;
+        case 'navigate': await this.policy.resolve(input.url); navigation = await this.navigate(page, input.url); break;
         case 'click': await element().evaluate(el => { if (el.tagName === 'A') el.removeAttribute('target'); }); await element().click(); await delay(500); break;
         case 'type': if (await element().evaluate(el => el.tagName === 'INPUT' && ['password','file'].includes(el.type))) throw new ToolError('sensitive_input_blocked'); await element().fill(input.text); if (input.press_enter) { await element().press('Enter'); await delay(500); } break;
         case 'scroll': await page.mouse.wheel(0, input.delta_y ?? 700); await delay(250); break;
@@ -119,9 +138,11 @@ export class BrowserTools {
         case 'read': case 'screenshot': break;
         default: throw new ToolError('unknown_action');
       }
-      const snapshot = await this.snapshot(session);
+      phase = 'snapshot';
+      const snapshot = { ...await this.snapshot(session), ...navigation };
       if (input.action === 'search' && !snapshot.results.length && /unfortunately, bots|unusual traffic|异常流量|confirm.*human|人机验证/i.test(snapshot.text)) throw new ToolError('search_verification_required', 502);
       if (input.action === 'screenshot') {
+        phase = 'screenshot';
         const bytes = await page.screenshot({ type: 'jpeg', quality: 75, fullPage: false, timeout: 8000 });
         if (bytes.length > 2 * 1024 * 1024) throw new ToolError('screenshot_too_large');
         snapshot.image = { mime: 'image/jpeg', data: bytes.toString('base64'), width: 1280, height: 900 };
@@ -129,42 +150,61 @@ export class BrowserTools {
       return snapshot;
     };
     try {
-      return await Promise.race([operation(), new Promise((_, reject) => { timer = setTimeout(() => reject(new ToolError('tool_timeout', 504)), this.timeoutMs); })]);
+      return await Promise.race([operation(), new Promise((_, reject) => { timer = setTimeout(() => { timedOut = true; reject(new ToolError('tool_timeout', 504)); }, Math.max(1, this.timeoutMs - (Date.now() - started))); })]);
     } catch (error) {
-      // Closing the context actually cancels outstanding CDP/navigation work after a timeout.
-      await this.closeSession(id);
+      // An outer deadline must cancel outstanding CDP work. Ordinary action
+      // errors (including Playwright's own timeout) leave the page recoverable.
+      if (timedOut || session.page.isClosed()) await this.closeSession(id);
+      console.log(JSON.stringify({ event: 'browser_action_error', action: input.action, phase, session_closed: !this.sessions.has(id), error: error instanceof ToolError ? error.code : error.name === 'TimeoutError' ? 'browser_timeout' : 'browser_action_failed' }));
       if (error instanceof ToolError) throw error;
       throw new ToolError(error.name === 'TimeoutError' ? 'browser_timeout' : 'browser_action_failed', 502);
     } finally { clearTimeout(timer); session.busy = false; session.lastUsed = Date.now(); }
   }
+  async navigate(page, url) {
+    // Commit confirms this is the new document. A page can remain readable even
+    // when a slow script or streaming response delays DOMContentLoaded forever.
+    const response = await page.goto(url, { waitUntil: 'commit', timeout: Math.min(10000, this.timeoutMs - 2000) });
+    let load_incomplete = false;
+    try { await page.waitForLoadState('domcontentloaded', { timeout: Math.min(4000, Math.max(500, this.timeoutMs / 4)) }); }
+    catch (error) { if (error.name !== 'TimeoutError') throw error; load_incomplete = true; }
+    await page.waitForFunction(() => (document.body?.innerText.trim().length || 0) > 80 || document.querySelector('input:not([type=hidden]),textarea'), null, { timeout: Math.min(2500, this.timeoutMs / 4) }).catch(error => { if (error.name !== 'TimeoutError') throw error; });
+    return { http_status: response?.status(), load_incomplete };
+  }
   async snapshot(session) {
     const page = session.page;
     const url = page.url();
+    // Validate the final URL too, including error documents after blocked redirects.
     if (url !== 'about:blank') await this.policy.resolve(url);
-    const document = await page.evaluate(source => {
+    const document = await page.evaluate(({ source, refAttribute }) => {
       // Mozilla Readability parses a clone; the original DOM stays available for interaction.
       const Readability = new Function(`${source}; return Readability;`)();
-      const article = new Readability(document.cloneNode(true), { charThreshold: 80 }).parse();
-      const text = (article?.textContent || document.body?.innerText || '').replace(/\n{3,}/g, '\n\n').trim().slice(0, 14000);
+      const bodyText = document.body?.innerText || '';
+      let article;
+      if (document.getElementsByTagName('*').length < 12000) {
+        try { article = new Readability(document.cloneNode(true), { charThreshold: 80, maxElemsToParse: 12000 }).parse(); } catch { /* Fall back to rendered text. */ }
+      }
+      const text = (article?.textContent || bodyText).replace(/\n{3,}/g, '\n\n').trim().slice(0, 14000);
       const links = [...document.querySelectorAll('a[href]')].map(a => ({ title: (a.innerText || a.getAttribute('aria-label') || '').trim().slice(0, 180), url: a.href })).filter(a => a.title && /^https?:/.test(a.url)).slice(0, 60);
       const results = [...document.querySelectorAll('li.b_algo, [data-testid="result"], article[data-testid]')].map(block => {
         const link = block.querySelector('h2 a, h3 a, a[data-testid="result-title-a"]');
         return link ? { title: (link.innerText || link.textContent || '').trim().slice(0, 180), url: (() => { try { const u = new URL(link.href); const encoded = u.searchParams.get('u'); if (u.hostname.endsWith('bing.com') && u.pathname.startsWith('/ck/') && encoded?.startsWith('a1')) { const decoded = atob(encoded.slice(2).replace(/-/g, '+').replace(/_/g, '/')); if (/^https?:\/\//.test(decoded)) return decoded; } } catch {} return link.href; })(), snippet: (block.innerText || block.textContent || '').trim().slice(0, 700) } : null;
       }).filter(Boolean).slice(0, 10);
-      return { title: (article?.title || document.title).slice(0, 300), text, links, results, rendering_limited: results.length > 0 && results.every(result => !document.body.innerText.includes(result.title)) };
-    }, readabilitySource);
-    for (const handle of session.refs.values()) await handle.dispose().catch(() => {});
+      // One CDP evaluation replaces hundreds of sequential handle operations,
+      // and locators do not keep detached DOM nodes alive between snapshots.
+      for (const old of document.querySelectorAll(`[${refAttribute}]`)) old.removeAttribute(refAttribute);
+      const elements = [];
+      for (const el of [...document.querySelectorAll('a[href],button,input:not([type=hidden]),textarea,select,[role=button]')].slice(0, 300)) {
+        if (elements.length >= 70) break;
+        const bounds = el.getBoundingClientRect();
+        if (bounds.width <= 0 || bounds.height <= 0 || getComputedStyle(el).visibility !== 'visible') continue;
+        const ref = `e${elements.length + 1}`; el.setAttribute(refAttribute, ref);
+        elements.push({ ref, tag: el.tagName.toLowerCase(), label: (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || el.getAttribute('name') || '').trim().slice(0, 120), type: el.getAttribute('type') || '', url: el.tagName === 'A' ? el.href : undefined });
+      }
+      return { title: (article?.title || document.title).slice(0, 300), text, links, results, elements, rendering_pending: text.length < 80 && elements.length === 0, rendering_limited: results.length > 0 && results.every(result => !bodyText.includes(result.title)) };
+    }, { source: readabilitySource, refAttribute: session.refAttribute });
     session.refs.clear();
-    const elements = [];
-    const handles = await page.$$('a[href],button,input:not([type=hidden]),textarea,select,[role=button]');
-    for (const handle of handles.slice(300)) await handle.dispose();
-    for (const handle of handles.slice(0, 300)) {
-      if (elements.length >= 70 || !await handle.isVisible().catch(() => false)) { await handle.dispose(); continue; }
-      const info = await handle.evaluate(el => ({ tag: el.tagName.toLowerCase(), label: (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || el.getAttribute('name') || '').trim().slice(0, 120), type: el.getAttribute('type') || '', url: el.tagName === 'A' ? el.href : undefined }));
-      const ref = `e${elements.length + 1}`;
-      session.refs.set(ref, handle); elements.push({ ref, ...info });
-    }
-    return { url, ...document, elements, untrusted: true, retrieved_at: new Date().toISOString() };
+    for (const { ref } of document.elements) session.refs.set(ref, page.locator(`[${session.refAttribute}="${ref}"]`));
+    return { url, ...document, untrusted: true, retrieved_at: new Date().toISOString() };
   }
   async reset() { for (const id of [...this.sessions.keys()]) await this.closeSession(id); }
   async stopBrowser() {
