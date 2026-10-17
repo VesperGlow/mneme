@@ -178,8 +178,9 @@ export class BrowserTools {
   async snapshot(session) {
     const page = session.page;
     const url = page.url();
+    if (url === 'about:blank') throw new ToolError('browser_session_missing_navigate_or_search', 409);
     // Validate the final URL too, including error documents after blocked redirects.
-    if (url !== 'about:blank') await this.policy.resolve(url);
+    await this.policy.resolve(url);
     const document = await page.evaluate(({ source, refAttribute }) => {
       // Mozilla Readability parses a clone; the original DOM stays available for interaction.
       const Readability = new Function(`${source}; return Readability;`)();

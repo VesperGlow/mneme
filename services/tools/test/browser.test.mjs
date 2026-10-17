@@ -39,6 +39,9 @@ test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expi
     const sandboxStatus=await sandboxPage.locator('body').innerText();
     assert.match(sandboxStatus,/Layer 1 Sandbox\s+Namespace/);assert.match(sandboxStatus,/Seccomp-BPF sandbox\s+Yes/);
     await diagnostic.close();
+    await browser.session(session);
+    await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate_or_search/);
+    await browser.closeSession(session);
     const opened=await browser.execute(session,{action:'navigate',url:'http://fixture.example/'});
     assert.match(opened.text,/动态浏览测试/);assert.equal(browser.sandbox,true);assert.equal(await browser.sessions.get(session).page.evaluate(()=>typeof RTCPeerConnection),'undefined');
     await assert.rejects(browser.execute('22222222-2222-4222-8222-222222222222',{action:'navigate',url:'http://fixture.example/'}),/browser_capacity/);
