@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 const API_TOKEN: &str = "tools-api-fixture-01234567890123456789";
 const TOOL_TOKEN: &str = "tools-separate-fixture-01234567890123456789";
+const DSML: &str = include_str!("fixtures/deepseek_dsml.txt");
 const JPEG: &str = "/9j/2wBDAAYEBQYFBAYGBQYHBwYIChAKCgkJChQODwwQFxQYGBcUFhYaHSUfGhsjHBYWICwgIyYnKSopGR8tMC0oMCUoKSj/2wBDAQcHBwoIChMKChMoGhYaKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCj/wAARCAACAAIDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAP/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/8QAFQEBAQAAAAAAAAAAAAAAAAAABAX/xAAUEQEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIRAxEAPwCAAKC//9k=";
 #[derive(Default)]
 struct Seen {
@@ -43,17 +44,22 @@ async fn services(mode: &'static str) -> (String, Arc<Mutex<Seen>>, tokio::task:
     .route("/chat/completions",post(move|headers:HeaderMap,Json(body):Json<Value>|{let seen=llm_seen.clone();async move{
         assert_eq!(headers["authorization"],"Bearer fixture-llm-key");
         seen.lock().unwrap().llm.push(body.clone());
-        let tool_messages=body["messages"].as_array().unwrap().iter().filter(|m|m["role"]=="tool").count();
+        let native_count=body["messages"].as_array().unwrap().iter().filter(|m|m["role"]=="tool").count();
+        let tool_messages=if mode=="long" {seen.lock().unwrap().actions.len()} else {native_count};
         let user=body["messages"].as_array().unwrap().iter().rev().find(|m|m["role"]=="user" && m["name"]!="tool_images").unwrap()["content"].to_string();
         let view=user.contains("查看图片标识");
-        let finish=body.get("tools").is_none() || (tool_messages>=3 && mode!="recover") || (tool_messages>=2 && mode=="recover") || (view && tool_messages>0);
+        let finish=body.get("tools").is_none() || (tool_messages>=3 && !["recover","long"].contains(&mode)) || (tool_messages>=2 && mode=="recover") || (view && tool_messages>0);
         let mut wire=String::new();
-        if finish {
+        if mode=="repeat_dsml" || (mode=="dsml" && body.get("tools").is_some()) || (body.get("tools").is_none() && native_count>0) {
+            // Reproduce DeepSeek's leaked content one character per SSE delta.
+            for character in DSML.chars(){wire.push_str(&format!("data: {}\n\n",json!({"choices":[{"delta":{"content":character.to_string()},"finish_reason":null}]})));}
+            wire.push_str(&format!("data: {}\n\n",json!({"choices":[{"delta":{},"finish_reason":"stop"}]})));
+        }else if finish {
             wire.push_str(&format!("data: {}\n\n",json!({"choices":[{"delta":{"content":"已完成多步浏览，来源：https://example.org/source"},"finish_reason":"stop"}]})));
         }else{
-            let (name,args)=if view {let content=body["messages"].as_array().unwrap().iter().rev().filter_map(|m|m["content"].as_str()).find(|s|s.contains("查看图片标识")).unwrap();("view_image",json!({"asset_id":content.split_whitespace().last().unwrap()}))}else{("browser",match tool_messages{0=>json!({"action":"navigate","url":"https://example.org/"}),1=>json!({"action":"read"}),_=>json!({"action":"screenshot"})})};
+            let (name,args)=if view {let content=body["messages"].as_array().unwrap().iter().rev().filter_map(|m|m["content"].as_str()).find(|s|s.contains("查看图片标识")).unwrap();("view_image",json!({"asset_id":content.split_whitespace().last().unwrap()}))}else if mode=="long" {("browser",json!({"action":"read"}))}else{("browser",match tool_messages{0=>json!({"action":"navigate","url":"https://example.org/"}),1=>json!({"action":"read"}),_=>json!({"action":"screenshot"})})};
             let args=args.to_string();let split=args.len()/2;
-            let first=json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":format!("call_{tool_messages}"),"type":"function","function":{"name":name,"arguments":&args[..split]}}]},"finish_reason":null}]});
+            let first=json!({"choices":[{"delta":{"reasoning_content":"fixture reasoning must stay private","tool_calls":[{"index":0,"id":format!("call_{tool_messages}"),"type":"function","function":{"name":name,"arguments":&args[..split]}}]},"finish_reason":null}]});
             let second=json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":&args[split..]}}]},"finish_reason":"tool_calls"}]});
             wire.push_str(&format!("data: {first}\n\ndata: {second}\n\n"));
         }
@@ -171,6 +177,7 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
     .await;
     assert!(wire.contains("event: done"), "{wire}");
     assert!(wire.contains("event: tool"));
+    assert!(!wire.contains("fixture reasoning"));
     let calls = seen.lock().unwrap().actions.len();
     assert_eq!(calls, 3);
     let (_, history) = request(
@@ -188,6 +195,13 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
     {
         let records = seen.lock().unwrap();
         assert_eq!(records.llm.len(), 4);
+        assert!(
+            records.llm[1]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["reasoning_content"] == "fixture reasoning must stay private")
+        );
         assert!(
             records.llm[0]["messages"]
                 .to_string()
@@ -228,6 +242,7 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
     let (_, wire) = chat(&router, &other, &format!("查看图片标识 {asset}"), vec![]).await;
     assert!(wire.contains("image_not_found"));
     assert!(wire.contains("event: done"));
+    assert!(!wire.contains("DSML"));
     let (_, wire) = chat(&router, &session, &format!("查看图片标识 {asset}"), vec![]).await;
     assert!(wire.contains("event: done"));
     assert!(!wire.contains("image_not_found"));
@@ -335,6 +350,15 @@ async fn tool_failures_are_visible_and_budget_forces_a_final_answer() {
         let records = seen.lock().unwrap();
         assert_eq!(records.actions.len(), 2);
         assert!(records.llm.last().unwrap().get("tools").is_none());
+        let last = records.llm.last().unwrap();
+        assert_eq!(last["tool_choice"], "none");
+        assert!(
+            last["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["role"] != "tool" && m.get("tool_calls").is_none())
+        );
     }
     let (_, logs) = request(&router, "GET", "/v1/console/tools/calls", json!({})).await;
     assert_eq!(logs["calls"][1]["status"], "failed");
@@ -342,6 +366,76 @@ async fn tool_failures_are_visible_and_budget_forces_a_final_answer() {
     assert!(!logs.to_string().contains(TOOL_TOKEN));
     service.abort();
     fake.abort();
+}
+
+#[tokio::test]
+async fn two_hundred_calls_survive_context_pruning_then_finish_in_plain_text() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, seen, service) = services("long").await;
+    let (models, fake) = common::fake_services().await;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let config = config(&temp, &base, &models);
+    assert_eq!(config.tools.max_calls, 200);
+    assert_eq!(config.tools.turn_timeout_seconds, 1800);
+    let app = App::new(config, rx).await.unwrap();
+    let router = api::router(app.clone());
+    let session = app.store.create_session().await.unwrap();
+    let (_, wire) = chat(&router, &session, "持续浏览并在达到上限时总结", vec![]).await;
+    assert!(wire.contains("event: done"), "{wire}");
+    assert!(!wire.contains("DSML"));
+    assert!(wire.contains("已完成多步浏览"));
+    let stored = app.store.history(&session, 10).await.unwrap();
+    assert!(stored.last().unwrap().content.contains("已完成多步浏览"));
+    let calls: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tool_calls WHERE status='completed'")
+        .fetch_one(&app.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(calls, 200);
+    {
+        let records = seen.lock().unwrap();
+        assert_eq!(records.actions.len(), 200);
+        assert_eq!(records.llm.len(), 201);
+        assert!(
+            records.llm[200]["messages"]
+                .to_string()
+                .contains("untrusted_tool_results")
+        );
+        assert!(
+            records.llm[200]["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|m| m["role"] != "tool" && m.get("tool_calls").is_none())
+        );
+        assert_eq!(records.llm[200]["tool_choice"], "none");
+    }
+    service.abort();
+    fake.abort();
+}
+
+#[tokio::test]
+async fn raw_dsml_is_not_executed_streamed_or_saved_and_has_a_readable_fallback() {
+    for mode in ["dsml", "repeat_dsml"] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let (base, seen, service) = services(mode).await;
+        let (models, fake) = common::fake_services().await;
+        let (_stop, rx) = tokio::sync::watch::channel(false);
+        let app = App::new(config(&temp, &base, &models), rx).await.unwrap();
+        let router = api::router(app.clone());
+        let session = app.store.create_session().await.unwrap();
+        let (_, wire) = chat(&router, &session, "继续浏览", vec![]).await;
+        assert!(wire.contains("event: done"), "{wire}");
+        assert!(!wire.contains("DSML"));
+        assert!(!wire.contains('｜'));
+        assert!(!wire.contains("paimon.moe"));
+        assert!(seen.lock().unwrap().actions.is_empty());
+        let stored = app.store.history(&session, 10).await.unwrap();
+        assert!(!stored.last().unwrap().content.contains("DSML"));
+        assert!(!stored.last().unwrap().content.trim().is_empty());
+        assert_eq!(seen.lock().unwrap().llm.len(), 2);
+        service.abort();
+        fake.abort();
+    }
 }
 #[tokio::test]
 async fn incomplete_tool_stream_never_executes_a_browser_action() {

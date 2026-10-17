@@ -49,6 +49,6 @@ output_format = ""
 # 原生运行默认关闭；安装脚本通过环境变量启用并生成独立凭证。
 enabled = false
 base_url = "http://127.0.0.1:8091"
-max_calls = 10
+max_calls = 200
 timeout_seconds = 30
-turn_timeout_seconds = 240
+turn_timeout_seconds = 1800

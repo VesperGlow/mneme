@@ -9,6 +9,8 @@
 ```dotenv
 MNEME_TOOLS_ENABLED=true
 MNEME_TOOLS_TOKEN=
+MNEME_TOOLS_MAX_CALLS=200
+MNEME_TOOLS_TURN_TIMEOUT_SECONDS=1800
 ```
 
 使用支持 **Chat Completions 工具调用及图片输入** 的现有 LLM，建议显式设置 `MNEME_LLM_MODEL`。安装脚本生成独立工具凭证，写回权限 0600 的 `.env`、`app.env` 与只包含工具凭证的 `~/.config/mneme/tools.env`，重复安装保留凭证。旧 `.env` 未指定 `MNEME_TOOLS_ENABLED` 时保持工具关闭，避免把不支持工具调用的已有模型直接切换到新协议；新 `.env.example` 已显式启用。
@@ -49,6 +51,10 @@ MNEME_TOOLS_TOKEN=本机独立随机工具凭证 node services/tools/app.mjs
 | back / close | 返回上一页 / 释放当前浏览器会话 |
 
 Rust 解析分片 SSE 中的 tool_calls，等完整 `[DONE]` 后才执行。工具结果通过匹配的 `tool_call_id` 返回模型，模型可继续选择下一步。参数错误、浏览器故障与 SSRF 拒绝均以结构化错误返回，供模型纠正；工具调用次数和总时间有硬上限。对话断连继续完成的既有语义不变；相同 request_id 重放不会再次点击或搜索。图片及其顺序也参与请求幂等检查。
+
+默认每轮最多 200 次调用、整轮最长 1800 秒。已有部署的 `config.toml` 会保留旧值；在项目 `.env` 或 API 的 `~/.config/mneme/app.env` 中设置上述两个限制变量即可覆盖，工具容器的 `tools.env` 仍只需要工具凭证。次数范围 1–200，总时限范围 10–3600 秒。
+
+达到调用上限时，API 将已完成的结果转换成有界的不可信资料，发起 `tool_choice=none` 的纯文本收尾请求，不再携带原生工具调用历史，避免 [DeepSeek Flash 已有的 DSML 泄漏复现](https://github.com/deepseek-ai/DeepSeek-V3/issues/1678)。流式输出在标记跨分片时也会拦截 DSML，不把其当成工具命令执行或作为答复保存；收尾仍失败时返回可读说明和已读取的来源。思考模型返回的 reasoning_content 仅在本轮后续工具请求中回传，不出现在可见回复或工具日志中。
 
 工具返回的网页是非可信资料，独立于人格提示词和用户原话。服务不提供 shell、文件读取或任意 JavaScript 执行接口。浏览器交互面向搜索与阅读，非 GET/HEAD 请求仅允许指定搜索引擎的搜索表单。工具结果会进行长度限制，旧工具轮次按上下文预算裁剪。网页内容不会作为用户原话直接提取进长期记忆。
 
@@ -99,7 +105,7 @@ SSE 保留 meta/delta/done/error，新增 tool 事件，包含 id、name、actio
 - 禁用隐式 loopback 代理绕过、QUIC、非代理 WebRTC、WebSocket、Service Worker 和下载；页面中的 WebRTC/WebTransport 构造器也禁用。不开放任意 CDP 命令给模型。
 - 非 root 用户运行，Chromium user namespace 沙箱始终启用，启动失败即报错，生产没有 --no-sandbox 降级。定制 seccomp 仅为沙箱允许 clone/clone3/unshare/setns/chroot，保留其余默认过滤；不增加 SYS_ADMIN、privileged、宿主网络或 IPC 权限。
 - 容器只读根目录、全部 capabilities 移除、no-new-privileges；/tmp 512 MiB，PIDs 256，内存 1536 MiB，CPU 上限 150%。工具临时浏览器文件随上下文/进程清理，不挂载主数据卷。
-- 最多 4 个浏览器上下文、同会话串行，最多 4 个并发重操作、128 个代理连接；动作超时 25 秒，空闲 10 分钟回收，每 15 秒检查。API 默认每轮最多 10 个工具调用、每请求 30 秒、整轮 240 秒，可在 [tools] 中调整有界限制。
+- 最多 4 个浏览器上下文、同会话串行，最多 4 个并发重操作、128 个代理连接；动作超时 25 秒，空闲 10 分钟回收，每 15 秒检查。API 默认每轮最多 200 个工具调用、每请求 30 秒、整轮 1800 秒，可在 [tools] 或相应环境变量中调整有界限制。
 
 Ubuntu 等宿主机的 AppArmor/用户命名空间策略可能阻止沙箱。此时应修正宿主机策略，不能通过关闭沙箱或赋予宿主机管理权限来运行。Debian 13 rootless Podman 已做实际验证。升级前备份 SQLite，启动时自动执行 0004_tools.sql；原有迁移不改写。Agent 重置会删除图片/调用记录并设置浏览器清理标记，后续第一次工具操作先关闭旧上下文，工具离线不会丢失清理需求。
 

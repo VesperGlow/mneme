@@ -332,7 +332,8 @@ async fn webhook(
                         .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
                         .map(|ts| ts.timestamp())
                         .unwrap_or_else(now);
-                    let expires_at = sent_at.min(now()) + 290;
+                    // QQ C2C passive replies have a 60-minute window; leave time for delivery.
+                    let expires_at = sent_at.min(now()) + 3590;
                     if expires_at > now() {
                         match app
                             .store

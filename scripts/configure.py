@@ -12,6 +12,7 @@ ALLOWED = {
     'MNEME_LLM_BASE_URL', 'MNEME_LLM_MODEL', 'MNEME_QQ_APP_ID',
     'MNEME_QQ_APP_SECRET', 'MNEME_QQ_SANDBOX', 'MNEME_QQ_LISTEN',
     'MNEME_TOOLS_TOKEN', 'MNEME_TOOLS_ENABLED', 'MNEME_TOOLS_URL',
+    'MNEME_TOOLS_MAX_CALLS', 'MNEME_TOOLS_TURN_TIMEOUT_SECONDS',
 }
 
 
@@ -87,6 +88,13 @@ def configure(source, dest):
     values['MNEME_TOOLS_ENABLED'] = values.get('MNEME_TOOLS_ENABLED', old.get('MNEME_TOOLS_ENABLED', 'false'))
     if values['MNEME_TOOLS_ENABLED'] not in ('true', 'false'):
         raise ValueError('MNEME_TOOLS_ENABLED 必须为 true 或 false。')
+    for key, default, maximum in [('MNEME_TOOLS_MAX_CALLS', '200', 200),
+                                  ('MNEME_TOOLS_TURN_TIMEOUT_SECONDS', '1800', 3600)]:
+        value = values.get(key, old.get(key, default))
+        minimum = 10 if key.endswith('SECONDS') else 1
+        if not value.isascii() or not value.isdecimal() or not minimum <= int(value) <= maximum:
+            raise ValueError(f'{key} 必须为 {minimum}–{maximum} 的整数。')
+        values[key] = value
     if generated:
         lines = source.read_text().splitlines()
         for key, value in generated.items():

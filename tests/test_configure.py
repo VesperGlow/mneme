@@ -25,6 +25,8 @@ class ConfigureTest(unittest.TestCase):
             self.assertGreaterEqual(len(first['MNEME_TOOLS_TOKEN']), 32)
             self.assertNotEqual(first['MNEME_TOOLS_TOKEN'], first['MNEME_API_TOKEN'])
             self.assertEqual(first['MNEME_TOOLS_ENABLED'], 'false')
+            self.assertEqual(first['MNEME_TOOLS_MAX_CALLS'], '200')
+            self.assertEqual(first['MNEME_TOOLS_TURN_TIMEOUT_SECONDS'], '1800')
             self.assertEqual((dest / 'tools.env').read_text(), f"MNEME_TOOLS_TOKEN={first['MNEME_TOOLS_TOKEN']}\n")
             (dest / 'config.toml').write_text('persona = "keep me"\n')
             second = configure.configure(source, dest)
@@ -47,6 +49,22 @@ class ConfigureTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     configure.configure(source, dest)
                 self.assertFalse(dest.exists())
+
+    def test_tool_budget_overrides_legacy_config_and_rejects_invalid_limits(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source, dest = Path(temp) / '.env', Path(temp) / 'config'
+            original = 'MNEME_LLM_API_KEY=fixture\nMNEME_LLM_BASE_URL=https://provider.invalid/v1\n'
+            dest.mkdir()
+            (dest / 'config.toml').write_text('[tools]\nmax_calls = 10\n')
+            source.write_text(original + 'MNEME_TOOLS_MAX_CALLS=200\nMNEME_TOOLS_TURN_TIMEOUT_SECONDS=1800\n')
+            configure.configure(source, dest)
+            self.assertIn('MNEME_TOOLS_MAX_CALLS=200\n', (dest / 'app.env').read_text())
+            self.assertEqual((dest / 'config.toml').read_text(), '[tools]\nmax_calls = 10\n')
+            for extra in ['MNEME_TOOLS_MAX_CALLS=201\n', 'MNEME_TOOLS_MAX_CALLS=0\n',
+                          'MNEME_TOOLS_TURN_TIMEOUT_SECONDS=3601\n', 'MNEME_TOOLS_MAX_CALLS=abc\n']:
+                source.write_text(original + extra)
+                with self.assertRaises(ValueError):
+                    configure.configure(source, dest)
 
 
 if __name__ == '__main__':

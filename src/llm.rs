@@ -72,6 +72,62 @@ pub struct ToolCall {
 pub struct Completion {
     pub content: String,
     pub tool_calls: Vec<ToolCall>,
+    pub reasoning_content: Option<String>,
+    pub tool_markup: bool,
+}
+
+// Hold only a possible opening marker across SSE chunks. Raw tool syntax never
+// reaches a client and is never interpreted as an executable tool call.
+#[derive(Default)]
+struct ToolTextGuard {
+    pending: String,
+    suppressed: bool,
+}
+impl ToolTextGuard {
+    fn push(&mut self, delta: &str) -> String {
+        if self.suppressed {
+            return String::new();
+        }
+        self.pending.push_str(delta);
+        let mut visible = String::new();
+        while !self.pending.is_empty() {
+            if !self.pending.starts_with('<') {
+                let end = self.pending.find('<').unwrap_or(self.pending.len());
+                visible.extend(self.pending.drain(..end));
+                continue;
+            }
+            let prefix: String = self
+                .pending
+                .chars()
+                .filter(|c| !matches!(c, '|' | '｜') && !c.is_whitespace())
+                .take(8)
+                .collect();
+            if prefix.starts_with("<DSML") || prefix.starts_with("</DSML") {
+                self.suppressed = true;
+                self.pending.clear();
+                break;
+            }
+            if ("<DSML".starts_with(&prefix) || "</DSML".starts_with(&prefix))
+                && self.pending.len() <= 256
+            {
+                break;
+            }
+            visible.push('<');
+            self.pending.remove(0);
+        }
+        visible
+    }
+    fn finish(&mut self) -> String {
+        if self.pending.contains(['|', '｜']) && self.pending.contains('D') {
+            self.suppressed = true;
+            self.pending.clear();
+        }
+        if self.suppressed {
+            String::new()
+        } else {
+            std::mem::take(&mut self.pending)
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -182,7 +238,10 @@ impl Llm {
         output: &mpsc::Sender<Event>,
     ) -> Result<String> {
         let messages = messages.iter().map(|m| json!(m)).collect::<Vec<_>>();
-        Ok(self.round_inner(&messages, None, output).await?.content)
+        Ok(self
+            .round_inner(&messages, None, false, output)
+            .await?
+            .content)
     }
     pub async fn round(
         &self,
@@ -191,7 +250,7 @@ impl Llm {
         output: &mpsc::Sender<Event>,
     ) -> Result<Completion> {
         let start = std::time::Instant::now();
-        let result = self.round_inner(messages, tools, output).await;
+        let result = self.round_inner(messages, tools, true, output).await;
         self.metrics.record(start, result.is_ok());
         if let Err(error) = &result {
             crate::diagnostics::warn("llm.tools", error);
@@ -202,6 +261,7 @@ impl Llm {
         &self,
         messages: &[Value],
         tools: Option<&Value>,
+        tool_conversation: bool,
         output: &mpsc::Sender<Event>,
     ) -> Result<Completion> {
         let mut body = json!({"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens,"stream":true});
@@ -209,6 +269,8 @@ impl Llm {
             body["tools"] = tools.clone();
             body["tool_choice"] = json!("auto");
             body["parallel_tool_calls"] = json!(false);
+        } else if tool_conversation {
+            body["tool_choice"] = json!("none");
         }
         let response = self
             .client
@@ -220,6 +282,8 @@ impl Llm {
             .error_for_status()?;
         let mut events = response.bytes_stream().eventsource();
         let mut content = String::new();
+        let mut reasoning = String::new();
+        let mut guard = ToolTextGuard::default();
         let mut calls = std::collections::BTreeMap::<usize, ToolCall>::new();
         let mut finish = String::new();
         let mut total_bytes = 0usize;
@@ -231,10 +295,18 @@ impl Llm {
                 "upstream stream exceeds limit"
             );
             if event.data.trim() == "[DONE]" {
+                if tool_conversation {
+                    let tail = guard.finish();
+                    if !tail.is_empty() {
+                        content.push_str(&tail);
+                        emit(output, "delta", json!({"content":tail}))?;
+                    }
+                }
                 ensure!(!finish.is_empty(), "unfinished completion");
                 if calls.is_empty() {
                     ensure!(
-                        !content.trim().is_empty() && matches!(finish.as_str(), "stop" | "length"),
+                        (!content.trim().is_empty() || guard.suppressed)
+                            && matches!(finish.as_str(), "stop" | "length"),
                         "empty or unfinished completion"
                     );
                 } else {
@@ -258,6 +330,12 @@ impl Llm {
                 return Ok(Completion {
                     content,
                     tool_calls: calls.into_values().collect(),
+                    reasoning_content: if reasoning.is_empty() {
+                        None
+                    } else {
+                        Some(reasoning)
+                    },
+                    tool_markup: guard.suppressed,
                 });
             }
             let chunk: Value = serde_json::from_str(&event.data)?;
@@ -274,8 +352,24 @@ impl Llm {
                     content.len() + delta.len() <= 128_000,
                     "completion exceeds byte limit"
                 );
-                content.push_str(delta);
-                emit(output, "delta", json!({"content":delta}))?;
+                let visible = if tool_conversation {
+                    guard.push(delta)
+                } else {
+                    delta.to_owned()
+                };
+                if !visible.is_empty() {
+                    content.push_str(&visible);
+                    emit(output, "delta", json!({"content":visible}))?;
+                }
+            }
+            if tool_conversation
+                && let Some(delta) = chunk["choices"][0]["delta"]["reasoning_content"].as_str()
+            {
+                ensure!(
+                    reasoning.len() + delta.len() <= 256_000,
+                    "reasoning exceeds byte limit"
+                );
+                reasoning.push_str(delta);
             }
             if let Some(deltas) = chunk["choices"][0]["delta"]["tool_calls"].as_array() {
                 ensure!(tools.is_some(), "unexpected tool call");
@@ -333,4 +427,42 @@ pub async fn bounded_body(response: reqwest::Response, limit: usize) -> Result<V
         body.extend_from_slice(&chunk);
     }
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ToolTextGuard;
+
+    #[test]
+    fn dsml_is_never_visible_even_when_streamed_one_character_at_a_time() {
+        let double = include_str!("../tests/fixtures/deepseek_dsml.txt");
+        for marker in [
+            double.to_owned(),
+            double.replace("｜｜", "｜"),
+            double.replace("｜｜", "|"),
+            "<｜｜DS".into(),
+        ] {
+            let mut guard = ToolTextGuard::default();
+            let mut visible = String::new();
+            for character in format!("已完成搜索。{marker}").chars() {
+                visible.push_str(&guard.push(&character.to_string()));
+            }
+            visible.push_str(&guard.finish());
+            assert_eq!(visible, "已完成搜索。");
+            assert!(guard.suppressed);
+        }
+    }
+
+    #[test]
+    fn ordinary_html_comparisons_and_partial_angles_keep_their_text() {
+        let text = "<p>比较 1 < 2，DSML 是名称。</p>代码 Vec<T>，最后一个 <";
+        let mut guard = ToolTextGuard::default();
+        let mut visible = String::new();
+        for character in text.chars() {
+            visible.push_str(&guard.push(&character.to_string()));
+        }
+        visible.push_str(&guard.finish());
+        assert_eq!(visible, text);
+        assert!(!guard.suppressed);
+    }
 }

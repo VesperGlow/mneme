@@ -41,9 +41,9 @@ impl Default for ToolsConfig {
         Self {
             enabled: false,
             base_url: "http://127.0.0.1:8091".into(),
-            max_calls: 10,
+            max_calls: 200,
             timeout_seconds: 30,
-            turn_timeout_seconds: 240,
+            turn_timeout_seconds: 1800,
             token: String::new(),
         }
     }
@@ -146,6 +146,14 @@ impl Config {
         if let Ok(value) = env::var("MNEME_TOOLS_URL") {
             config.tools.base_url = value;
         }
+        if let Ok(value) = env::var("MNEME_TOOLS_MAX_CALLS") {
+            config.tools.max_calls = value.parse().context("invalid MNEME_TOOLS_MAX_CALLS")?;
+        }
+        if let Ok(value) = env::var("MNEME_TOOLS_TURN_TIMEOUT_SECONDS") {
+            config.tools.turn_timeout_seconds = value
+                .parse()
+                .context("invalid MNEME_TOOLS_TURN_TIMEOUT_SECONDS")?;
+        }
         config.tools.token = env::var("MNEME_TOOLS_TOKEN").unwrap_or_default();
         if let Ok(value) = env::var("MNEME_LISTEN") {
             config.listen = value;
@@ -189,9 +197,9 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         if self.tools.enabled {
             ensure!(
-                (1..=16).contains(&self.tools.max_calls)
+                (1..=200).contains(&self.tools.max_calls)
                     && (1..=60).contains(&self.tools.timeout_seconds)
-                    && (10..=600).contains(&self.tools.turn_timeout_seconds),
+                    && (10..=3600).contains(&self.tools.turn_timeout_seconds),
                 "invalid tool limits"
             );
             ensure!(

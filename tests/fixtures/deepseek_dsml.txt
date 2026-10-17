@@ -1,0 +1,6 @@
+<｜｜DSML｜｜ calls>
+<｜｜DSML｜｜ invoke name="browser">
+<｜｜DSML｜｜ parameter name="action" string="true">navigate</｜｜DSML｜｜ parameter>
+<｜｜DSML｜｜ parameter name="url" string="true">https://paimon.moe/wish</｜｜DSML｜｜ parameter>
+</｜｜DSML｜｜ invoke>
+</｜｜DSML｜｜ calls>

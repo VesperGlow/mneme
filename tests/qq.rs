@@ -246,6 +246,32 @@ async fn signed_challenge_auth_freshness_and_route_isolation() {
 }
 
 #[tokio::test]
+async fn private_reply_queue_uses_the_sixty_minute_c2c_window() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, upstream) = common::fake_services().await;
+    let (_, qq_base, server) = platform().await;
+    let (_, rx) = watch::channel(false);
+    let app = App::new(config(&temp, &base, &qq_base), rx).await.unwrap();
+    let callbacks = qq::router(app.clone());
+    // A fresh, valid webhook may carry a delayed C2C event. Group rules do not apply.
+    let sent = now() - 600;
+    let stamp = chrono::DateTime::from_timestamp(sent, 0)
+        .unwrap()
+        .to_rfc3339();
+    let (status,_)=hook(&callbacks,json!({"op":0,"t":"C2C_MESSAGE_CREATE","d":{"id":"long-browser-task","content":"浏览网页","author":{"user_openid":"owner"},"timestamp":stamp}})).await;
+    assert_eq!(status, StatusCode::OK);
+    let expires: i64 =
+        sqlx::query_scalar("SELECT expires_at FROM qq_inbox WHERE message_id='long-browser-task'")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(expires, sent + 3590);
+    assert!(expires > now() + 1800);
+    upstream.abort();
+    server.abort();
+}
+
+#[tokio::test]
 async fn runtime_qq_check_uses_real_client_without_binding_ports_or_opening_the_database() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, upstream) = common::fake_services().await;
