@@ -30,6 +30,9 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
         .route("/chat/completions",post(|Json(body):Json<Value>|async move {
             if body["stream"] == true {
                 let messages = body["messages"].as_array().unwrap();
+                if messages.last().unwrap()["content"].as_str().unwrap().contains("__slow_chat__") {
+                    tokio::time::sleep(std::time::Duration::from_millis(1800)).await;
+                }
                 let broken=messages.last().unwrap()["content"].as_str().unwrap().contains("断流");
                 let recalls = messages.iter().filter_map(|m|m["content"].as_str()).collect::<Vec<_>>().join("\n");
                 let answer=if recalls.contains("用户住在成都") {"你住在成都，我记得。"} else {"我会认真记住你告诉我的事情。"};
@@ -41,6 +44,21 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                 ([("content-type","text/event-stream")],Body::from_stream(futures_util::stream::iter(chunks))).into_response()
             } else {
                 let input:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+                if input.get("max_chars").is_some() {
+                    let mut summary = input["previous_summary"].as_str().unwrap_or("").to_owned();
+                    if input["messages"].to_string().contains("__summary_fail__") {
+                        return Json(json!({"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}]})).into_response();
+                    }
+                    for message in input["messages"].as_array().unwrap() {
+                        if message["role"] == "user" {
+                            summary.push_str(message["content"].as_str().unwrap());
+                            summary.push('。');
+                        }
+                    }
+                    summary = summary.replace("我住在成都", "用户住在成都");
+                    summary = summary.chars().take(input["max_chars"].as_u64().unwrap() as usize).collect();
+                    return Json(json!({"choices":[{"message":{"content":json!({"summary":summary}).to_string()},"finish_reason":"stop"}]})).into_response();
+                }
                 let text=input["target"]["content"].as_str().unwrap();
                 let mut facts=Vec::new();
                 if text.contains("我住在成都") {

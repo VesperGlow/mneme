@@ -33,6 +33,9 @@ pub(crate) type ApiResult<T> = Result<T, ApiError>;
 pub fn router(app: App) -> Router {
     let protected = Router::new()
         .route("/health/ready", get(ready))
+        .route("/v1/conversation", get(conversation))
+        .route("/v1/messages", get(conversation_history))
+        .route("/v1/chat", post(conversation_chat))
         .route("/v1/sessions", post(create_session).get(list_sessions))
         .route("/v1/sessions/{id}/messages", get(history))
         .route("/v1/sessions/{id}/chat", post(chat))
@@ -84,11 +87,7 @@ pub fn router(app: App) -> Router {
 }
 
 async fn authenticate(State(app): State<App>, mut request: Request, next: Next) -> Response {
-    if request
-        .headers()
-        .get("sec-fetch-site")
-        .is_some_and(|h| h == "cross-site")
-    {
+    if crate::settings::cross_site(request.headers()) {
         return ApiError(StatusCode::FORBIDDEN, "cross_site_request").into_response();
     }
     let supplied = request
@@ -98,8 +97,17 @@ async fn authenticate(State(app): State<App>, mut request: Request, next: Next) 
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
     let is_api_token = bool::from(supplied.as_bytes().ct_eq(app.config.api_token.as_bytes()));
-    if !is_api_token && !app.console_security.lock().await.authenticate(supplied) {
-        return ApiError(StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    let cookie = crate::settings::cookie_token(request.headers()).map(str::to_owned);
+    if !is_api_token {
+        let valid = match &cookie {
+            Some(token) => crate::settings::authenticate_cookie(&app, token).await,
+            None => Ok(false),
+        };
+        match valid {
+            Ok(true) => {}
+            Ok(false) => return ApiError(StatusCode::UNAUTHORIZED, "unauthorized").into_response(),
+            Err(error) => return ApiError::from(error).into_response(),
+        }
     }
     request
         .extensions_mut()
@@ -115,22 +123,58 @@ async fn authenticate(State(app): State<App>, mut request: Request, next: Next) 
     if let Some(guard) = &activity {
         request.extensions_mut().insert(guard.clone());
     }
-    next.run(request).await
+    let path = request.uri().path().to_owned();
+    let mut response = next.run(request).await;
+    if !is_api_token
+        && !matches!(path.as_str(), "/v1/console/logout" | "/v1/console/password")
+        && let Some(token) = cookie
+    {
+        response.headers_mut().insert(
+            header::SET_COOKIE,
+            crate::settings::session_cookie(&app, &token, app.config.console.session_days * 86400)
+                .parse()
+                .unwrap(),
+        );
+    }
+    response
 }
 
 async fn create_session(State(app): State<App>) -> ApiResult<(StatusCode, Json<Value>)> {
-    let id = app.store.create_session().await?;
+    let id = app.store.conversation().await?;
     Ok((StatusCode::CREATED, Json(json!({"id":id}))))
 }
 async fn list_sessions(State(app): State<App>) -> ApiResult<Json<Value>> {
-    let sessions: Vec<(String,i64,Option<String>)> = sqlx::query_as("SELECT s.id,s.created_at,(SELECT content FROM messages m WHERE m.session_id=s.id ORDER BY seq DESC LIMIT 1) FROM sessions s ORDER BY COALESCE((SELECT MAX(created_at) FROM messages m WHERE m.session_id=s.id),s.created_at) DESC LIMIT 50").fetch_all(&app.store.pool).await.map_err(anyhow::Error::from)?;
+    let id = app.store.conversation().await?;
+    Ok(Json(json!({"sessions":[{"id":id,"preview":"持续对话"}]})))
+}
+
+async fn conversation(State(app): State<App>) -> ApiResult<Json<Value>> {
+    let id = app.store.conversation().await?;
+    let active: Option<String> = sqlx::query_scalar("SELECT active_turn FROM sessions WHERE id=?")
+        .bind(&id)
+        .fetch_one(&app.store.pool)
+        .await
+        .map_err(anyhow::Error::from)?;
     Ok(Json(
-        json!({"sessions":sessions.into_iter().map(|(id,created_at,last_message)|json!({"id":id,"created_at":created_at,"preview":last_message.map(|s|crate::domain::truncate(&s,80))})).collect::<Vec<_>>()}),
+        json!({"id":id,"active_turn":active,"context":crate::continuity::status(&app,&id).await?}),
     ))
+}
+async fn conversation_history(State(app): State<App>) -> ApiResult<Json<Value>> {
+    let id = app.store.conversation().await?;
+    history(State(app), Path(id)).await
+}
+async fn conversation_chat(
+    State(app): State<App>,
+    Extension(activity): Extension<crate::settings::ActivityGuard>,
+    Json(input): Json<ChatRequest>,
+) -> ApiResult<Response> {
+    let id = app.store.conversation().await?;
+    chat(State(app), Extension(activity), Path(id), Json(input)).await
 }
 
 async fn history(State(app): State<App>, Path(session): Path<String>) -> ApiResult<Json<Value>> {
     valid_id(&session)?;
+    let session = app.store.resolve_conversation(&session).await?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?)")
         .bind(&session)
         .fetch_one(&app.store.pool)
@@ -160,6 +204,7 @@ async fn chat(
     Json(input): Json<ChatRequest>,
 ) -> ApiResult<Response> {
     valid_id(&session)?;
+    let session = app.store.resolve_conversation(&session).await?;
     valid_id(&input.request_id)?;
     if !input.assets.is_empty() && app.tools.is_none() {
         return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "tools_disabled"));

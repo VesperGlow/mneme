@@ -8,6 +8,7 @@ import tempfile
 from urllib.parse import urlsplit, urlunsplit
 
 ALLOWED = {
+    'MNEME_CONSOLE_PASSWORD', 'MNEME_CONSOLE_SESSION_DAYS', 'MNEME_CONSOLE_SECURE_COOKIE',
     'MNEME_API_TOKEN', 'MNEME_LLM_API_KEY', 'MNEME_NEO4J_PASSWORD',
     'MNEME_LLM_BASE_URL', 'MNEME_LLM_MODEL', 'MNEME_QQ_APP_ID',
     'MNEME_QQ_APP_SECRET', 'MNEME_QQ_SANDBOX', 'MNEME_QQ_LISTEN',
@@ -77,7 +78,7 @@ def configure(source, dest):
     os.chmod(dest, 0o700)
     old = read_env(dest / 'app.env') if (dest / 'app.env').exists() else {}
     generated = {}
-    for key in ('MNEME_API_TOKEN', 'MNEME_NEO4J_PASSWORD', 'MNEME_TOOLS_TOKEN'):
+    for key in ('MNEME_API_TOKEN', 'MNEME_NEO4J_PASSWORD', 'MNEME_TOOLS_TOKEN', 'MNEME_CONSOLE_PASSWORD'):
         if not values.get(key):
             values[key] = old.get(key) or secrets.token_urlsafe(32)
             generated[key] = values[key]
@@ -95,6 +96,13 @@ def configure(source, dest):
         if not value.isascii() or not value.isdecimal() or not minimum <= int(value) <= maximum:
             raise ValueError(f'{key} 必须为 {minimum}–{maximum} 的整数。')
         values[key] = value
+    if not 10 <= len(values['MNEME_CONSOLE_PASSWORD']) <= 128:
+        raise ValueError('WebUI 密码必须为 10–128 字符。')
+    if values.get('MNEME_CONSOLE_SECURE_COOKIE', 'false') not in ('true', 'false'):
+        raise ValueError('MNEME_CONSOLE_SECURE_COOKIE 必须为 true 或 false。')
+    days = values.get('MNEME_CONSOLE_SESSION_DAYS', '30')
+    if not days.isascii() or not days.isdecimal() or not 1 <= int(days) <= 365:
+        raise ValueError('MNEME_CONSOLE_SESSION_DAYS 必须为 1–365 的整数。')
     if generated:
         lines = source.read_text().splitlines()
         for key, value in generated.items():
@@ -110,6 +118,7 @@ def configure(source, dest):
     write_private(dest / 'app.env', ''.join(f'{key}={value}\n' for key, value in values.items() if value))
     write_private(dest / 'tools.env', f"MNEME_TOOLS_TOKEN={values['MNEME_TOOLS_TOKEN']}\n")
     write_private(dest / 'neo4j.env', f"NEO4J_AUTH=neo4j/{values['MNEME_NEO4J_PASSWORD']}\n")
+    write_private(dest / 'console-password', values['MNEME_CONSOLE_PASSWORD'] + '\n')
     write_private(dest / 'console-token', values['MNEME_API_TOKEN'] + '\n')
     config = dest / 'config.toml'
     if not config.exists():
@@ -127,4 +136,4 @@ if __name__ == '__main__':
     except (ValueError, OSError) as error:
         raise SystemExit(str(error)) from None
     print(f'配置已写入 {args.config_dir}，已保留已有密钥和人格配置。')
-    print(f'Console 登录 Token：本机文件 {args.config_dir / "console-token"}（0600）。')
+    print(f'WebUI 登录密码：本机文件 {args.config_dir / "console-password"}（0600）。')

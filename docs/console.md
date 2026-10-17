@@ -1,23 +1,25 @@
 # Mneme Console
 
-Console 内置在 Mneme 的 Axum 服务中。启动现有服务后打开 **http://127.0.0.1:8080/console/**，使用现有 `MNEME_API_TOKEN` 登录即可。无需 Node.js、前端构建步骤、额外端口或独立容器。HTML、CSS、JavaScript 和图标在编译时嵌入 Rust 二进制，不从 CDN 加载脚本、字体或其他资源。
+Console 内置在 Mneme 的 Axum 服务中。启动现有服务后打开 **http://127.0.0.1:8080/console/**，使用独立 WebUI 密码登录。安装生成的初始密码位于 `~/.config/mneme/console-password`；已有密码保持不变。无需 Node.js、前端构建步骤、额外端口或独立容器。HTML、CSS、JavaScript 和图标在编译时嵌入 Rust 二进制，不从 CDN 加载脚本、字体或其他资源。
 
 ## 功能
 
-- **聊天**：创建或切换会话、SSE 流式回复、实时工具状态、来源链接及截图；每条消息最多上传 4 张 PNG/JPEG/WebP，每张最大 8 MiB。图片由工具容器规范化后发送给原有多模态 LLM；需启用工具并配置兼容模型。
+- **聊天**：单一持续对话、上下文用量与滚动摘要、SSE 流式回复、实时工具状态、来源链接及截图；每条消息最多上传 4 张 PNG/JPEG/WebP，每张最大 8 MiB。图片由工具容器规范化后发送给原有多模态 LLM；需启用工具并配置兼容模型。
 - **工具**：浏览器健康、沙箱、会话容量、调用次数与平均耗时，最近 100 次调用的状态、结果、来源与错误；可释放指定会话的浏览器上下文。
 - **概览**：未删除记忆的总数、有效/失效数量、过去 7×24 小时新增量、后台任务数、按类型分类、最近 7 个 UTC 自然日的新增图和近期记忆。有效指状态为 active 且尚未过期；最终召回还会考虑强度与相关性。
 - **记忆库**：按内容、关联实体或属性键搜索；按类型和有效/失效/删除状态筛选；按创建、更新时间、重要性、可信度排序；服务器分页。新增与编辑支持内容、类型、重要性、可信度、有效期和最多 8 个关联实体。
 - **详情**：原始内容、人工/自动来源、重要性、可信度、时间、实体、索引同步状态、最近 100 条来源消息及最近 100 次相关修订。对话来源可展开查看原始用户消息。旧版本通过相同属性键串联；人工编辑之前的证据仅用于追溯，不自动成为新内容的证明。
 - **检索实验室**：使用与实时对话完全相同的管线，展示 Neo4j 向量、CJK 全文、实体匹配、图谱扩展、近期 SQLite 补充候选、RRF 分数、Reranker 分数、最终得分和筛除原因。各通道原始分数不可直接比较；精排服务异常时显示回退状态。删除的内容不会在调试候选中回显。
 - **系统状态**：LLM、Neo4j、Embedding、Reranker 的连通/加载状态，探测耗时，当前进程已完成请求的平均耗时、次数、失败数，运行时间、SQLite 大小、任务队列。可重新排队失败任务或安排索引重建。
-- **Agent 设置**：编辑名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话生效；设置、修改或移除独立 WebUI 登录密码；输入 `RESET` 确认重置 Agent，可同时恢复配置文件中的默认性格。
+- **Agent 设置**：编辑名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话生效；设置或修改 WebUI 登录密码；输入 `RESET` 确认重置 Agent，可同时恢复配置文件中的默认性格。
 
 桌面端使用侧边导航和详情抽屉，移动端使用底部导航与自适应列表。支持键盘焦点、原生对话框、Escape 关闭以及 `/` 快速进入搜索。
 
 ## 身份与访问
 
-公开页面只包含登录界面和静态资源，所有私人数据都由受 Bearer Token 保护的 API 加载。Console 不使用 Cookie、localStorage、sessionStorage 或 URL 查询参数保存凭证。Token 仅在当前页面的 JavaScript 内存中存在；刷新、离开页面、退出或闲置超过 30 分钟会清除凭证和私人页面内容。API 使用 `no-store`，页面禁止被 iframe 嵌入，CSP 仅允许本站脚本、样式和连接。跨站浏览器请求直接拒绝。
+公开页面只包含登录界面和静态资源，私人数据由受保护的 API 加载。WebUI 只使用密码登录，服务端签发 HttpOnly、SameSite=Strict 的持久 Cookie，不向 JavaScript 返回凭证，也不使用 localStorage、sessionStorage 或 URL 保存凭证。登录有效期默认 30 天，每次使用时自动续期；刷新、关闭浏览器和服务重启后继续有效。退出登录、密码变更或过期后重新验证。
+
+`[console].session_days` 可设为 1–365 天（环境变量 `MNEME_CONSOLE_SESSION_DAYS`），HTTPS 反向代理部署时设置 `secure_cookie=true` 或 `MNEME_CONSOLE_SECURE_COOKIE=true`。本机 HTTP / SSH 转发使用默认 false。服务端在 SQLite 仅保存会话 Token 的 SHA-256 哈希；密码使用随机盐与 PBKDF2-HMAC-SHA256（600,000 次）保存。API 使用 `no-store`，CSP 仅允许本站资源，跨站和不同来源的浏览器请求被拒绝。
 
 默认原生服务监听 `127.0.0.1:8080`；现有 Quadlet 仅将 Pod 端口发布到宿主机的 `127.0.0.1`。不需要为了 Console 修改监听或发布设置。远程使用可沿用 SSH 转发：
 
@@ -25,9 +27,13 @@ Console 内置在 Mneme 的 Axum 服务中。启动现有服务后打开 **http:
 ssh -L 8080:127.0.0.1:8080 user@server
 ```
 
-Token 仍是原有单用户管理凭证，授权者可以访问全部对话和记忆。Console 不引入多用户角色或额外账户系统。
+Console 仍面向单用户，没有多用户角色。新安装自动生成与 API Token 分离的初始密码；原生运行可用 `MNEME_CONSOLE_PASSWORD` 在没有已保存密码时初始化一次。已有 WebUI 密码优先于环境中的初始密码。密码须为 10–128 字符，支持中文和首尾空格。设置页更改密码须填写当前密码，变更会撤销所有设备的登录；不支持移除密码。忘记密码时，通过本机终端用 API Token 调用 `PUT /v1/console/password` 设置新密码，无需在 WebUI 输入 API Token。
 
-首次使用 API Token 登录后，可在 Agent 设置中设置 10–128 字符的 WebUI 密码。之后在登录页选择“WebUI 密码”，服务端验证后签发随机会话凭证，仅在页面内存保存。密码使用随机盐和 PBKDF2-HMAC-SHA256（600,000 次）哈希保存到 SQLite，不保存明文。会话闲置 30 分钟过期，退出会撤销当前会话；服务重启或密码变更会撤销所有密码会话。登录失败会短暂限速。API Token 始终保留原有权限，可用于找回或移除忘记的密码；通过密码会话修改密码时还需验证当前密码。
+## 持续对话与压缩
+
+API、终端和 WebUI 共用同一段对话，不提供新建和切换窗口。旧 API 会话首次使用时合并，原始消息、图片、工具记录和来源保留，旧 ID 指向同一段对话。QQ 保留独立的传输历史，使用同一套压缩机制和长期记忆库。
+
+在 `[llm]` 配置 `history_turns`（默认 16）、`context_chars`（默认 16000）和 `summary_chars`（默认 2000）。下一轮会触及轮数或超过字符预算时，合并旧摘要与较早原文，保留约一半近期原文；摘要、进度和待提取记忆任务持久落库后再继续回复。提取始终从原始用户消息取证，遵守原有筛选规则。压缩失败不推进游标或删除历史。对话页显示用量、压缩次数、摘要以及整理进度；刷新时若上一轮仍在生成，会等待并自动显示完成结果。
 
 ## 性格与重置
 
@@ -51,11 +57,11 @@ WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件�
 
 ## API
 
-除密码登录外，所有接口使用 `Authorization: Bearer <MNEME_API_TOKEN 或临时会话凭证>`。
+除密码登录外，浏览器接口使用登录 Cookie；终端和集成仍使用 `Authorization: Bearer <MNEME_API_TOKEN>`。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/v1/console/auth` | 验证 Token，不触发外部模型探测 |
+| GET | `/v1/console/auth` | 恢复并验证登录状态，不触发外部模型探测 |
 | GET | `/v1/console/stats` | 仪表盘统计、分类、7 日活动和任务数 |
 | GET | `/v1/memories?q=成都&kind=fact&status=active&sort=updated&limit=15&offset=0` | 分页浏览；返回 memories、total、limit、offset |
 | POST | `/v1/memories` | 手动新增记忆，返回 201 与 index_update=queued |
@@ -67,11 +73,11 @@ WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件�
 | GET | `/v1/console/tools/calls` | 最近 100 次调用，可用 session_id 过滤 |
 | POST | `/v1/console/tools/close` | `{"session_id":"UUID"}`，释放浏览器上下文 |
 | GET | `/v1/console/system` | 服务状态和性能；探测结果缓存 10 秒 |
-| POST | `/v1/console/login` | `{"password":"…"}`，返回 token 和 expires_in；不要求 Bearer |
+| POST | `/v1/console/login` | `{"password":"…"}`，设置登录 Cookie，返回 authenticated 和 expires_in；不要求 Bearer |
 | POST | `/v1/console/logout` | 撤销当前密码会话 |
 | GET | `/v1/console/settings` | persona、default_persona、password_configured、graph_cleanup_pending；不返回密码哈希或密钥 |
 | PUT | `/v1/console/persona` | `{"name":"…","description":"…","style":"…","boundaries":"…","output_format":"…"}`；output_format 可省略，默认为空 |
-| PUT | `/v1/console/password` | `{"current_password":"…","new_password":"…"}`；new_password 为空表示移除，API Token 可免当前密码 |
+| PUT | `/v1/console/password` | `{"current_password":"…","new_password":"…"}`；new_password 必须为 10–128 字符；API Token 可免当前密码用于恢复 |
 | POST | `/v1/admin/reset` | `{"confirmation":"RESET","reset_persona":false}`，返回删除条数和图谱清理排队状态 |
 
 新增/编辑请求示例：
@@ -101,6 +107,8 @@ bash scripts/install.sh
 systemctl --user restart mneme.target
 ```
 
+`0005_continuity.sql` 增加滚动摘要、迁移别名、提取完成标记和持久登录会话表。旧 API 对话首次使用时原子合并；现有 QQ 历史不参与合并。
+
 新增工具的 `0004_tools.sql` 迁移只增加图片与工具表，不改写旧迁移；工具接口和浏览器验证见 [tools.md](tools.md)。
 
 早期 `0002_console.sql` 迁移在启动时自动执行，保留旧记忆及来源，为已有行建立初始修订快照，并排队同步旧投影及其完成标记。未改写 `0001_initial.sql`。无需重新下载模型或创建新数据卷。因前端编译进二进制，修改 web/ 后也需要重新编译 API。
@@ -128,4 +136,4 @@ npm install --prefix /tmp/mneme-console-qa --no-save --no-package-lock playwrigh
 NODE_PATH=/tmp/mneme-console-qa/node_modules node scripts/console-browser-test.cjs
 ```
 
-测试验证桌面、390px 移动端、真实 CRUD/历史修订、检索过程、系统状态、HTML 转义、退出/刷新与闲置锁定，以及性格保存、密码登录/移除、取消和确认重置，并将截图保存到忽略的 `artifacts/`。测试结束后在第一个终端按 Ctrl+C 关闭临时服务。真实数据和外部付费 LLM 不参与该浏览器测试。
+测试验证桌面、390px 移动端、真实 CRUD/历史修订、检索过程、系统状态、HTML 转义、退出、刷新和新标签页的登录持续性，以及持续对话与压缩、性格保存、密码登录和轮换、取消和确认重置，并将截图保存到忽略的 `artifacts/`。测试结束后在第一个终端按 Ctrl+C 关闭临时服务。真实数据和外部付费 LLM 不参与该浏览器测试。

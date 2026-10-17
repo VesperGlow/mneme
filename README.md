@@ -1,6 +1,6 @@
 # mneme
 
-以中文交流为主的单用户 AI 陪伴 Agent。Rust 核心提供多轮对话、SSE 流式回复、可配置人格和跨会话长期记忆。外部兼容 OpenAI Chat Completions 的服务负责生成与记忆提取；Embedding 和 Reranker 完全在本地 CPU 上运行。
+以中文交流为主的单用户 AI 陪伴 Agent。Rust 核心提供多轮对话、SSE 流式回复、可配置人格、持续对话和长期记忆。外部兼容 OpenAI Chat Completions 的服务负责生成与记忆提取；Embedding 和 Reranker 完全在本地 CPU 上运行。
 
 第一版已经实现完整链路，不需要 Redis、消息中间件、APOC、GPU 或额外向量数据库。生产使用前须填写自己的外部 LLM 配置。当前实现面向一个可信用户；不要把同一个 Token 分发给多个互不信任的人。
 
@@ -24,7 +24,7 @@ flowchart LR
 - SQLite 是事实源，保存原始消息、对话状态、记忆版本、证据原文和任务队列。完整回复与记忆任务在同一事务提交；进程中断不会丢失已提交任务。
 - Neo4j 保存有效记忆及实体关系，提供 HNSW 向量索引、CJK 全文索引、实体直接匹配和两跳邻居扩展。候选经 RRF 融合、本地 Reranker 精排，再结合重要性和时间衰减。
 - Neo4j 故障时，从最近 256 条有效 SQLite 记忆做有界向量/中文双字检索；模型故障时仍可用关键词。降级会在 API 中标记，不保证降级期间召回全部历史。
-- 每个会话串行生成，跨会话最多同时 4 路。后台记忆使用单独工作协程。模型服务采用有界优先队列，查询与精排优先于待处理文档；一个进程加载两个模型，使用 3 个 CPU 推理线程。
+- API 和 WebUI 始终共用一个持久对话，并串行生成；QQ 保留独立的传输上下文，共享长期记忆。后台记忆使用单独工作协程。模型服务采用有界优先队列，查询与精排优先于待处理文档；一个进程加载两个模型，使用 3 个 CPU 推理线程。
 - 本地模型使用 FP32、512 token 输入上限、小批量推理和 256 条有界 Embedding 缓存。模型权重、GTE 自定义代码均固定到 Git revision，只允许 safetensors。
 
 `mneme-api` 编排对话和连续工具调用，`mneme-models` 保持本地模型推理职责，`mneme-tools` 执行浏览器操作。搜索通过真实网页输入与点击完成，不使用搜索 API；图片和截图交给现有外部多模态 LLM 理解。部署、限制与安全边界见 [docs/tools.md](docs/tools.md)。
@@ -53,7 +53,7 @@ cp .env.example .env
 bash scripts/start.sh
 ```
 
-安装会自动生成 Console/API Token、独立工具 Token 和 Neo4j 密码，写回权限为 0600 的 `.env` 并保存到 `~/.config/mneme/`；重复安装会保留密钥、人格和数据。LLM 模型名可选：未填时首次从提供商 `/models` 自动选择第一个排除已知 Embedding、Reranker 等专用类型的模型并缓存，重启不会重新选型；目录接口不受支持时须填写 `MNEME_LLM_MODEL`。建议明确指定常用聊天模型。
+安装会自动生成独立 WebUI 密码、API Token、工具 Token 和 Neo4j 密码，写回权限为 0600 的 `.env` 并保存到 `~/.config/mneme/`；重复安装会保留密钥、人格和数据。LLM 模型名可选：未填时首次从提供商 `/models` 自动选择第一个排除已知 Embedding、Reranker 等专用类型的模型并缓存，重启不会重新选型；目录接口不受支持时须填写 `MNEME_LLM_MODEL`。建议明确指定常用聊天模型。
 
 GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vesperglow/mneme-api`、`ghcr.io/vesperglow/mneme-models` 和 `ghcr.io/vesperglow/mneme-tools`。默认使用 `latest`；固定部署版本时，先 `export MNEME_IMAGE_TAG=sha-完整提交SHA`，再执行同样的拉取和安装命令。私有 GHCR 包需要先用具有 `read:packages` 权限的 GitHub Token 执行 `podman login ghcr.io -u VesperGlow`；也可以在 GitHub 包设置中改为公开。首次发布的包默认私有，详见 [GHCR 说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。从源码构建时，用 `bash scripts/build.sh` 代替拉取步骤，仍仅构建 amd64。
 
@@ -85,29 +85,28 @@ QQ 接入遵循官方 BotGo 的 Webhook 协议，由同一 Rust 进程处理验�
 export MNEME_API_TOKEN="$(cat ~/.config/mneme/console-token)"
 curl -sS -H "Authorization: Bearer $MNEME_API_TOKEN" http://127.0.0.1:8080/health/ready
 python3 scripts/chat.py
-# 继续旧会话：
-python3 scripts/chat.py --session '上次输出的会话 UUID'
+# 再次启动会自动继续同一段对话，无需指定会话。
 ```
 
-先在一个会话说“我现在住在成都，我喜欢不加糖的拿铁”，等待后台队列处理完毕，再启动新的 `chat.py` 会话询问住址或偏好。提取是异步的，不保证在回复结束瞬间已经可召回。`/health/ready` 返回队列的 `pending/running/dead` 数量；首次没有记忆时，检索索引会在第一条投影任务执行时创建。
+先说“我现在住在成都，我喜欢不加糖的拿铁”，之后可继续询问住址或偏好；关闭终端、刷新页面、重启服务都会延续同一段对话。提取是异步的，不保证在回复结束瞬间已经可召回。`/health/ready` 返回队列的 `pending/running/dead` 数量；首次没有记忆时，检索索引会在第一条投影任务执行时创建。
 
 可在 Console 的 **Agent 设置** 中修改名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话立即生效，重启后保留。输出格式可填写回复结构、Markdown 等要求，留空表示不额外约束。初始人格来自 `~/.config/mneme/config.toml` 的 `[persona]`；WebUI 保存的设置优先于文件，可用“填入配置文件默认值”后保存来恢复。人格指令每轮重新加入，不依赖可能被裁剪的历史消息。
 
 ## Mneme Console
 
-打开 **http://127.0.0.1:8080/console/**，首次使用 API Token 登录内置管理后台。支持流式聊天、图片上传、浏览器工具状态与调用记录、仪表盘、记忆增删改查、来源与历史版本、混合检索调试、系统状态及 **Agent 设置**；适配桌面与移动端。设置页可配置独立 WebUI 密码、修改性格，或经确认清空对话与记忆来重置 Agent。页面和资源由 Axum 直接提供，不增加容器或运行依赖。登录凭证仅保存在当前页面内存，刷新、退出或闲置 30 分钟后重新验证。使用及升级说明见 [docs/console.md](docs/console.md)。
+打开 **http://127.0.0.1:8080/console/**，使用独立密码登录内置管理后台。安装生成的初始密码保存在 `~/.config/mneme/console-password`，也可通过 `MNEME_CONSOLE_PASSWORD` 初始化；已有 WebUI 密码保持不变。支持流式聊天、图片上传、浏览器工具状态与调用记录、仪表盘、记忆增删改查、来源与历史版本、混合检索调试、系统状态及 **Agent 设置**；适配桌面与移动端。设置页可修改 WebUI 密码、性格，或经确认清空对话与记忆来重置 Agent。页面和资源由 Axum 直接提供，不增加容器或运行依赖。登录使用 HttpOnly、SameSite=Strict 的持久 Cookie，服务端仅保存会话凭证哈希；默认有效期 30 天，使用时续期，刷新、关闭浏览器或服务重启后仍可继续。主动退出、密码变更或过期后需要重新登录。`[console].session_days` 可设为 1–365 天，HTTPS 部署设置 `secure_cookie=true`。使用及升级说明见 [docs/console.md](docs/console.md)。
 
 ## HTTP API
 
-除 `/health/live`、Console 静态登录页面/资源和密码登录接口 `/v1/console/login` 外，所有 API 均要求 `Authorization: Bearer <token>`（API Token 或密码登录返回的临时会话凭证），响应禁止缓存。JSON 请求最大 32 KiB，图片二进制上传最大 8 MiB，单次消息最多 4000 字符。没有 Cookie 登录、浏览器跨域放行或多租户功能。
+除 `/health/live`、Console 静态登录页面/资源和密码登录接口 `/v1/console/login` 外，所有 API 均要求 API Token 的 Bearer 认证或密码登录 Cookie，响应禁止缓存。WebUI 只提供密码登录，登录接口不向 JavaScript 返回凭证。JSON 请求最大 32 KiB，图片二进制上传最大 8 MiB，单次消息最多 4000 字符。不开放浏览器跨域访问或多租户功能。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
 | GET | `/health/live` | 进程存活 |
 | GET | `/health/ready` | SQLite、模型、Neo4j 连通情况与任务统计；依赖不可用返回 503，聊天仍可降级 |
-| POST | `/v1/sessions` | 创建会话，返回 `id` |
-| GET | `/v1/sessions/{id}/messages` | 最近 100 轮完整对话 |
-| POST | `/v1/sessions/{id}/chat` | `{"request_id":"UUID","message":"中文消息"}`，返回 SSE |
+| GET | `/v1/conversation` | 持续对话、当前生成轮次、上下文上限和滚动摘要 |
+| GET | `/v1/messages` | 最近 100 轮完整对话 |
+| POST | `/v1/chat` | `{"request_id":"UUID","message":"中文消息"}`，返回 SSE |
 | GET | `/v1/turns/{request_id}` | 查询本轮状态与持久化消息 |
 | GET | `/v1/memories?limit=50&offset=0` | 支持搜索、分类/状态筛选、排序及总数；默认不含已删除记录，不返回向量 |
 | POST / PUT | `/v1/memories` / `/v1/memories/{id}` | 手动新增 / 带版本检查的编辑，自动排队更新索引 |
@@ -118,12 +117,18 @@ python3 scripts/chat.py --session '上次输出的会话 UUID'
 | POST | `/v1/admin/reindex` | 从 SQLite 排队重建所有记忆的 Neo4j 投影 |
 | GET | `/v1/console/settings` | 当前性格、文件默认值、WebUI 密码设置状态 |
 | PUT | `/v1/console/persona` | 保存性格，下一轮对话生效 |
-| PUT | `/v1/console/password` | 设置或移除 WebUI 密码，使已有密码会话失效 |
+| PUT | `/v1/console/password` | 设置或修改 WebUI 密码，使已有登录会话失效；不支持移除密码 |
 | POST | `/v1/admin/reset` | 要求 confirmation=RESET，清空对话、记忆、任务及 QQ 会话；可同时恢复默认性格 |
 
-SSE 事件依次为 `meta`、多次 `delta`、`done`；失败时发送 `error`。`meta` 包含 `memory_ids` 和 `retrieval_degraded`。`done.persisted=true` 表示完整回复与记忆任务已经提交，之前的 delta 都是暂时输出。客户端断开后服务继续完成本轮；可通过 GET turn 查询结果。同一 `request_id` 和相同消息重试会重放已完成回复，不重复生成或提取。未完成/失败的旧 ID 返回 409，需查询状态，重试生成使用新 UUID。
+旧 `/v1/sessions` 接口保留兼容：创建请求始终返回同一对话 ID，旧 API 会话及图片、工具记录首次使用时合并，旧 ID 继续指向该对话；QQ 历史不参与合并。图片上传可直接使用 `POST /v1/images`。
+
+SSE 事件依次为 `meta`、可选的 `compaction`、多次 `delta`、`done`；失败时发送 `error`。`meta` 包含 `memory_ids` 和 `retrieval_degraded`。`done.persisted=true` 表示完整回复与记忆任务已经提交，之前的 delta 都是暂时输出。客户端断开后服务继续完成本轮；可通过 GET turn 查询结果。同一 `request_id` 和相同消息重试会重放已完成回复，不重复生成或提取。未完成/失败的旧 ID 返回 409，需查询状态，重试生成使用新 UUID。
 
 ## 长期记忆行为
+
+API 和 WebUI 不再新建或切换对话窗口。`[llm]` 的 `history_turns=16`、`context_chars=16000` 控制活跃原文轮数和生成上下文字符上限；当下一轮请求会触及轮数或超过字符预算时，先把较早轮次与旧摘要合并成最多 `summary_chars=2000` 字的滚动摘要，保留约一半近期原文，再继续回复。字符预算不是模型 tokenizer 的精确 token 数。
+
+压缩只调整生成上下文，不删除原始对话。摘要与遗漏来源的记忆提取任务在同一事务提交；记忆继续由后台从原始用户消息中提取，沿用重要性、置信度、敏感分类和逐字证据校验，不把模型摘要当作事实来源。摘要生成失败时本轮明确失败，压缩游标不前进，原始历史和待处理任务保留，避免无提示地裁掉历史。摘要和压缩进度随 SQLite 跨重启保留，界面可以查看。
 
 1. 完整对话落库后排队提取，只从本轮用户原话中取证。证据必须是原消息中连续出现的逐字引文；过滤低置信度、低重要性及默认禁存的敏感候选。
 2. 稳定属性键控制版本更新，标准化内容哈希消除重复；提取器可对提供的已有记忆声明语义等价并沿用原键和内容。新的住址、否定、时间或数值变化会创建版本，旧版本保留来源并标记为 `superseded`。
@@ -132,7 +137,7 @@ SSE 事件依次为 `meta`、多次 `delta`、`done`；失败时发送 `error`�
 
 这是可审计的记忆系统，不保证 LLM 的提取、等价判断或相对时间解析永远正确。重要事实可通过来源 API 核查。敏感分类依赖模型判断；不要把自动分类当作凭证保险箱。自然语言“忘记某事”目前不触发删除，使用 DELETE API 确定执行。
 
-逻辑遗忘会保留 SQLite 原始对话和审计记录，删除后的内容仍可能存在于同一会话最近历史或备份中；需要避免上下文引用时请开启新会话。此 API 不代表物理擦除，也不实现选择性原始数据销毁。外部 LLM 会接收当前消息、所需历史、召回记忆；提取时还会接收当前原文及最多 64 条近期记忆。请按提供商的数据政策选择服务。
+逻辑遗忘会保留 SQLite 原始对话和审计记录，删除后的内容仍可能存在于同一会话最近历史或备份中；需要彻底清空当前对话与摘要时，可在设置中重置 Agent；该操作也会清空长期记忆。此 API 不代表物理擦除，也不实现选择性原始数据销毁。外部 LLM 会接收当前消息、所需历史、滚动摘要、召回记忆；提取时还会接收当前原文及最多 64 条近期记忆。请按提供商的数据政策选择服务。
 
 ## 持久化、备份与恢复
 

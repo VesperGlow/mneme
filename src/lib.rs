@@ -4,6 +4,7 @@ pub mod chat;
 pub mod config;
 pub mod console;
 pub mod console_store;
+pub mod continuity;
 pub mod diagnostics;
 pub mod domain;
 pub mod graph;

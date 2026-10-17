@@ -7,14 +7,13 @@ use crate::{
 use axum::{
     Extension, Json, Router,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     routing::{get, post, put},
 };
 use ring::pbkdf2;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
     num::NonZeroU32,
     time::{Duration, Instant},
 };
@@ -23,7 +22,7 @@ use uuid::Uuid;
 const PERSONA: &str = "console.persona";
 const PASSWORD: &str = "console.password";
 pub(crate) const GRAPH_RESET: &str = "agent.graph_reset_pending";
-const SESSION_TTL: Duration = Duration::from_secs(30 * 60);
+pub(crate) const COOKIE_NAME: &str = "mneme_console";
 
 #[derive(Clone, Serialize, Deserialize)]
 struct PasswordHash {
@@ -61,24 +60,76 @@ impl PasswordHash {
 #[derive(Default)]
 pub struct ConsoleSecurity {
     password: Option<PasswordHash>,
-    sessions: HashMap<String, Instant>,
     retry_after: Option<Instant>,
 }
 #[derive(Clone, Copy)]
 pub(crate) struct AuthMethod(pub bool); // true for the deployment API token (recovery credential).
 pub(crate) type ActivityGuard = std::sync::Arc<tokio::sync::OwnedRwLockReadGuard<()>>;
 
-impl ConsoleSecurity {
-    pub(crate) fn authenticate(&mut self, token: &str) -> bool {
-        let now = Instant::now();
-        self.sessions.retain(|_, expiry| *expiry > now);
-        if let Some(expiry) = self.sessions.get_mut(token) {
-            *expiry = now + SESSION_TTL;
-            true
+pub(crate) fn cookie_token(headers: &HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|part| {
+            let (name, value) = part.trim().split_once('=')?;
+            (name == COOKIE_NAME
+                && value.len() == 64
+                && value.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then_some(value)
+        })
+}
+fn token_hash(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(token.as_bytes()))
+}
+pub(crate) fn session_cookie(app: &App, token: &str, max_age: u64) -> String {
+    format!(
+        "{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age={max_age}{}",
+        if app.config.console.secure_cookie {
+            "; Secure"
         } else {
-            false
+            ""
         }
+    )
+}
+pub(crate) async fn authenticate_cookie(app: &App, token: &str) -> anyhow::Result<bool> {
+    let now = crate::domain::now();
+    Ok(
+        sqlx::query("UPDATE console_sessions SET expires_at=? WHERE token_hash=? AND expires_at>?")
+            .bind(now + (app.config.console.session_days * 86400) as i64)
+            .bind(token_hash(token))
+            .bind(now)
+            .execute(&app.store.pool)
+            .await?
+            .rows_affected()
+            == 1,
+    )
+}
+/// Fetch Metadata protects modern browsers; Origin also covers clients without that header.
+/// Never trust forwarded host/proto headers to decide the cookie's Secure attribute.
+pub(crate) fn cross_site(headers: &HeaderMap) -> bool {
+    if headers
+        .get("sec-fetch-site")
+        .is_some_and(|site| site == "cross-site" || site == "same-site")
+    {
+        return true;
     }
+    if let Some(origin) = headers.get(header::ORIGIN) {
+        let Ok(origin) = origin.to_str().unwrap_or("").parse::<reqwest::Url>() else {
+            return true;
+        };
+        let Some(host) = headers.get(header::HOST).and_then(|h| h.to_str().ok()) else {
+            return true;
+        };
+        let Ok(expected) = reqwest::Url::parse(&format!("{}://{host}", origin.scheme())) else {
+            return true;
+        };
+        return origin.origin() != expected.origin()
+            || !matches!(origin.scheme(), "http" | "https");
+    }
+    false
 }
 
 async fn metadata(store: &Store, key: &str) -> anyhow::Result<Option<String>> {
@@ -103,10 +154,16 @@ pub(crate) async fn load(
     let mut effective = config.clone();
     effective.persona = persona.clone();
     effective.validate()?;
-    let password = metadata(store, PASSWORD)
+    let mut password = metadata(store, PASSWORD)
         .await?
         .map(|value| serde_json::from_str(&value))
         .transpose()?;
+    if password.is_none() && !config.console.password.is_empty() {
+        let plain = config.console.password.clone();
+        let hash = tokio::task::spawn_blocking(move || PasswordHash::new(&plain)).await?;
+        save(store, PASSWORD, serde_json::to_string(&hash)?).await?;
+        password = Some(hash);
+    }
     Ok((
         persona,
         ConsoleSecurity {
@@ -116,7 +173,7 @@ pub(crate) async fn load(
     ))
 }
 pub fn public_routes() -> Router<App> {
-    Router::new().route("/v1/console/login", post(login))
+    Router::new().route("/v1/console/login", post(login).get(login_status))
 }
 pub fn protected_routes() -> Router<App> {
     Router::new()
@@ -131,7 +188,7 @@ async fn settings(State(app): State<App>) -> ApiResult<Json<Value>> {
     let configured = app.console_security.lock().await.password.is_some();
     Ok(Json(
         json!({"persona":persona,"default_persona":app.config.persona,"password_configured":configured,
-        "graph_cleanup_pending":metadata(&app.store, GRAPH_RESET).await?.is_some()}),
+        "session_days":app.config.console.session_days,"graph_cleanup_pending":metadata(&app.store, GRAPH_RESET).await?.is_some()}),
     ))
 }
 async fn update_persona(
@@ -159,15 +216,17 @@ async fn update_persona(
 struct Login {
     password: String,
 }
+async fn login_status(State(app): State<App>) -> Json<Value> {
+    Json(
+        json!({"password_configured":app.console_security.lock().await.password.is_some(),"session_days":app.config.console.session_days}),
+    )
+}
 async fn login(
     State(app): State<App>,
     headers: HeaderMap,
     Json(input): Json<Login>,
-) -> ApiResult<Json<Value>> {
-    if headers
-        .get("sec-fetch-site")
-        .is_some_and(|site| site == "cross-site")
-    {
+) -> ApiResult<(HeaderMap, Json<Value>)> {
+    if cross_site(&headers) {
         return Err(ApiError(StatusCode::FORBIDDEN, "cross_site_request"));
     }
     let _activity = app.maintenance.read().await;
@@ -194,28 +253,35 @@ async fn login(
         return Err(ApiError(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
     security.retry_after = None;
-    security
-        .sessions
-        .retain(|_, expiry| *expiry > Instant::now());
-    if security.sessions.len() >= 32 {
-        let oldest = security
-            .sessions
-            .iter()
-            .min_by_key(|(_, at)| **at)
-            .map(|(id, _)| id.clone())
-            .unwrap();
-        security.sessions.remove(&oldest);
-    }
-    let token = format!(
-        "console-{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
+    let token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    let ttl = app.config.console.session_days * 86400;
+    let mut tx = app
+        .store
+        .pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(anyhow::Error::from)?;
+    sqlx::query("DELETE FROM console_sessions WHERE expires_at<=?")
+        .bind(crate::domain::now())
+        .execute(&mut *tx)
+        .await
+        .map_err(anyhow::Error::from)?;
+    sqlx::query("DELETE FROM console_sessions WHERE token_hash IN (SELECT token_hash FROM console_sessions ORDER BY expires_at DESC LIMIT -1 OFFSET 31)").execute(&mut *tx).await.map_err(anyhow::Error::from)?;
+    sqlx::query("INSERT INTO console_sessions(token_hash,expires_at) VALUES(?,?)")
+        .bind(token_hash(&token))
+        .bind(crate::domain::now() + ttl as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(anyhow::Error::from)?;
+    tx.commit().await.map_err(anyhow::Error::from)?;
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::SET_COOKIE,
+        session_cookie(&app, &token, ttl).parse().unwrap(),
     );
-    security
-        .sessions
-        .insert(token.clone(), Instant::now() + SESSION_TTL);
-    Ok(Json(
-        json!({"token":token,"expires_in":SESSION_TTL.as_secs()}),
+    Ok((
+        response_headers,
+        Json(json!({"authenticated":true,"expires_in":ttl})),
     ))
 }
 
@@ -224,7 +290,6 @@ async fn login(
 struct PasswordUpdate {
     #[serde(default)]
     current_password: String,
-    // Empty means return to API-token-only login.
     new_password: String,
 }
 async fn update_password(
@@ -233,8 +298,7 @@ async fn update_password(
     Json(input): Json<PasswordUpdate>,
 ) -> ApiResult<Json<Value>> {
     let length = input.new_password.chars().count();
-    if (!input.new_password.is_empty()
-        && (!(10..=128).contains(&length) || input.new_password.trim().is_empty()))
+    if (!(10..=128).contains(&length) || input.new_password.trim().is_empty())
         || input.current_password.chars().count() > 128
     {
         return Err(ApiError(StatusCode::BAD_REQUEST, "invalid_password"));
@@ -255,45 +319,43 @@ async fn update_password(
             ));
         }
     }
-    let hash = if input.new_password.is_empty() {
-        None
-    } else {
-        Some(
-            tokio::task::spawn_blocking(move || PasswordHash::new(&input.new_password))
-                .await
-                .map_err(anyhow::Error::from)?,
-        )
-    };
-    if let Some(hash) = &hash {
-        save(
-            &app.store,
-            PASSWORD,
-            serde_json::to_string(hash).map_err(anyhow::Error::from)?,
-        )
-        .await?;
-    } else {
-        sqlx::query("DELETE FROM metadata WHERE key=?")
-            .bind(PASSWORD)
+    let hash = tokio::task::spawn_blocking(move || PasswordHash::new(&input.new_password))
+        .await
+        .map_err(anyhow::Error::from)?;
+    let mut tx = app
+        .store
+        .pool
+        .begin_with("BEGIN IMMEDIATE")
+        .await
+        .map_err(anyhow::Error::from)?;
+    sqlx::query("INSERT INTO metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .bind(PASSWORD).bind(serde_json::to_string(&hash).map_err(anyhow::Error::from)?)
+        .execute(&mut *tx).await.map_err(anyhow::Error::from)?;
+    sqlx::query("DELETE FROM console_sessions")
+        .execute(&mut *tx)
+        .await
+        .map_err(anyhow::Error::from)?;
+    tx.commit().await.map_err(anyhow::Error::from)?;
+    security.password = Some(hash);
+    security.retry_after = None;
+    Ok(Json(
+        json!({"password_configured":true,"reauthenticate":true}),
+    ))
+}
+async fn logout(State(app): State<App>, headers: HeaderMap) -> ApiResult<(HeaderMap, Json<Value>)> {
+    if let Some(token) = cookie_token(&headers) {
+        sqlx::query("DELETE FROM console_sessions WHERE token_hash=?")
+            .bind(token_hash(token))
             .execute(&app.store.pool)
             .await
             .map_err(anyhow::Error::from)?;
     }
-    security.password = hash;
-    security.sessions.clear();
-    security.retry_after = None;
-    Ok(Json(
-        json!({"password_configured":security.password.is_some(),"reauthenticate":true}),
-    ))
-}
-async fn logout(State(app): State<App>, headers: HeaderMap) -> Json<Value> {
-    if let Some(token) = headers
-        .get("authorization")
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-    {
-        app.console_security.lock().await.sessions.remove(token);
-    }
-    Json(json!({"ok":true}))
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::SET_COOKIE,
+        session_cookie(&app, "", 0).parse().unwrap(),
+    );
+    Ok((response_headers, Json(json!({"ok":true}))))
 }
 
 #[derive(Deserialize)]
@@ -342,6 +404,10 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         "DELETE FROM memories",
         "DELETE FROM forget_barriers",
         "DELETE FROM content_barriers",
+        "DELETE FROM conversation_context",
+        "DELETE FROM conversation_aliases",
+        "DELETE FROM extracted_messages",
+        "DELETE FROM metadata WHERE key='conversation.id'",
         "DELETE FROM messages",
         "DELETE FROM turns",
         "DELETE FROM sessions",

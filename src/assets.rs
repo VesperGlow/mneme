@@ -27,10 +27,21 @@ pub struct ImageData {
 pub fn routes() -> Router<App> {
     Router::new()
         .route(
+            "/v1/images",
+            post(upload_current).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
+        .route(
             "/v1/sessions/{id}/images",
             post(upload).layer(DefaultBodyLimit::max(8 * 1024 * 1024)),
         )
         .route("/v1/assets/{id}", get(image))
+}
+async fn upload_current(
+    State(app): State<App>,
+    bytes: Bytes,
+) -> ApiResult<(StatusCode, Json<Value>)> {
+    let id = app.store.conversation().await?;
+    upload(State(app), Path(id), bytes).await
 }
 async fn upload(
     State(app): State<App>,
@@ -38,6 +49,7 @@ async fn upload(
     bytes: Bytes,
 ) -> ApiResult<(StatusCode, Json<Value>)> {
     valid_id(&session)?;
+    let session = app.store.resolve_conversation(&session).await?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?)")
         .bind(&session)
         .fetch_one(&app.store.pool)

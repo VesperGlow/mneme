@@ -10,7 +10,16 @@ temperature = 0.7
 max_tokens = 1200
 timeout_seconds = 120
 context_chars = 16000
+# 持续对话触及任一上限时压缩旧轮次，保留摘要与近期原文。
 history_turns = 16
+summary_chars = 2000
+
+[console]
+# 使用时续期；Cookie 和服务端会话均跨刷新、浏览器关闭与服务重启保留。
+session_days = 30
+# HTTPS 反向代理部署设为 true；本机 HTTP / SSH 转发保留 false。
+secure_cookie = false
+# 初始密码从 MNEME_CONSOLE_PASSWORD 导入一次，后续在 WebUI 修改。
 
 [models]
 base_url = "http://127.0.0.1:8090"

@@ -9,7 +9,6 @@ import uuid
 
 parser = argparse.ArgumentParser(description="Mneme 中文终端对话")
 parser.add_argument("--url", default="http://127.0.0.1:8080")
-parser.add_argument("--session", help="继续已有会话 UUID；不传则创建新会话")
 args = parser.parse_args()
 token = os.environ.get("MNEME_API_TOKEN")
 if not token:
@@ -23,11 +22,7 @@ def request(path, body):
     ), timeout=180)
 
 
-session = args.session
-if session is None:
-    with request("/v1/sessions", {}) as response:
-        session = json.load(response)["id"]
-print(f"会话：{session}（/quit 退出）")
+print("持续对话（/quit 退出，再次启动会继续当前对话）")
 while True:
     try:
         text = input("你：").strip()
@@ -42,7 +37,7 @@ while True:
     committed = False
     print("Mneme：", end="", flush=True)
     try:
-        with request(f"/v1/sessions/{session}/chat", {"request_id": turn, "message": text}) as response:
+        with request("/v1/chat", {"request_id": turn, "message": text}) as response:
             event = ""
             for raw in response:
                 line = raw.decode("utf-8").rstrip("\r\n")

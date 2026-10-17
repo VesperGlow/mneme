@@ -40,7 +40,18 @@ async fn call(
             Request::builder()
                 .method(method)
                 .uri(path)
-                .header("authorization", format!("Bearer {token}"))
+                .header(
+                    if token.starts_with("mneme_console=") {
+                        "cookie"
+                    } else {
+                        "authorization"
+                    },
+                    if token.starts_with("mneme_console=") {
+                        token.to_owned()
+                    } else {
+                        format!("Bearer {token}")
+                    },
+                )
                 .header("content-type", "application/json")
                 .body(Body::from(body.to_string()))
                 .unwrap(),
@@ -52,16 +63,33 @@ async fn call(
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 async fn login(router: &Router, password: &str) -> String {
-    let (status, result) = call(
-        router,
-        "",
-        "POST",
-        "/v1/console/login",
-        json!({"password":password}),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{result}");
-    result["token"].as_str().unwrap().into()
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/console/login")
+                .header("content-type", "application/json")
+                .body(Body::from(json!({"password":password}).to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookie = response.headers()["set-cookie"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        cookie.contains("HttpOnly")
+            && cookie.contains("SameSite=Strict")
+            && cookie.contains("Max-Age=2592000")
+    );
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap())
+            .unwrap();
+    assert!(body.get("token").is_none());
+    cookie.split(';').next().unwrap().to_owned()
 }
 
 #[tokio::test]
@@ -308,10 +336,10 @@ async fn password_login_rotation_logout_restart_and_token_recovery() {
         call(&router, &session, "GET", "/v1/console/auth", json!({}))
             .await
             .0,
-        StatusCode::UNAUTHORIZED
+        StatusCode::OK
     );
     login(&router, "replacement-password").await;
-    // The deployment API token can recover a forgotten WebUI password.
+    // An empty password cannot disable password-only login. API recovery rotates it.
     assert_eq!(
         call(
             &router,
@@ -319,6 +347,18 @@ async fn password_login_rotation_logout_restart_and_token_recovery() {
             "PUT",
             "/v1/console/password",
             json!({"new_password":""})
+        )
+        .await
+        .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        call(
+            &router,
+            TOKEN,
+            "PUT",
+            "/v1/console/password",
+            json!({"new_password":"recovered-password"})
         )
         .await
         .0,
@@ -682,4 +722,128 @@ async fn reset_refuses_a_generation_until_its_stream_finishes() {
     );
     fake.abort();
     slow.abort();
+}
+
+#[tokio::test]
+async fn initial_password_import_cookie_expiry_renewal_and_csrf_protection() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut config = config(&temp, &base);
+    config.console.password = PASSWORD.into();
+    config.console.secure_cookie = true;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config, rx).await.unwrap();
+    let router = api::router(app.clone());
+    let cookie = login(&router, PASSWORD).await;
+    let stored: String = sqlx::query_scalar("SELECT token_hash FROM console_sessions")
+        .fetch_one(&app.store.pool)
+        .await
+        .unwrap();
+    assert!(!cookie.contains(&stored));
+    sqlx::query("UPDATE console_sessions SET expires_at=?")
+        .bind(now() + 10)
+        .execute(&app.store.pool)
+        .await
+        .unwrap();
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/v1/console/auth")
+                .header("cookie", &cookie)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response.headers()["set-cookie"]
+            .to_str()
+            .unwrap()
+            .contains("; Secure")
+    );
+    let expiry: i64 = sqlx::query_scalar("SELECT expires_at FROM console_sessions")
+        .fetch_one(&app.store.pool)
+        .await
+        .unwrap();
+    assert!(expiry >= now() + 30 * 86400 - 2);
+    for (key, value) in [
+        ("sec-fetch-site", "cross-site"),
+        ("sec-fetch-site", "same-site"),
+        ("origin", "https://attacker.invalid"),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/console/logout")
+                    .header("cookie", &cookie)
+                    .header("host", "console.invalid")
+                    .header(key, value)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    }
+    assert_eq!(
+        call(&router, &cookie, "GET", "/v1/console/auth", json!({}))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    sqlx::query("UPDATE console_sessions SET expires_at=?")
+        .bind(now() - 1)
+        .execute(&app.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&router, &cookie, "GET", "/v1/console/auth", json!({}))
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    // A session cookie cannot be used as an API bearer credential.
+    assert_eq!(
+        call(
+            &router,
+            cookie.split_once('=').unwrap().1,
+            "GET",
+            "/v1/console/auth",
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::UNAUTHORIZED
+    );
+    fake.abort();
+}
+
+#[test]
+fn legacy_config_gets_continuity_defaults_and_rejects_invalid_limits() {
+    let text = include_str!("../config/default.toml");
+    let before = text
+        .split("[console]")
+        .next()
+        .unwrap()
+        .replace("summary_chars = 2000", "");
+    let after = text.split("[models]").nth(1).unwrap();
+    let legacy: Config = toml::from_str(&format!("{before}\n[models]{after}")).unwrap();
+    assert_eq!(legacy.llm.summary_chars, 2000);
+    assert_eq!(legacy.console.session_days, 30);
+    assert!(!legacy.console.secure_cookie);
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut c = config(&temp, "http://127.0.0.1:8090");
+    c.validate().unwrap();
+    c.console.session_days = 0;
+    assert!(c.validate().is_err());
+    c.console.session_days = 30;
+    c.llm.summary_chars = 100;
+    assert!(c.validate().is_err());
+    c.llm.summary_chars = 2000;
+    c.console.password = "short".into();
+    assert!(c.validate().is_err());
 }

@@ -14,6 +14,8 @@ pub struct Config {
     pub memory: MemoryConfig,
     pub persona: Persona,
     #[serde(default)]
+    pub console: ConsoleConfig,
+    #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
     pub qq: QqConfig,
@@ -87,6 +89,29 @@ pub struct LlmConfig {
     pub timeout_seconds: u64,
     pub context_chars: usize,
     pub history_turns: i64,
+    #[serde(default = "default_summary_chars")]
+    pub summary_chars: usize,
+}
+fn default_summary_chars() -> usize {
+    2000
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ConsoleConfig {
+    pub session_days: u64,
+    pub secure_cookie: bool,
+    #[serde(skip)]
+    pub password: String,
+}
+impl Default for ConsoleConfig {
+    fn default() -> Self {
+        Self {
+            session_days: 30,
+            secure_cookie: false,
+            password: String::new(),
+        }
+    }
 }
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -140,6 +165,17 @@ impl Config {
         config.llm_key = env::var("MNEME_LLM_API_KEY").context("MNEME_LLM_API_KEY is required")?;
         config.neo4j_password =
             env::var("MNEME_NEO4J_PASSWORD").context("MNEME_NEO4J_PASSWORD is required")?;
+        config.console.password = env::var("MNEME_CONSOLE_PASSWORD").unwrap_or_default();
+        if let Ok(value) = env::var("MNEME_CONSOLE_SESSION_DAYS") {
+            config.console.session_days = value
+                .parse()
+                .context("invalid MNEME_CONSOLE_SESSION_DAYS")?;
+        }
+        if let Ok(value) = env::var("MNEME_CONSOLE_SECURE_COOKIE") {
+            config.console.secure_cookie = value
+                .parse()
+                .context("invalid MNEME_CONSOLE_SECURE_COOKIE")?;
+        }
         if let Ok(value) = env::var("MNEME_TOOLS_ENABLED") {
             config.tools.enabled = value.parse().context("invalid MNEME_TOOLS_ENABLED")?;
         }
@@ -195,6 +231,20 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=365).contains(&self.console.session_days),
+            "console session_days must be 1..365"
+        );
+        ensure!(
+            self.console.password.is_empty()
+                || ((10..=128).contains(&self.console.password.chars().count())
+                    && !self.console.password.trim().is_empty()),
+            "console password must be 10..128 characters"
+        );
+        ensure!(
+            (500..=4000).contains(&self.llm.summary_chars),
+            "summary_chars must be 500..4000"
+        );
         if self.tools.enabled {
             ensure!(
                 (1..=200).contains(&self.tools.max_calls)
@@ -366,7 +416,8 @@ impl Config {
             "invalid persona size or name"
         );
         ensure!(
-            self.llm.context_chars >= persona_chars + self.memory.context_chars + 7000,
+            self.llm.context_chars
+                >= persona_chars + self.memory.context_chars + self.llm.summary_chars + 7000,
             "context_chars must fit the persona, memory JSON, and a 4000-character user message"
         );
         ensure!(

@@ -98,6 +98,68 @@ impl Store {
         Ok(session)
     }
 
+    /// One durable API/WebUI conversation; join legacy API history on first use.
+    /// QQ keeps its transport conversation and is excluded from this migration.
+    pub async fn conversation(&self) -> Result<String> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        if let Some(session) = sqlx::query_scalar::<_, String>(
+            "SELECT value FROM metadata WHERE key='conversation.id'",
+        )
+        .fetch_optional(&mut *tx)
+        .await?
+        {
+            return Ok(session);
+        }
+        let sessions: Vec<String> = sqlx::query_scalar("SELECT id FROM sessions s WHERE NOT EXISTS(SELECT 1 FROM qq_sessions q WHERE q.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM qq_inbox q WHERE q.session_id=s.id) ORDER BY created_at,id")
+            .fetch_all(&mut *tx).await?;
+        let session = sessions.first().cloned().unwrap_or_else(id);
+        sqlx::query("INSERT OR IGNORE INTO sessions(id,created_at) VALUES(?,?)")
+            .bind(&session)
+            .bind(now())
+            .execute(&mut *tx)
+            .await?;
+        for old in &sessions {
+            for table in ["messages", "turns", "assets", "tool_calls"] {
+                sqlx::query(&format!(
+                    "UPDATE {table} SET session_id=? WHERE session_id=?"
+                ))
+                .bind(&session)
+                .bind(old)
+                .execute(&mut *tx)
+                .await?;
+            }
+            sqlx::query("INSERT INTO conversation_aliases(session_id,conversation_id) VALUES(?,?)")
+                .bind(old)
+                .bind(&session)
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query(
+            "INSERT OR IGNORE INTO conversation_aliases(session_id,conversation_id) VALUES(?,?)",
+        )
+        .bind(&session)
+        .bind(&session)
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query("INSERT INTO metadata(key,value) VALUES('conversation.id',?)")
+            .bind(&session)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(session)
+    }
+
+    pub async fn resolve_conversation(&self, session: &str) -> Result<String> {
+        self.conversation().await?;
+        Ok(sqlx::query_scalar(
+            "SELECT conversation_id FROM conversation_aliases WHERE session_id=?",
+        )
+        .bind(session)
+        .fetch_optional(&self.pool)
+        .await?
+        .unwrap_or_else(|| session.to_owned()))
+    }
+
     pub async fn begin_turn(&self, session: &str, request: &str, text: &str) -> Result<BeginTurn> {
         self.begin_turn_with_assets(session, request, text, &[])
             .await
@@ -289,6 +351,20 @@ impl Store {
         job_id: &str,
     ) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let processed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)",
+        )
+        .bind(&source.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if processed {
+            sqlx::query("DELETE FROM jobs WHERE id=?")
+                .bind(job_id)
+                .execute(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            return Ok(());
+        }
         let source_seq: i64 = sqlx::query_scalar("SELECT seq FROM messages WHERE id=?")
             .bind(&source.id)
             .fetch_one(&mut *tx)
@@ -392,6 +468,10 @@ impl Store {
             )
             .await?;
         }
+        sqlx::query("INSERT OR IGNORE INTO extracted_messages(message_id) VALUES(?)")
+            .bind(&source.id)
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM jobs WHERE id=?")
             .bind(job_id)
             .execute(&mut *tx)

@@ -28,7 +28,7 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
   };
   const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.book}</svg>`;
-  const state = { chatSession: '', chatBusy: false, token: '', authMethod: 'token', route: 'overview', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, lastActivity: Date.now(), library: null, poll: 0 };
+  const state = { chatBusy: false, authenticated: false, route: 'overview', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, library: null, poll: 0 };
   const fmt = n => Number(n || 0).toLocaleString('zh-CN');
   const pct = n => `${Math.round(Number(n || 0) * 100)}%`;
   const date = (n, full = false) => n ? new Date(n * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', ...(full ? { year: 'numeric', hour: '2-digit', minute: '2-digit' } : {}) }) : '—';
@@ -40,16 +40,11 @@
   const entityArray = m => { try { return Array.isArray(m.entities) ? m.entities : JSON.parse(m.entities); } catch { return []; } };
   function toast(text, error = false) { const el = $('#toast'); el.textContent = text; el.className = `show${error ? ' error' : ''}`; clearTimeout(toast.timer); toast.timer = setTimeout(() => { el.className = ''; el.textContent = ''; }, 4200); }
   class ApiFailure extends Error { constructor(status, code) { super(code); this.status = status; this.code = code; } }
-  function lockIfIdle() {
-    if (state.token && Date.now() - state.lastActivity > 30 * 60 * 1000) { logout(); toast('闲置已超过 30 分钟，控制台已锁定。'); return true; }
-    return false;
-  }
   async function api(path, options = {}) {
-    if (lockIfIdle()) throw new ApiFailure(401, 'idle_timeout');
-    const response = await fetch(path, { ...options, cache: 'no-store', credentials: 'omit', redirect: 'error', signal: state.controller.signal, headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${state.token}`, ...options.headers } });
+    const response = await fetch(path, { ...options, cache: 'no-store', credentials: 'same-origin', redirect: 'error', signal: state.controller.signal, headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
     const body = await response.json();
     if (!response.ok) {
-      if (response.status === 401 && state.token && $('#page')) { logout(); toast('登录已失效，请重新登录。', true); }
+      if (response.status === 401 && state.authenticated && $('#page')) { clearLogin(); toast('登录已失效，请重新登录。', true); }
       throw new ApiFailure(response.status, body.error || 'request_failed');
     }
     return body;
@@ -74,32 +69,31 @@
   const heading = (action = '') => { const [, eyebrow, title, description] = pages[state.route]; return `<header class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1${state.route === 'overview' ? ' class="serif"' : ''}>${title}</h1><p class="subheading">${description}</p></div>${action}</header>`; };
   const newButton = () => `<button class="btn primary" data-new>${icon('plus')}新增记忆</button>`;
   function login() {
-    $('#app').innerHTML = `<main class="login"><section class="login-story"><a class="brand" href="/console/" aria-label="Mneme Console"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="login-copy"><div class="eyebrow">A SPACE FOR WHAT MATTERS</div><h1 class="serif">每一段记忆，<br>都值得被好好保管。</h1><p>在这里，整理那些值得留下的片段，<br>让每一次回想，都有迹可循。</p></div><div class="login-footer">PRIVATE BY DEFAULT · BUILT WITH CARE</div><div class="login-decoration"></div></section><section class="login-form-wrap"><form id="login-form" class="login-card"><div class="eyebrow">YOUR PRIVATE CONSOLE</div><h2>进入你的记忆空间</h2><p class="subheading">使用 WebUI 密码或 API Token 验证身份。</p><label class="field login-method">登录方式<select id="login-method"><option value="token">API Token</option><option value="password">WebUI 密码</option></select></label><label class="field" for="token"><span id="credential-label">API Token</span><input id="token" name="token" type="password" placeholder="输入你的访问凭证" autocomplete="off" spellcheck="false" minlength="32" maxlength="512" required autofocus></label><button class="btn primary" type="submit">解锁控制台${icon('arrow')}</button><div id="login-error" class="error-inline" role="alert"></div><div class="login-note">${icon('shield')}<span>凭证仅保存在当前页面内存中。刷新页面或闲置 30 分钟后，需重新验证身份。</span></div></form></section></main>`;
-    $('#login-method').value = state.authMethod;
-    const updateLoginMethod = () => {
-      state.authMethod = $('#login-method').value;
-      const password = state.authMethod === 'password';
-      $('#credential-label').textContent = password ? 'WebUI 密码' : 'API Token';
-      const input = $('#token'); input.value = ''; input.minLength = password ? 10 : 32; input.maxLength = password ? 128 : 512;
-      input.autocomplete = password ? 'current-password' : 'off';
-    };
-    $('#login-method').onchange = updateLoginMethod; updateLoginMethod();
+    $('#app').innerHTML = `<main class="login"><section class="login-story"><a class="brand" href="/console/" aria-label="Mneme Console"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="login-copy"><div class="eyebrow">A SPACE FOR WHAT MATTERS</div><h1 class="serif">每一段记忆，<br>都值得被好好保管。</h1><p>在这里，整理那些值得留下的片段，<br>让每一次回想，都有迹可循。</p></div><div class="login-footer">PRIVATE BY DEFAULT · BUILT WITH CARE</div><div class="login-decoration"></div></section><section class="login-form-wrap"><form id="login-form" class="login-card"><div class="eyebrow">YOUR PRIVATE CONSOLE</div><h2>进入你的记忆空间</h2><p class="subheading">使用 WebUI 密码验证身份。</p><label class="field" for="password">登录密码<input id="password" name="password" type="password" placeholder="输入你的 WebUI 密码" autocomplete="current-password" minlength="10" maxlength="128" required autofocus></label><button class="btn primary" type="submit">解锁控制台${icon('arrow')}</button><div id="login-error" class="error-inline" role="alert"></div><div class="login-note">${icon('shield')}<span>登录状态安全保存在浏览器中，刷新或重新打开页面后可继续使用。主动退出或登录过期后需重新验证。</span></div></form></section></main>`;
+    api('/v1/console/login').then(data => {
+      if (!data.password_configured && $('#login-error')) $('#login-error').textContent = '尚未设置登录密码。请运行安装脚本生成密码，或配置 MNEME_CONSOLE_PASSWORD 后重启服务。';
+    }).catch(() => {});
     $('#login-form').addEventListener('submit', async event => {
       event.preventDefault(); const button = $('button[type=submit]', event.target); button.disabled = true; $('#login-error').textContent = '';
-      const credential = $('#token').value; $('#token').value = '';
+      const credential = $('#password').value; $('#password').value = '';
       try {
-        if (state.authMethod === 'password') state.token = (await send('/v1/console/login', { password: credential })).token;
-        else { state.token = credential.trim(); await api('/v1/console/auth'); }
-        state.lastActivity = Date.now(); shell(); route();
+        await send('/v1/console/login', { password: credential }); state.authenticated = true;
+        shell(); route();
       }
-      catch (error) { state.token = ''; $('#login-error').textContent = errorText(error); button.disabled = false; $('#token').focus(); }
+      catch (error) { state.authenticated = false; $('#login-error').textContent = errorText(error); button.disabled = false; $('#password').focus(); }
     });
   }
-  function logout() {
-    if (state.token.startsWith('console-')) fetch('/v1/console/logout', { method: 'POST', credentials: 'omit', cache: 'no-store', keepalive: true, headers: { Authorization: `Bearer ${state.token}` } }).catch(() => {});
+  async function logout() {
+    try {
+      const response = await fetch('/v1/console/logout', { method: 'POST', credentials: 'same-origin', cache: 'no-store', keepalive: true });
+      if (!response.ok && response.status !== 401) throw new Error('logout_failed');
+    } catch { toast('退出未完成，请检查连接后重试。', true); return; }
+    clearLogin();
+  }
+  function clearLogin() {
     for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
-    state.chatSession = ''; state.chatBusy = false;
-    state.token = ''; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null;
+    state.chatBusy = false;
+    state.authenticated = false; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null;
     state.filter = { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }; clearTimeout(state.poll);
     for (const modal of $$('dialog')) { if (modal.open) modal.close(); modal.innerHTML = ''; }
     $('#toast').textContent = ''; $('#toast').className = ''; document.body.classList.remove('dialog-open'); login();
@@ -109,7 +103,7 @@
     $('#logout').onclick = logout; $('#refresh').onclick = route; $('#search-shortcut').onclick = focusSearch;
   }
   async function route() {
-    if (!state.token) return;
+    if (!state.authenticated) return;
     for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
     clearTimeout(state.poll); const epoch = ++state.epoch;
     state.route = Object.hasOwn(pages, location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
@@ -119,7 +113,7 @@
     try { await ({ overview, memories: library, retrieval: retrievalPage, system: systemPage, settings: settingsPage, chat: chatPage, tools: toolsPage }[state.route])(epoch); }
     catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#page').innerHTML = heading() + `<section class="panel">${empty('暂时无法读取数据', errorText(error), '<button class="btn" data-reload>重新加载</button>')}</section>`; }
   }
-  function focusSearch() { if (!state.token) return; if (state.route === 'memories') $('#memory-search')?.focus(); else { location.hash = 'memories'; setTimeout(() => $('#memory-search')?.focus(), 150); } }
+  function focusSearch() { if (!state.authenticated) return; if (state.route === 'memories') $('#memory-search')?.focus(); else { location.hash = 'memories'; setTimeout(() => $('#memory-search')?.focus(), 150); } }
   async function overview(epoch) {
     const [stats, latest] = await Promise.all([api('/v1/console/stats'), api('/v1/memories?limit=5&sort=created')]); if (epoch !== state.epoch) return;
     const pending = Number(stats.jobs.pending || 0) + Number(stats.jobs.running || 0);
@@ -180,7 +174,7 @@
       const value = { content: form.get('content').trim(), kind: form.get('kind'), importance: Number(form.get('importance')) / 100, confidence: Number(form.get('confidence')) / 100, entities: [...new Set(form.get('entities').split(/[,，、\n]/).map(e => e.trim()).filter(Boolean))], valid_until: form.get('valid_until') ? Math.floor(new Date(form.get('valid_until')).getTime() / 1000) : null, ...(m ? { expected_revision: m.revision } : {}) };
       if (!value.content || [...value.content].length > 500 || value.entities.length > 8 || value.entities.some(e => [...e].length > 60)) { errorEl.textContent = '请检查内容长度和实体数量。'; button.disabled = false; return; }
       try { const data = await send(m ? `/v1/memories/${encodeURIComponent(m.id)}` : '/v1/memories', value, m ? 'PUT' : 'POST'); closeDialog('editor'); if ($('#detail').open && m) await detail(data.memory.id); toast(m ? '记忆已更新，索引将在后台同步。' : '记忆已创建，索引将在后台同步。'); route(); }
-      catch (error) { if (error.name !== 'AbortError' && state.token) { errorEl.textContent = errorText(error); button.disabled = false; } }
+      catch (error) { if (error.name !== 'AbortError' && state.authenticated) { errorEl.textContent = errorText(error); button.disabled = false; } }
     };
   }
   async function remove(id) {
@@ -188,7 +182,7 @@
     try { m = (await api(`/v1/memories/${encodeURIComponent(id)}`)).memory; } catch (error) { if (error.name !== 'AbortError') toast(errorText(error), true); return; }
     if (epoch !== state.epoch) return;
     const dialog = openDialog('confirm', `<div class="dialog-head"><div><div class="eyebrow">DELETE MEMORY</div><h2>删除这段记忆？</h2></div><button class="icon-btn" data-close="confirm" aria-label="取消删除">${icon('close')}</button></div><div class="dialog-body"><div class="delete-preview prewrap">${esc(m.content.slice(0, 180))}${m.content.length > 180 ? '…' : ''}</div><p class="subheading">删除后不再参与召回。原始来源与修订记录会保留，便于追溯。</p><div id="delete-error" class="error-inline spaced" role="alert"></div></div><div class="dialog-footer"><button class="btn" data-close="confirm">保留记忆</button><button class="btn danger" id="confirm-delete">确认删除</button></div>`);
-    $('#confirm-delete', dialog).onclick = async event => { const button = event.currentTarget; button.disabled = true; try { await api(`/v1/memories/${encodeURIComponent(id)}?expected_revision=${m.revision}`, { method: 'DELETE' }); closeDialog('confirm'); closeDialog('detail'); state.detail = null; toast('记忆已删除，旧任务不会恢复它。'); route(); } catch (error) { if (error.name !== 'AbortError' && state.token) { $('#delete-error').textContent = errorText(error); button.disabled = false; } } };
+    $('#confirm-delete', dialog).onclick = async event => { const button = event.currentTarget; button.disabled = true; try { await api(`/v1/memories/${encodeURIComponent(id)}?expected_revision=${m.revision}`, { method: 'DELETE' }); closeDialog('confirm'); closeDialog('detail'); state.detail = null; toast('记忆已删除，旧任务不会恢复它。'); route(); } catch (error) { if (error.name !== 'AbortError' && state.authenticated) { $('#delete-error').textContent = errorText(error); button.disabled = false; } } };
   }
   async function retrievalPage() {
     $('#page').innerHTML = heading() + `<section class="panel"><form class="lab-query" id="retrieval-form"><label for="retrieval-query" class="sr-only">检索问题</label><textarea id="retrieval-query" maxlength="4000" placeholder="输入一个真实的问题，看看 Mneme 会想起什么…" required></textarea><div class="lab-bottom"><div class="examples"><button type="button" class="example" data-example="我平时喜欢喝什么咖啡？">咖啡偏好</button><button type="button" class="example" data-example="我现在住在哪座城市？">目前住址</button></div><button class="btn primary" type="submit" id="run-retrieval">运行检索${icon('arrow')}</button></div></form></section><div id="retrieval-results">${empty('从一个问题，开始回想', '这里会展示真实的召回候选、精排分数、筛除原因与最终结果。')}</div>`;
@@ -215,8 +209,8 @@
   }
   async function showImage(asset, container) {
     const epoch = state.epoch;
-    const response = await fetch(`/v1/assets/${encodeURIComponent(asset)}`, { credentials: 'omit', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { Authorization: `Bearer ${state.token}` } });
-    if (!response.ok) throw new ApiFailure(response.status, 'image_not_found');
+    const response = await fetch(`/v1/assets/${encodeURIComponent(asset)}`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: {} });
+    if (!response.ok) { if (response.status === 401) clearLogin(); throw new ApiFailure(response.status, 'image_not_found'); }
     const blob = await response.blob(); if (epoch !== state.epoch) return;
     const url = URL.createObjectURL(blob); objectURLs.add(url);
     const img = document.createElement('img'); img.src = url; img.alt = '会话图片'; img.className = 'chat-image'; container.append(img);
@@ -225,35 +219,31 @@
     return `<article class="tool-entry"><div class="between"><strong>${esc(toolLabels[call.action] || call.name)}</strong><span class="badge ${call.status === 'completed' ? 'green' : call.status === 'failed' ? 'red' : 'amber'}">${call.status === 'completed' ? '已完成' : call.status === 'failed' ? '失败' : '执行中'}${call.elapsed_ms != null ? ` · ${ms(call.elapsed_ms)}` : ''}</span></div>${call.error ? `<p class="error-inline">${esc(call.error)}</p>` : ''}<div class="source-list">${sources(call.result)}</div>${call.result?.asset_id ? `<button class="btn small" data-image="${esc(call.result.asset_id)}">查看图片</button>` : ''}</article>`;
   }
   async function chatPage(epoch) {
-    const [data, tools] = await Promise.all([api('/v1/sessions'), api('/v1/console/tools')]); if (epoch !== state.epoch) return;
-    if (!state.chatSession || !data.sessions.some(s => s.id === state.chatSession)) state.chatSession = data.sessions[0]?.id || '';
-    if (!state.chatSession) state.chatSession = (await send('/v1/sessions', {})).id;
-    if (epoch !== state.epoch) return;
-    const history = await api(`/v1/sessions/${state.chatSession}/messages`); if (epoch !== state.epoch) return;
-    $('#page').innerHTML = heading() + `<section class="panel chat-panel"><div class="chat-toolbar"><label class="sr-only" for="chat-session">选择会话</label><select id="chat-session" class="filter-select"${state.chatBusy ? ' disabled' : ''}>${data.sessions.length ? data.sessions.map(s => `<option value="${esc(s.id)}"${s.id === state.chatSession ? ' selected' : ''}>${esc(s.preview || `新会话 ${date(s.created_at, true)}`)}</option>`).join('') : `<option value="${esc(state.chatSession)}">新会话</option>`}</select><button class="btn small" id="new-chat"${state.chatBusy ? ' disabled' : ''}>${icon('plus')}新会话</button><span class="badge ${tools.state === 'healthy' ? 'green' : ''}">${tools.enabled ? tools.state === 'healthy' ? '浏览器工具可用' : '浏览器工具暂不可用' : '纯文本对话'}</span></div><div id="chat-messages" class="chat-messages">${history.messages.map(message => `<article class="chat-message ${message.role}"><small>${message.role === 'user' ? '你' : 'Mneme'}</small><div class="prewrap">${esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || empty('开始一段交流', '可以直接聊天，也可以让 Mneme 联网搜索、阅读网页或理解你上传的图片。')}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" maxlength="4000" placeholder="和 Mneme 聊聊，或请它搜索、阅读网页…"${state.chatBusy ? ' disabled' : ''}></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="between"><label class="btn small image-upload">${icon('plus')}上传图片<input id="chat-files" type="file" accept="image/png,image/jpeg,image/webp" multiple${!tools.enabled || state.chatBusy ? ' disabled' : ''}></label><small>最多 4 张 · PNG / JPEG / WebP · 每张 8 MiB · 需支持图片与工具调用的模型</small><button class="btn primary" id="send-chat"${state.chatBusy ? ' disabled' : ''}>发送${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form></section>`;
+    const [data, tools, history] = await Promise.all([api('/v1/conversation'), api('/v1/console/tools'), api('/v1/messages')]); if (epoch !== state.epoch) return;
+    const busy = state.chatBusy || Boolean(data.active_turn);
+    if (busy) state.poll = setTimeout(() => { if (epoch === state.epoch) route(); }, 1500);
+    $('#page').innerHTML = heading() + `<section class="panel chat-panel"><div class="chat-toolbar"><div class="conversation-status"><strong>持续对话</strong><small>上下文 ${fmt(data.context.history_turns)} / ${fmt(data.context.max_history_turns)} 轮 · ${fmt(data.context.context_chars)} 字上限 · 已压缩 ${fmt(data.context.compactions)} 次</small></div><span class="badge ${tools.state === 'healthy' ? 'green' : ''}">${tools.enabled ? tools.state === 'healthy' ? '浏览器工具可用' : '浏览器工具暂不可用' : '纯文本对话'}</span></div>${data.context.summary ? `<details class="conversation-summary"><summary>对话摘要 · 达到上限后自动整理并提取长期记忆</summary><p class="prewrap">${esc(data.context.summary)}</p></details>` : '<p class="conversation-hint">始终延续同一段对话，达到上下文上限后自动压缩，值得记住的信息会进入记忆库。</p>'}${data.active_turn ? '<p class="conversation-hint" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<div id="chat-messages" class="chat-messages">${history.messages.map(message => `<article class="chat-message ${message.role}"><small>${message.role === 'user' ? '你' : 'Mneme'}</small><div class="prewrap">${esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || empty('开始一段交流', '可以直接聊天，也可以让 Mneme 联网搜索、阅读网页或理解你上传的图片。')}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" maxlength="4000" placeholder="和 Mneme 聊聊，或请它搜索、阅读网页…"${busy ? ' disabled' : ''}></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="between"><label class="btn small image-upload">${icon('plus')}上传图片<input id="chat-files" type="file" accept="image/png,image/jpeg,image/webp" multiple${!tools.enabled || busy ? ' disabled' : ''}></label><small>最多 4 张 · PNG / JPEG / WebP · 每张 8 MiB · 需支持图片与工具调用的模型</small><button class="btn primary" id="send-chat"${busy ? ' disabled' : ''}>发送${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form></section>`;
     const uploads = [];
     const renderUploads = () => { $('#chat-attachments').innerHTML = uploads.map((a, i) => `<span class="tag">图片 ${i + 1}<button type="button" class="icon-btn" data-remove-upload="${i}" aria-label="移除图片 ${i + 1}">${icon('close')}</button></span>`).join(''); $$('[data-remove-upload]').forEach(button => { button.onclick = () => { uploads.splice(Number(button.dataset.removeUpload), 1); renderUploads(); }; }); };
-    $('#chat-session').onchange = event => { state.chatSession = event.target.value; route(); };
-    $('#new-chat').onclick = async () => { try { state.chatSession = (await send('/v1/sessions', {})).id; route(); } catch (error) { toast(errorText(error), true); } };
     $('#chat-files').onchange = async event => {
       const files = [...event.target.files]; event.target.value = ''; const errorEl = $('#chat-error'); errorEl.textContent = '';
       if (files.length + uploads.length > 4 || files.some(file => file.size > 8 * 1024 * 1024)) { errorEl.textContent = '最多上传 4 张图片，每张不超过 8 MiB。'; return; }
       const sendButton = $('#send-chat'); sendButton.disabled = true;
-      try { for (const file of files) { const asset = await api(`/v1/sessions/${state.chatSession}/images`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }); if (epoch !== state.epoch) return; uploads.push(asset.asset_id); renderUploads(); } }
+      try { for (const file of files) { const asset = await api('/v1/images', { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }); if (epoch !== state.epoch) return; uploads.push(asset.asset_id); renderUploads(); } }
       catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = '图片上传未完成，请检查图片格式与工具服务。'; }
       finally { if (epoch === state.epoch) sendButton.disabled = false; }
     };
     $('#chat-form').onsubmit = async event => {
-      event.preventDefault(); if (state.chatBusy) return;
+      event.preventDefault(); if (state.chatBusy || data.active_turn) return;
       const message = $('#chat-message').value.trim() || (uploads.length ? '请查看我上传的图片。' : ''); if (!message) return;
-      const assets = [...uploads]; const session = state.chatSession; const requestId = crypto.randomUUID(); const errorEl = $('#chat-error'); errorEl.textContent = ''; state.chatBusy = true;
-      for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea,#chat-session,#new-chat')) element.disabled = true;
+      const assets = [...uploads]; const requestId = crypto.randomUUID(); const errorEl = $('#chat-error'); errorEl.textContent = ''; state.chatBusy = true;
+      for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea')) element.disabled = true;
       const messages = $('#chat-messages'); $('.empty', messages)?.remove();
       messages.insertAdjacentHTML('beforeend', `<article class="chat-message user"><small>你</small><div class="prewrap">${esc(message)}</div></article><article class="chat-message assistant" id="chat-current"><small>Mneme</small><div class="prewrap" id="chat-answer"></div><div class="chat-tools" id="chat-live-tools"></div><small id="chat-progress">正在思考…</small></article>`);
       let persisted = false; let failed = false;
       try {
-        const response = await fetch(`/v1/sessions/${session}/chat`, { method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { Authorization: `Bearer ${state.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: requestId, message, assets }) });
-        if (!response.ok) throw new ApiFailure(response.status, (await response.json()).error);
+        const response = await fetch('/v1/chat', { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: requestId, message, assets }) });
+        if (!response.ok) { if (response.status === 401) clearLogin(); throw new ApiFailure(response.status, (await response.json()).error); }
         const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
         while (true) {
           const { value, done } = await reader.read(); buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
@@ -264,6 +254,7 @@
             const raw = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'); if (!raw) continue;
             const data = JSON.parse(raw); if (name === 'done') persisted = data.persisted; if (name === 'error') failed = true;
             if (epoch !== state.epoch) continue;
+            if (name === 'compaction') $('#chat-progress').textContent = data.status === 'running' ? '正在整理历史，延续对话…' : '历史已整理，正在思考…';
             if (name === 'delta') { $('#chat-answer').textContent += data.content; $('#chat-progress').textContent = '正在回复…'; }
             if (name === 'tool') { const id = `tool-${data.id}`; let element = document.getElementById(id); if (!element) { element = document.createElement('div'); element.id = id; $('#chat-live-tools').append(element); } element.innerHTML = toolMarkup(data); $('#chat-progress').textContent = data.status === 'running' ? `正在${toolLabels[data.action] || '执行工具'}…` : '正在继续思考…'; }
             if (name === 'error') $('#chat-progress').textContent = '本轮失败，临时输出未保存。';
@@ -272,7 +263,7 @@
         }
         if (!persisted) throw new Error(failed ? 'generation_failed' : 'stream_interrupted');
       } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = `本轮未确认完成，可稍后刷新会话检查。${errorText(error)}`; }
-      finally { state.chatBusy = false; if (epoch === state.epoch && state.token) { if (persisted) route(); else { for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea,#chat-session,#new-chat')) element.disabled = false; } } }
+      finally { state.chatBusy = false; if (epoch === state.epoch && state.authenticated) { if (persisted) route(); else { for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea')) element.disabled = false; } } }
     };
     const last = $('.chat-message:last-child'); last?.scrollIntoView({ block: 'nearest' });
   }
@@ -291,10 +282,10 @@
       <section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
       <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
       <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
-      <section class="panel"><div class="panel-head between"><div><h2>WebUI 登录密码</h2><p class="subheading">设置独立密码后，可以直接用密码登录控制台。</p></div><span class="badge ${data.password_configured ? 'green' : ''}">${data.password_configured ? '已设置' : '未设置'}</span></div>
-      <form id="password-form" class="settings-form">${data.password_configured && state.authMethod === 'password' ? '<label class="field">当前密码<input name="current_password" type="password" autocomplete="current-password" maxlength="128" required></label>' : ''}
+      <section class="panel"><div class="panel-head between"><div><h2>WebUI 登录密码</h2><p class="subheading">控制台仅使用密码登录，刷新页面或重启服务后保持登录。</p></div><span class="badge ${data.password_configured ? 'green' : ''}">${data.password_configured ? '已设置' : '未设置'}</span></div>
+      <form id="password-form" class="settings-form">${data.password_configured ? '<label class="field">当前密码<input name="current_password" type="password" autocomplete="current-password" maxlength="128" required></label>' : ''}
       <label class="field">新密码<input name="new_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required><span class="hint">10–128 个字符，支持中文和空格。</span></label><label class="field">确认新密码<input name="confirm_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
-      <small>保存或移除密码后，所有密码登录会话立即失效。API Token 始终可用于登录和找回密码。</small><div id="password-error" class="error-inline" role="alert"></div><div class="settings-actions">${data.password_configured ? '<button type="button" class="btn" id="remove-password">移除 WebUI 密码</button>' : ''}<button type="submit" class="btn primary">保存密码${icon('shield')}</button></div></form></section>
+      <small>修改密码后，所有已登录设备立即退出。登录有效期为 ${fmt(data.session_days)} 天，使用时自动续期。</small><div id="password-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="submit" class="btn primary">保存密码${icon('shield')}</button></div></form></section>
       <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div>`;
     const personaForm = $('#persona-form');
     $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };
@@ -309,7 +300,7 @@
     const savePassword = async newPassword => {
       const current = passwordForm.elements.current_password?.value || '';
       await send('/v1/console/password', { current_password: current, new_password: newPassword }, 'PUT');
-      state.authMethod = newPassword ? 'password' : 'token'; logout(); toast(newPassword ? '密码已保存，请重新登录。' : 'WebUI 密码已移除，请使用 API Token 登录。');
+      await logout(); toast('密码已保存，请重新登录。');
     };
     passwordForm.onsubmit = async event => {
       event.preventDefault(); const button = $('button[type=submit]', passwordForm); const errorEl = $('#password-error'); errorEl.textContent = '';
@@ -318,16 +309,12 @@
       try { await savePassword(passwordForm.elements.new_password.value); }
       catch (error) { if (error.name !== 'AbortError') errorEl.textContent = errorText(error); button.disabled = false; }
     };
-    if ($('#remove-password')) $('#remove-password').onclick = () => {
-      const dialog = openDialog('confirm', `<header class="dialog-head"><h2>移除 WebUI 登录密码？</h2></header><div class="dialog-body"><p class="subheading">移除后仅能使用 API Token 登录，所有密码登录会话都会失效。</p><div class="error-inline spaced" id="remove-password-error" role="alert"></div></div><footer class="dialog-footer"><button class="btn" data-close="confirm">取消</button><button class="btn danger" id="confirm-remove-password">确认移除</button></footer>`);
-      $('#confirm-remove-password', dialog).onclick = async event => { const button = event.currentTarget; button.disabled = true; try { await savePassword(''); } catch (error) { if (error.name !== 'AbortError') $('#remove-password-error', dialog).textContent = errorText(error); button.disabled = false; } };
-    };
     $('#reset-agent').onclick = () => {
       const dialog = openDialog('confirm', `<form id="reset-form"><header class="dialog-head"><div><div class="eyebrow">RESET AGENT</div><h2>确认重新开始？</h2></div><button type="button" class="icon-btn" data-close="confirm" aria-label="取消重置">${icon('close')}</button></header><div class="dialog-body stack"><p class="subheading">所有对话、长期记忆及其来源和修订记录、QQ 个人会话与待发送回复都将被清空。此操作无法撤销，已有备份不受影响。</p><label class="check-label"><input type="checkbox" name="reset_persona">同时恢复配置文件中的默认性格</label><label class="field">输入 RESET 确认<input name="confirmation" autocomplete="off" spellcheck="false" pattern="RESET" required placeholder="RESET"></label><div class="error-inline" id="reset-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="confirm">取消</button><button type="submit" class="btn danger">确认重置</button></footer></form>`);
       $('#reset-form', dialog).onsubmit = async event => {
         event.preventDefault(); const form = event.target; const button = $('button[type=submit]', form); button.disabled = true; $('#reset-error').textContent = '';
         try { await send('/v1/admin/reset', { confirmation: form.elements.confirmation.value, reset_persona: form.elements.reset_persona.checked }); closeDialog('confirm'); state.detail = null; state.library = null; toast('Agent 已重置，对话与记忆已清空，图谱将在后台清理。'); route(); }
-        catch (error) { if (error.name !== 'AbortError' && state.token) $('#reset-error', dialog).textContent = errorText(error); button.disabled = false; }
+        catch (error) { if (error.name !== 'AbortError' && state.authenticated) $('#reset-error', dialog).textContent = errorText(error); button.disabled = false; }
       };
     };
   }
@@ -349,10 +336,17 @@
   });
   for (const dialog of $$('dialog')) { dialog.addEventListener('close', () => { if (!$$('dialog[open]').length) document.body.classList.remove('dialog-open'); }); dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeDialog(dialog.id); } }); }
   window.addEventListener('hashchange', () => { for (const dialog of $$('dialog')) if (dialog.open) closeDialog(dialog.id); state.detail = null; route(); });
-  document.addEventListener('keydown', event => { if (event.key === '/' && state.token && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$$('dialog[open]').length) { event.preventDefault(); focusSearch(); } });
-  for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, () => { lockIfIdle(); state.lastActivity = Date.now(); }, { passive: true });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) lockIfIdle(); });
-  window.addEventListener('pagehide', () => { if (state.token) logout(); });
-  setInterval(lockIfIdle, 30000);
-  login();
+  document.addEventListener('keydown', event => { if (event.key === '/' && state.authenticated && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$$('dialog[open]').length) { event.preventDefault(); focusSearch(); } });
+  async function restoreLogin() {
+    $('#app').innerHTML = loading('正在恢复登录…');
+    try { await api('/v1/console/auth'); state.authenticated = true; shell(); await route(); }
+    catch (error) {
+      if (error.status === 401) login();
+      else {
+        $('#app').innerHTML = `<main class="login-form-wrap">${empty('暂时无法连接控制台', '登录状态已保留，请检查服务连接后重试。', '<button class="btn" id="retry-login">重新连接</button>')}</main>`;
+        $('#retry-login').onclick = restoreLogin;
+      }
+    }
+  }
+  restoreLogin();
 })();

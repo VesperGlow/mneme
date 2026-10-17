@@ -20,6 +20,9 @@ class ConfigureTest(unittest.TestCase):
             self.assertEqual(first['MNEME_LLM_BASE_URL'], 'https://provider.invalid/v1')
             self.assertEqual(first['MNEME_LLM_MODEL'], 'auto')
             self.assertGreaterEqual(len(first['MNEME_API_TOKEN']), 32)
+            self.assertGreaterEqual(len(first['MNEME_CONSOLE_PASSWORD']), 10)
+            self.assertNotEqual(first['MNEME_CONSOLE_PASSWORD'], first['MNEME_API_TOKEN'])
+            self.assertEqual((dest / 'console-password').read_text().strip(), first['MNEME_CONSOLE_PASSWORD'])
             self.assertGreaterEqual(len(first['MNEME_NEO4J_PASSWORD']), 16)
             self.assertNotEqual(first['MNEME_API_TOKEN'], first['MNEME_NEO4J_PASSWORD'])
             self.assertGreaterEqual(len(first['MNEME_TOOLS_TOKEN']), 32)
@@ -35,7 +38,7 @@ class ConfigureTest(unittest.TestCase):
             third = configure.configure(source, dest)
             self.assertEqual(third, first)
             self.assertEqual((dest / 'config.toml').read_text(), 'persona = "keep me"\n')
-            for path in [source, dest / 'app.env', dest / 'neo4j.env', dest / 'console-token', dest / 'tools.env']:
+            for path in [source, dest / 'app.env', dest / 'neo4j.env', dest / 'console-token', dest / 'console-password', dest / 'tools.env']:
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(dest.stat().st_mode & 0o777, 0o700)
             self.assertEqual((dest / 'console-token').read_text().strip(), first['MNEME_API_TOKEN'])

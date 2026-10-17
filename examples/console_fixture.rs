@@ -8,6 +8,8 @@ async fn main() -> anyhow::Result<()> {
     let temp = tempfile::TempDir::new()?;
     let (base, upstream) = common::fake_services().await;
     let mut config: Config = toml::from_str(include_str!("../config/default.toml"))?;
+    config.console.password = "console-fixture-password".into();
+    config.llm.history_turns = 2;
     config.llm.model = "fixture-model".into();
     config.api_token = "console-test-token-01234567890123456789".into();
     config.llm_key = "fixture-only".into();

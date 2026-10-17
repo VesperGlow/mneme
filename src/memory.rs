@@ -503,7 +503,10 @@ async fn extract(app: &App, job: &Job) -> Result<()> {
         candidates.push((candidate, until));
     }
     if candidates.is_empty() {
-        return app.store.ack_job(&job.id).await;
+        return app
+            .store
+            .apply_candidates(&source, Vec::new(), &job.id)
+            .await;
     }
     let documents: Vec<_> = candidates.iter().map(|(c, _)| c.content.clone()).collect();
     let embeddings = app.models.embed(&documents, false).await?;
