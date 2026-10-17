@@ -27,6 +27,7 @@ fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     c.llm.history_turns = 2;
     c.llm.summary_chars = 500;
     c.memory.poll_seconds = 1;
+    c.memory.extract_every_chars = 1;
     c
 }
 async fn request(router: &Router, method: &str, path: &str, body: Value) -> (StatusCode, String) {
@@ -85,11 +86,29 @@ async fn legacy_api_history_merges_once_and_all_clients_continue_after_restart()
     let (base, fake) = common::fake_services().await;
     let c = config(&temp, &base);
     let store = Store::open(&c.database).await.unwrap();
-    let first = store.create_session().await.unwrap();
+    let first = id();
+    sqlx::query("INSERT INTO sessions(id,created_at) VALUES(?,?)")
+        .bind(&first)
+        .bind(now())
+        .execute(&store.pool)
+        .await
+        .unwrap();
     let a = seed(&store, &first, "旧窗口的第一条消息").await;
-    let second = store.create_session().await.unwrap();
+    let second = id();
+    sqlx::query("INSERT INTO sessions(id,created_at) VALUES(?,?)")
+        .bind(&second)
+        .bind(now())
+        .execute(&store.pool)
+        .await
+        .unwrap();
     seed(&store, &second, "旧窗口的第二条消息").await;
-    let qq = store.create_session().await.unwrap();
+    let qq = id();
+    sqlx::query("INSERT INTO sessions(id,created_at) VALUES(?,?)")
+        .bind(&qq)
+        .bind(now())
+        .execute(&store.pool)
+        .await
+        .unwrap();
     sqlx::query(
         "INSERT INTO qq_sessions(app_id,user_openid,session_id) VALUES('fixture','owner',?)",
     )
@@ -123,8 +142,8 @@ async fn legacy_api_history_merges_once_and_all_clients_continue_after_restart()
         1
     );
     let history = data(&router, "/v1/messages").await;
-    assert_eq!(history["messages"].as_array().unwrap().len(), 4);
-    assert!(!history.to_string().contains("QQ 独立"));
+    assert_eq!(history["messages"].as_array().unwrap().len(), 6);
+    assert!(history.to_string().contains("QQ 独立"));
     assert_eq!(
         data(&router, &format!("/v1/sessions/{second}/messages")).await["messages"],
         history["messages"]
@@ -149,7 +168,8 @@ async fn legacy_api_history_merges_once_and_all_clients_continue_after_restart()
     let app = App::new(c, rx).await.unwrap();
     let router = api::router(app.clone());
     assert_eq!(data(&router, "/v1/conversation").await["id"], current);
-    assert_eq!(app.store.history(&qq, 100).await.unwrap().len(), 2);
+    assert_eq!(app.store.resolve_conversation(&qq).await.unwrap(), current);
+    assert_eq!(app.store.history(&current, 100).await.unwrap().len(), 6);
     fake.abort();
 }
 
@@ -168,11 +188,6 @@ async fn compaction_preserves_summary_raw_evidence_and_durable_memory_jobs_acros
             .await
             .contains("event: done")
     );
-    // Legacy data or a manually cleared queue must still get an extraction job when archived.
-    sqlx::query("DELETE FROM jobs")
-        .execute(&app.store.pool)
-        .await
-        .unwrap();
     let wire = chat(&router, "继续刚才的话题，我住在哪里？").await;
     assert!(
         wire.contains("event: compaction") && wire.contains("event: done"),
@@ -202,7 +217,7 @@ async fn compaction_preserves_summary_raw_evidence_and_durable_memory_jobs_acros
         .fetch_one(&app.store.pool)
         .await
         .unwrap();
-    assert_eq!(jobs, 2);
+    assert_eq!(jobs, 3);
     drop(router);
     app.store.pool.close().await;
     drop(app);
@@ -272,5 +287,195 @@ async fn character_limit_compacts_before_turn_limit_and_failed_summary_keeps_wat
         0
     );
     assert_eq!(app.store.history(&id, 100).await.unwrap().len(), 6);
+    fake.abort();
+}
+
+#[tokio::test]
+async fn global_context_batches_every_ten_thousand_characters_across_transports_and_restart() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut c = config(&temp, &base);
+    c.llm.history_turns = 1000;
+    c.memory.extract_every_chars = 10_000;
+    assert_eq!(c.llm.context_chars, 100_000);
+    c.validate().unwrap();
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c.clone(), rx.clone()).await.unwrap();
+    let text = format!("我住在成都{}", "甲".repeat(3995));
+    assert_eq!(text.chars().count(), 4000);
+    let platform_id = id();
+    app.store
+        .qq_accept(
+            "fixture",
+            mneme::qq_store::Incoming {
+                message_id: platform_id.clone(),
+                sender: "owner".into(),
+                content: text.clone(),
+                expires_at: now() + 300,
+            },
+        )
+        .await
+        .unwrap();
+    let session = app.store.conversation().await.unwrap();
+    let qq_session: String = sqlx::query_scalar("SELECT session_id FROM qq_sessions")
+        .fetch_one(&app.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(qq_session, session);
+    let request = mneme::qq_store::delivery_id("fixture", &platform_id);
+    let BeginTurn::Started(qq_user) = app
+        .store
+        .begin_turn(&session, &request, &text)
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(matches!(
+        app.store
+            .begin_turn(&session, &id(), "另一端的消息")
+            .await
+            .unwrap(),
+        BeginTurn::Busy
+    ));
+    app.store.complete_turn(&qq_user, "已记住").await.unwrap();
+    assert_eq!(app.store.extraction_pending_chars().await.unwrap(), 4003);
+    assert_eq!(app.store.job_stats().await.unwrap()["pending"], 0);
+    app.store.pool.close().await;
+    drop(app);
+    let app = App::new(c, rx).await.unwrap();
+    assert_eq!(app.store.extraction_pending_chars().await.unwrap(), 4003);
+    let BeginTurn::Started(web) = app
+        .store
+        .begin_turn(&session, &id(), &"乙".repeat(4000))
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    app.store
+        .complete_turn(&web, &"答".repeat(1997))
+        .await
+        .unwrap();
+    assert_eq!(app.store.extraction_pending_chars().await.unwrap(), 0);
+    let jobs: Vec<(String, String)> =
+        sqlx::query_as("SELECT id,payload FROM jobs WHERE kind='extract'")
+            .fetch_all(&app.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(jobs.len(), 1);
+    let payload: Value = serde_json::from_str(&jobs[0].1).unwrap();
+    assert_eq!(payload["message_ids"], json!([qq_user.id, web.id]));
+    assert!(app.store.active_memories(10).await.unwrap().is_empty());
+    let router = api::router(app.clone());
+    let wire = chat(&router, "我住在哪？").await;
+    assert!(
+        wire.contains("你住在成都"),
+        "QQ context should reach API before extraction: {wire}"
+    );
+    let worker = tokio::spawn(mneme::memory::worker(app.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if !app.store.active_memories(10).await.unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let memory = app.store.active_memories(10).await.unwrap().pop().unwrap();
+    let sources = app.store.sources(&memory.id).await.unwrap();
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[0]["message_id"], qq_user.id);
+    assert_eq!(sources[0]["quote"], "我住在成都");
+    assert_eq!(
+        app.llm.metrics.snapshot().requests,
+        2,
+        "one generation and one batch extraction"
+    );
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    fake.abort();
+}
+
+#[tokio::test]
+async fn hundred_thousand_context_does_not_compact_at_sixteen_turns() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut c = config(&temp, &base);
+    c.llm.history_turns = 1000;
+    c.memory.extract_every_chars = 10_000;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let router = api::router(app.clone());
+    let message = "字".repeat(4000);
+    for _ in 0..22 {
+        assert!(chat(&router, &message).await.contains("event: done"));
+    }
+    assert_eq!(
+        data(&router, "/v1/conversation").await["context"]["compactions"],
+        0
+    );
+    let mut compacted = false;
+    for _ in 0..5 {
+        let wire = chat(&router, &message).await;
+        assert!(wire.contains("event: done"), "{wire}");
+        compacted |= wire.contains("event: compaction");
+    }
+    assert!(compacted);
+    let state = data(&router, "/v1/conversation").await;
+    assert_eq!(state["context"]["context_chars"], 100_000);
+    assert!(
+        state["context"]["summary"]
+            .as_str()
+            .unwrap()
+            .chars()
+            .count()
+            <= 2000
+    );
+    assert_eq!(
+        data(&router, "/v1/messages").await["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        54
+    );
+    fake.abort();
+}
+
+#[tokio::test]
+async fn batch_with_fabricated_source_cannot_commit_facts_or_extraction_receipts() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut c = config(&temp, &base);
+    c.memory.max_attempts = 1;
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let router = api::router(app.clone());
+    assert!(
+        chat(&router, "我住在成都 __bad_batch_source__")
+            .await
+            .contains("event: done")
+    );
+    let worker = tokio::spawn(mneme::memory::worker(app.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if app.store.job_stats().await.unwrap()["dead"] == 1 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(app.store.active_memories(10).await.unwrap().is_empty());
+    let receipts: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM extracted_messages")
+        .fetch_one(&app.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(receipts, 0);
+    stop.send(true).unwrap();
+    worker.await.unwrap();
     fake.abort();
 }

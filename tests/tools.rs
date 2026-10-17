@@ -243,7 +243,8 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
     assert_eq!(seen.lock().unwrap().actions.len(), calls);
     let other = app.store.create_session().await.unwrap();
     let (_, wire) = chat(&router, &other, &format!("查看图片标识 {asset}"), vec![]).await;
-    assert!(wire.contains("image_not_found"));
+    assert_eq!(other, session);
+    assert!(!wire.contains("image_not_found"));
     assert!(wire.contains("event: done"));
     assert!(!wire.contains("DSML"));
     let (_, wire) = chat(&router, &session, &format!("查看图片标识 {asset}"), vec![]).await;

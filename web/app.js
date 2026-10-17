@@ -218,20 +218,25 @@
   function toolMarkup(call) {
     return `<article class="tool-entry"><div class="between"><strong>${esc(toolLabels[call.action] || call.name)}</strong><span class="badge ${call.status === 'completed' ? 'green' : call.status === 'failed' ? 'red' : 'amber'}">${call.status === 'completed' ? '已完成' : call.status === 'failed' ? '失败' : '执行中'}${call.elapsed_ms != null ? ` · ${ms(call.elapsed_ms)}` : ''}</span></div>${call.error ? `<p class="error-inline">${esc(call.error)}</p>` : ''}<div class="source-list">${sources(call.result)}</div>${call.result?.asset_id ? `<button class="btn small" data-image="${esc(call.result.asset_id)}">查看图片</button>` : ''}</article>`;
   }
+  const contextUsage = context => `上下文 ${fmt(context.history_turns)} / ${fmt(context.max_history_turns)} 轮 · ${fmt(context.context_chars)} 字上限 · 已压缩 ${fmt(context.compactions)} 次 · 记忆提取 ${fmt(context.memory_pending_chars)} / ${fmt(context.memory_extract_chars)} 字`;
+  function transcriptMarkup(history) {
+    return history.messages.map(message => `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small><div class="prewrap">${esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || empty('开始一段交流', '这里会显示 QQ 和网页中的聊天记录，也可以直接发送消息继续交流。');
+  }
   async function chatPage(epoch) {
-    const [data, tools, history] = await Promise.all([api('/v1/conversation'), api('/v1/console/tools'), api('/v1/messages')]); if (epoch !== state.epoch) return;
+    const [tools, history] = await Promise.all([api('/v1/console/tools'), api('/v1/console/messages')]); if (epoch !== state.epoch) return;
+    const data = history.conversation;
     const busy = state.chatBusy || Boolean(data.active_turn);
     if (busy) state.poll = setTimeout(() => { if (epoch === state.epoch) route(); }, 1500);
-    $('#page').innerHTML = heading() + `<section class="panel chat-panel"><div class="chat-toolbar"><div class="conversation-status"><strong>持续对话</strong><small>上下文 ${fmt(data.context.history_turns)} / ${fmt(data.context.max_history_turns)} 轮 · ${fmt(data.context.context_chars)} 字上限 · 已压缩 ${fmt(data.context.compactions)} 次</small></div><span class="badge ${tools.state === 'healthy' ? 'green' : ''}">${tools.enabled ? tools.state === 'healthy' ? '浏览器工具可用' : '浏览器工具暂不可用' : '纯文本对话'}</span></div>${data.context.summary ? `<details class="conversation-summary"><summary>对话摘要 · 达到上限后自动整理并提取长期记忆</summary><p class="prewrap">${esc(data.context.summary)}</p></details>` : '<p class="conversation-hint">始终延续同一段对话，达到上下文上限后自动压缩，值得记住的信息会进入记忆库。</p>'}${data.active_turn ? '<p class="conversation-hint" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<div id="chat-messages" class="chat-messages">${history.messages.map(message => `<article class="chat-message ${message.role}"><small>${message.role === 'user' ? '你' : 'Mneme'}</small><div class="prewrap">${esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || empty('开始一段交流', '可以直接聊天，也可以让 Mneme 联网搜索、阅读网页或理解你上传的图片。')}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" maxlength="4000" placeholder="和 Mneme 聊聊，或请它搜索、阅读网页…"${busy ? ' disabled' : ''}></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="between"><label class="btn small image-upload">${icon('plus')}上传图片<input id="chat-files" type="file" accept="image/png,image/jpeg,image/webp" multiple${!tools.enabled || busy ? ' disabled' : ''}></label><small>最多 4 张 · PNG / JPEG / WebP · 每张 8 MiB · 需支持图片与工具调用的模型</small><button class="btn primary" id="send-chat"${busy ? ' disabled' : ''}>发送${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form></section>`;
-    const uploads = [];
+    $('#page').innerHTML = heading() + `<section class="panel chat-panel"><div class="chat-toolbar"><div class="conversation-status"><strong>持续对话</strong><small id="chat-context">${esc(contextUsage(data.context))}</small></div><span class="badge ${tools.state === 'healthy' ? 'green' : ''}">${tools.enabled ? tools.state === 'healthy' ? '浏览器工具可用' : '浏览器工具暂不可用' : '纯文本对话'}</span></div>${data.context.summary ? `<details class="conversation-summary"><summary>对话摘要 · 全局共享，达到上限自动整理</summary><p class="prewrap">${esc(data.context.summary)}</p></details>` : '<p class="conversation-hint">QQ、网页和 API 共用上下文，达到上限自动压缩，累计新增文字后定期提取长期记忆。</p>'}${data.active_turn ? '<p class="conversation-hint" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<div id="chat-messages" class="chat-messages">${transcriptMarkup(history)}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" maxlength="4000" placeholder="和 Mneme 聊聊，或请它搜索、阅读网页…"${busy ? ' disabled' : ''}></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="between"><label class="btn small image-upload">${icon('plus')}上传图片<input id="chat-files" type="file" accept="image/png,image/jpeg,image/webp" multiple${!tools.enabled || busy ? ' disabled' : ''}></label><small>最多 4 张 · PNG / JPEG / WebP · 每张 8 MiB · 需支持图片与工具调用的模型</small><button class="btn primary" id="send-chat"${busy ? ' disabled' : ''}>发送${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form></section>`;
+    const uploads = []; let uploading = false;
     const renderUploads = () => { $('#chat-attachments').innerHTML = uploads.map((a, i) => `<span class="tag">图片 ${i + 1}<button type="button" class="icon-btn" data-remove-upload="${i}" aria-label="移除图片 ${i + 1}">${icon('close')}</button></span>`).join(''); $$('[data-remove-upload]').forEach(button => { button.onclick = () => { uploads.splice(Number(button.dataset.removeUpload), 1); renderUploads(); }; }); };
     $('#chat-files').onchange = async event => {
       const files = [...event.target.files]; event.target.value = ''; const errorEl = $('#chat-error'); errorEl.textContent = '';
       if (files.length + uploads.length > 4 || files.some(file => file.size > 8 * 1024 * 1024)) { errorEl.textContent = '最多上传 4 张图片，每张不超过 8 MiB。'; return; }
-      const sendButton = $('#send-chat'); sendButton.disabled = true;
+      const sendButton = $('#send-chat'); sendButton.disabled = true; uploading = true;
       try { for (const file of files) { const asset = await api('/v1/images', { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }); if (epoch !== state.epoch) return; uploads.push(asset.asset_id); renderUploads(); } }
       catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = '图片上传未完成，请检查图片格式与工具服务。'; }
-      finally { if (epoch === state.epoch) sendButton.disabled = false; }
+      finally { uploading = false; if (epoch === state.epoch) sendButton.disabled = Boolean(data.active_turn); }
     };
     $('#chat-form').onsubmit = async event => {
       event.preventDefault(); if (state.chatBusy || data.active_turn) return;
@@ -266,6 +271,31 @@
       finally { state.chatBusy = false; if (epoch === state.epoch && state.authenticated) { if (persisted) route(); else { for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea')) element.disabled = false; } } }
     };
     const last = $('.chat-message:last-child'); last?.scrollIntoView({ block: 'nearest' });
+    if (!busy) {
+      let previous = JSON.stringify([history.messages, history.assets, history.tool_calls]);
+      const refreshTranscript = async () => {
+        if (epoch !== state.epoch || state.chatBusy) return;
+        try {
+          if (!document.hidden) {
+            const latest = await api('/v1/console/messages');
+            if (epoch !== state.epoch || state.chatBusy) return;
+            data.active_turn = latest.conversation.active_turn;
+            $('#chat-context').textContent = contextUsage(latest.conversation.context);
+            for (const element of $$('#chat-form button,#chat-form textarea')) element.disabled = uploading || Boolean(data.active_turn);
+            $('#chat-files').disabled = uploading || !tools.enabled || Boolean(data.active_turn);
+            const revision = JSON.stringify([latest.messages, latest.assets, latest.tool_calls]);
+            if (revision !== previous) {
+              const container = $('#chat-messages');
+              const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+              container.innerHTML = transcriptMarkup(latest); previous = revision;
+              if (atBottom) container.scrollTop = container.scrollHeight;
+            }
+          }
+        } catch (error) { if (error.name === 'AbortError' || epoch !== state.epoch) return; }
+        if (epoch === state.epoch && !state.chatBusy) state.poll = setTimeout(refreshTranscript, 3000);
+      };
+      state.poll = setTimeout(refreshTranscript, 3000);
+    }
   }
   async function toolsPage(epoch) {
     const [status, data] = await Promise.all([api('/v1/console/tools'), api('/v1/console/tools/calls')]); if (epoch !== state.epoch) return;

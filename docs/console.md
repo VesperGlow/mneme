@@ -31,9 +31,9 @@ Console 仍面向单用户，没有多用户角色。新安装自动生成与 AP
 
 ## 持续对话与压缩
 
-API、终端和 WebUI 共用同一段对话，不提供新建和切换窗口。旧 API 会话首次使用时合并，原始消息、图片、工具记录和来源保留，旧 ID 指向同一段对话。QQ 保留独立的传输历史，使用同一套压缩机制和长期记忆库。
+QQ、API、终端和 WebUI 共用同一段对话，不提供新建和切换窗口。旧 API 和 QQ 会话在启动时合并，原始消息、图片、工具记录和来源保留，旧 ID 指向同一段对话。各渠道共用同一个上下文与生成锁；旧会话 ID 继续作为别名使用，QQ 的 `/新会话` 不会再分叉上下文。
 
-在 `[llm]` 配置 `history_turns`（默认 16）、`context_chars`（默认 16000）和 `summary_chars`（默认 2000）。下一轮会触及轮数或超过字符预算时，合并旧摘要与较早原文，保留约一半近期原文；摘要、进度和待提取记忆任务持久落库后再继续回复。提取始终从原始用户消息取证，遵守原有筛选规则。压缩失败不推进游标或删除历史。对话页显示用量、压缩次数、摘要以及整理进度；刷新时若上一轮仍在生成，会等待并自动显示完成结果。
+在 `[llm]` 配置 `history_turns`（默认 1000）、`context_chars`（默认 100000）和 `summary_chars`（默认 2000）。下一轮会触及轮数或超过字符预算时，合并旧摘要与较早原文，保留约一半近期原文；摘要与进度持久落库后再继续回复。记忆提取按 `[memory].extract_every_chars=10000` 独立累计完整用户/助手原文字数，每满 1 万字提交一次批量任务；进度跨重启保留，始终从原始用户消息取证，遵守原有筛选规则。压缩失败不推进游标或删除历史。对话页显示用量、压缩次数、摘要、记忆提取累计进度，以及 QQ/网页最近 200 条记录的来源、时间和完成状态。记录每 3 秒自动更新，保留正在输入的草稿；刷新时若上一轮仍在生成，会等待并自动显示完成结果。
 
 ## 性格与重置
 
@@ -62,6 +62,7 @@ WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件�
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/v1/console/auth` | 恢复并验证登录状态，不触发外部模型探测 |
+| GET | `/v1/console/messages` | 全渠道最近 200 条记录，包含来源、完成状态、关联图片与工具调用 |
 | GET | `/v1/console/stats` | 仪表盘统计、分类、7 日活动和任务数 |
 | GET | `/v1/memories?q=成都&kind=fact&status=active&sort=updated&limit=15&offset=0` | 分页浏览；返回 memories、total、limit、offset |
 | POST | `/v1/memories` | 手动新增记忆，返回 201 与 index_update=queued |
@@ -107,7 +108,7 @@ bash scripts/install.sh
 systemctl --user restart mneme.target
 ```
 
-`0005_continuity.sql` 增加滚动摘要、迁移别名、提取完成标记和持久登录会话表。旧 API 对话首次使用时原子合并；现有 QQ 历史不参与合并。
+`0005_continuity.sql` 增加滚动摘要、迁移别名、提取完成标记和持久登录会话表。后续 `0006_global_context.sql` 保留历史消息渠道并增加轮次索引；启动时将 QQ、网页和 API 原子合并到全局对话。合并多份旧上下文时从保留的原文重建滚动摘要，避免不同游标跳过历史。
 
 新增工具的 `0004_tools.sql` 迁移只增加图片与工具表，不改写旧迁移；工具接口和浏览器验证见 [tools.md](tools.md)。
 
@@ -126,14 +127,14 @@ python3 scripts/smoke-pod.py
 浏览器测试仅为开发工具，不是运行时依赖。使用现有 Chromium，在一个终端启动专用临时 SQLite/上游替身：
 
 ```bash
-cargo run --locked --example console_fixture
+MNEME_QQ_HISTORY_UI_TEST=1 cargo run --locked --example console_fixture
 ```
 
 另一个终端运行（不接触生产 Token 或生产数据库）：
 
 ```bash
 npm install --prefix /tmp/mneme-console-qa --no-save --no-package-lock playwright-core@1.56.1
-NODE_PATH=/tmp/mneme-console-qa/node_modules node scripts/console-browser-test.cjs
+MNEME_QQ_HISTORY_UI_TEST=1 NODE_PATH=/tmp/mneme-console-qa/node_modules node scripts/console-browser-test.cjs
 ```
 
 测试验证桌面、390px 移动端、真实 CRUD/历史修订、检索过程、系统状态、HTML 转义、退出、刷新和新标签页的登录持续性，以及持续对话与压缩、性格保存、密码登录和轮换、取消和确认重置，并将截图保存到忽略的 `artifacts/`。测试结束后在第一个终端按 Ctrl+C 关闭临时服务。真实数据和外部付费 LLM 不参与该浏览器测试。

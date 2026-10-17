@@ -52,8 +52,49 @@ pub fn protected_routes() -> Router<App> {
             get(|| async { Json(json!({"authenticated":true})) }),
         )
         .route("/v1/console/stats", get(stats))
+        .route("/v1/console/messages", get(transcript))
         .route("/v1/console/retrieval", post(retrieval))
         .route("/v1/console/system", get(system))
+}
+
+async fn transcript(State(app): State<App>) -> ApiResult<Json<Value>> {
+    let Json(conversation) = crate::api::conversation(State(app.clone())).await?;
+    let messages = app.store.console_history().await?;
+    let mut assets = Vec::<Value>::new();
+    if !messages.is_empty() {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT a.id,ma.message_id,a.kind,a.width,a.height FROM assets a JOIN message_assets ma ON ma.asset_id=a.id WHERE ma.message_id IN (",
+        );
+        let mut ids = query.separated(",");
+        for message in &messages {
+            ids.push_bind(&message.message.id);
+        }
+        ids.push_unseparated(") ORDER BY ma.message_id,ma.position");
+        let rows: Vec<(String, String, String, u32, u32)> = query
+            .build_query_as()
+            .fetch_all(&app.store.pool)
+            .await
+            .map_err(anyhow::Error::from)?;
+        assets = rows.into_iter().map(|(id,message_id,kind,width,height)|json!({"id":id,"message_id":message_id,"kind":kind,"width":width,"height":height})).collect();
+    }
+    let turns: std::collections::HashSet<_> = messages
+        .iter()
+        .map(|m| m.message.turn_id.as_str())
+        .collect();
+    let calls = crate::tools::logs(&app, None).await?;
+    let calls: Vec<_> = calls
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|call| {
+            call["turn_id"]
+                .as_str()
+                .is_some_and(|id| turns.contains(id))
+        })
+        .collect();
+    Ok(Json(
+        json!({"messages":messages,"assets":assets,"tool_calls":calls,"conversation":conversation}),
+    ))
 }
 
 pub(crate) fn validate_filter(f: &MemoryFilter) -> ApiResult<()> {

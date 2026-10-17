@@ -162,17 +162,30 @@ impl Llm {
     }
 
     pub async fn complete_json(&self, system: &str, input: Value) -> Result<Value> {
+        self.complete_json_with_tokens(system, input, 2500).await
+    }
+    pub(crate) async fn complete_json_with_tokens(
+        &self,
+        system: &str,
+        input: Value,
+        max_tokens: u32,
+    ) -> Result<Value> {
         let start = std::time::Instant::now();
-        let result = self.complete_json_inner(system, input).await;
+        let result = self.complete_json_inner(system, input, max_tokens).await;
         self.metrics.record(start, result.is_ok());
         if let Err(error) = &result {
             crate::diagnostics::warn("llm.extract", error);
         }
         result
     }
-    async fn complete_json_inner(&self, system: &str, input: Value) -> Result<Value> {
+    async fn complete_json_inner(
+        &self,
+        system: &str,
+        input: Value,
+        max_tokens: u32,
+    ) -> Result<Value> {
         let response = self.client.post(&self.url).bearer_auth(&self.key)
-            .json(&json!({"model":self.model,"temperature":0,"max_tokens":2500,"stream":false,
+            .json(&json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,
                 "messages":[{"role":"system","content":system},{"role":"user","content":input.to_string()}]}))
             .send().await?.error_for_status()?;
         let value: Value = serde_json::from_slice(&bounded_body(response, 1_048_576).await?)?;

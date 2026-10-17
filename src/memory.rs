@@ -460,6 +460,9 @@ pub fn validate_candidate(candidate: &Candidate, source: &Message) -> Result<Opt
 }
 
 async fn extract(app: &App, job: &Job) -> Result<()> {
+    if job.payload.starts_with('{') {
+        return extract_batch(app, job).await;
+    }
     let source = app.store.message(&job.payload).await?;
     // Recent canonical slots help extraction keep stable names and deduplicate paraphrases.
     let mut existing = app.store.active_memories(64).await?;
@@ -516,6 +519,143 @@ async fn extract(app: &App, job: &Job) -> Result<()> {
         .map(|((candidate, until), vector)| (candidate, vector, until))
         .collect();
     app.store.apply_candidates(&source, records, &job.id).await
+}
+
+async fn extract_batch(app: &App, job: &Job) -> Result<()> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Batch {
+        message_ids: Vec<String>,
+    }
+    let batch: Batch = serde_json::from_str(&job.payload)?;
+    let mut sources = Vec::new();
+    for id in batch.message_ids {
+        let processed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)",
+        )
+        .bind(&id)
+        .fetch_one(&app.store.pool)
+        .await?;
+        if !processed {
+            let source = app.store.message(&id).await?;
+            ensure!(
+                source.role == "user",
+                "batch extraction source must be a user message"
+            );
+            sources.push(source);
+        }
+    }
+    if sources.is_empty() {
+        return app.store.ack_job(&job.id).await;
+    }
+    let mut existing = app.store.active_memories(64).await?;
+    let mut size = 0;
+    existing.retain(|m| {
+        size += m.content.chars().count() + 120;
+        size <= app.config.memory.context_chars
+    });
+    let existing_data: Vec<_> = existing
+        .iter()
+        .map(|m| json!({"id":m.id,"key":m.slot,"content":m.content}))
+        .collect();
+    let mut groups = Vec::<Vec<serde_json::Value>>::new();
+    let mut group = Vec::new();
+    let mut chars = 0;
+    let prompt = format!(
+        "{EXTRACT_PROMPT}\n本次为定期批量提取：targets 是按时间排列的用户原始消息，每项含 id、content、observed_at；用 targets 代替单个 target。每条输出记忆必须额外包含 source_id，准确指向提供该事实的 targets.id，source_quote 必须逐字出现在这个来源的 content 中；相对时间用该来源 observed_at。最多输出32条。同一属性优先保留最后明确告知的值。不要把其他消息、摘要或助手推测当作原文证据。"
+    );
+    let limit = app.config.llm.context_chars.saturating_sub(
+        prompt.chars().count() + json!(existing_data).to_string().chars().count() + 500,
+    );
+    for source in &sources {
+        let observed = chrono::DateTime::from_timestamp(source.created_at, 0)
+            .unwrap()
+            .with_timezone(&app.config.timezone.parse::<chrono::FixedOffset>()?)
+            .to_rfc3339();
+        let target = json!({"id":source.id,"content":source.content,"observed_at":observed});
+        let cost = target.to_string().chars().count() + 1;
+        ensure!(
+            cost <= limit,
+            "batch source exceeds extraction context budget"
+        );
+        if !group.is_empty() && chars + cost > limit {
+            groups.push(std::mem::take(&mut group));
+            chars = 0;
+        }
+        chars += cost;
+        group.push(target);
+    }
+    if !group.is_empty() {
+        groups.push(group);
+    }
+    let mut records: crate::store::BatchMemoryRecords = sources
+        .iter()
+        .cloned()
+        .map(|source| (source, Vec::new()))
+        .collect();
+    for targets in groups {
+        let allowed: HashSet<_> = targets
+            .iter()
+            .filter_map(|t| t["id"].as_str())
+            .map(str::to_owned)
+            .collect();
+        let input = json!({"targets":targets,"existing":existing_data});
+        let result = app
+            .llm
+            .complete_json_with_tokens(&prompt, input, 8000)
+            .await?;
+        let memories = result["memories"]
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("missing batch memories"))?;
+        ensure!(memories.len() <= 32, "too many batch memories");
+        let mut keys = HashSet::new();
+        let mut candidates = Vec::new();
+        for value in memories {
+            let mut value = value.clone();
+            let source_id = value
+                .as_object_mut()
+                .and_then(|v| v.remove("source_id"))
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .ok_or_else(|| anyhow::anyhow!("missing batch source"))?;
+            ensure!(allowed.contains(&source_id), "unknown batch source");
+            let index = sources
+                .iter()
+                .position(|s| s.id == source_id)
+                .ok_or_else(|| anyhow::anyhow!("missing source"))?;
+            let mut candidate: Candidate = serde_json::from_value(value)?;
+            let until = validate_candidate(&candidate, &sources[index])?;
+            if candidate.importance < app.config.memory.minimum_importance
+                || candidate.confidence < app.config.memory.minimum_confidence
+                || (candidate.sensitive && !app.config.memory.allow_sensitive)
+                || until.is_some_and(|end| end <= now())
+            {
+                continue;
+            }
+            ensure!(
+                keys.insert(candidate.key.clone()),
+                "duplicate batch extraction key"
+            );
+            if let Some(id) = &candidate.equivalent_to {
+                let memory = existing
+                    .iter()
+                    .find(|m| &m.id == id && m.slot == candidate.key)
+                    .ok_or_else(|| anyhow::anyhow!("invalid equivalence target"))?;
+                candidate.content = memory.content.clone();
+            }
+            candidates.push((index, candidate, until));
+        }
+        if !candidates.is_empty() {
+            let documents: Vec<_> = candidates
+                .iter()
+                .map(|(_, c, _)| c.content.clone())
+                .collect();
+            let embeddings = app.models.embed(&documents, false).await?;
+            for ((index, candidate, until), vector) in candidates.into_iter().zip(embeddings) {
+                records[index].1.push((candidate, vector, until));
+            }
+        }
+    }
+    app.store.apply_batch(records, &job.id).await
 }
 
 pub async fn worker(app: App) {

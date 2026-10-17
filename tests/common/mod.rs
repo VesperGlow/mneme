@@ -35,7 +35,7 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                 }
                 let broken=messages.last().unwrap()["content"].as_str().unwrap().contains("断流");
                 let recalls = messages.iter().filter_map(|m|m["content"].as_str()).collect::<Vec<_>>().join("\n");
-                let answer=if recalls.contains("用户住在成都") {"你住在成都，我记得。"} else {"我会认真记住你告诉我的事情。"};
+                let answer=if recalls.contains("用户住在成都") || messages.iter().take(messages.len()-1).any(|m|m["content"].as_str().is_some_and(|s|s.contains("我住在成都"))) {"你住在成都，我记得。"} else {"我会认真记住你告诉我的事情。"};
                 let first=json!({"choices":[{"delta":{"content":answer},"finish_reason":null}]}).to_string();
                 let finish=json!({"choices":[{"delta":{},"finish_reason":"stop"}]}).to_string();
                 // Fragment UTF-8 and SSE frames across arbitrary network body chunks.
@@ -59,10 +59,12 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                     summary = summary.chars().take(input["max_chars"].as_u64().unwrap() as usize).collect();
                     return Json(json!({"choices":[{"message":{"content":json!({"summary":summary}).to_string()},"finish_reason":"stop"}]})).into_response();
                 }
-                let text=input["target"]["content"].as_str().unwrap();
                 let mut facts=Vec::new();
-                if text.contains("我住在成都") {
-                    facts.push(json!({"key":"user.residence","content":"用户住在成都。","kind":"fact","importance":0.8,"confidence":0.98,"entities":["成都"],"source_quote":"我住在成都","valid_until":null,"sensitive":false,"equivalent_to":null}));
+                let target = input["targets"].as_array().and_then(|targets| targets.iter().rev().find(|t|t["content"].as_str().unwrap().contains("我住在成都"))).unwrap_or(&input["target"]);
+                if target["content"].as_str().unwrap_or("").contains("我住在成都") {
+                    let mut fact=json!({"key":"user.residence","content":"用户住在成都。","kind":"fact","importance":0.8,"confidence":0.98,"entities":["成都"],"source_quote":"我住在成都","valid_until":null,"sensitive":false,"equivalent_to":null});
+                    if input.get("targets").is_some() { fact["source_id"]=if target["content"].as_str().unwrap().contains("__bad_batch_source__") {json!("unknown-source")} else {target["id"].clone()}; }
+                    facts.push(fact);
                 }
                 Json(json!({"choices":[{"message":{"content":json!({"memories":facts}).to_string()},"finish_reason":"stop"}]})).into_response()
             }

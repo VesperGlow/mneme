@@ -130,6 +130,8 @@ pub struct Neo4jConfig {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryConfig {
+    #[serde(default = "default_extract_chars")]
+    pub extract_every_chars: usize,
     pub candidate_limit: usize,
     pub recall_limit: usize,
     pub context_chars: usize,
@@ -142,6 +144,9 @@ pub struct MemoryConfig {
     pub retrieval_timeout_seconds: u64,
     pub rerank_min_score: f64,
     pub allow_sensitive: bool,
+}
+fn default_extract_chars() -> usize {
+    10_000
 }
 #[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -215,6 +220,17 @@ impl Config {
         {
             config.llm.model = value;
         }
+        if let Ok(value) = env::var("MNEME_LLM_CONTEXT_CHARS") {
+            config.llm.context_chars = value.parse().context("invalid MNEME_LLM_CONTEXT_CHARS")?;
+        }
+        if let Ok(value) = env::var("MNEME_LLM_HISTORY_TURNS") {
+            config.llm.history_turns = value.parse().context("invalid MNEME_LLM_HISTORY_TURNS")?;
+        }
+        if let Ok(value) = env::var("MNEME_MEMORY_EXTRACT_CHARS") {
+            config.memory.extract_every_chars = value
+                .parse()
+                .context("invalid MNEME_MEMORY_EXTRACT_CHARS")?;
+        }
         if config.llm.model.starts_with("replace-") {
             config.llm.model = "auto".into();
         }
@@ -231,6 +247,10 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=100_000).contains(&self.memory.extract_every_chars),
+            "invalid memory extraction interval"
+        );
         ensure!(
             (1..=365).contains(&self.console.session_days),
             "console session_days must be 1..365"
@@ -391,7 +411,7 @@ impl Config {
         );
         ensure!(
             self.llm.history_turns > 0
-                && self.llm.history_turns <= 100
+                && self.llm.history_turns <= 10_000
                 && self.llm.context_chars >= 2000
                 && self.llm.context_chars <= 100000,
             "invalid context limits"

@@ -148,7 +148,7 @@ async fn list_sessions(State(app): State<App>) -> ApiResult<Json<Value>> {
     Ok(Json(json!({"sessions":[{"id":id,"preview":"持续对话"}]})))
 }
 
-async fn conversation(State(app): State<App>) -> ApiResult<Json<Value>> {
+pub(crate) async fn conversation(State(app): State<App>) -> ApiResult<Json<Value>> {
     let id = app.store.conversation().await?;
     let active: Option<String> = sqlx::query_scalar("SELECT active_turn FROM sessions WHERE id=?")
         .bind(&id)

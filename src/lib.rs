@@ -46,8 +46,15 @@ impl App {
         mut config: Config,
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
-        let store = store::Store::open(&config.database).await?;
+        let mut store = store::Store::open(&config.database).await?;
+        store.extract_every_chars = config.memory.extract_every_chars;
         store.recover().await?;
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions)")
+            .fetch_one(&store.pool)
+            .await?;
+        if exists {
+            store.conversation().await?;
+        }
         let (persona, security) = settings::load(&store, &config).await?;
         if config.llm.model == "auto" {
             let key = format!(

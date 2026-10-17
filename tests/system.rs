@@ -31,6 +31,9 @@ fn config(temp: &TempDir, base: &str) -> Config {
     config.models.base_url = base.into();
     config.neo4j.base_url = base.into();
     config.memory.poll_seconds = 1;
+    config.memory.extract_every_chars = 1;
+    config.llm.context_chars = 16000;
+    config.llm.history_turns = 16;
     config.validate().unwrap();
     config
 }
@@ -347,7 +350,7 @@ async fn single_writer_lock_and_dead_letter_retry() {
     let store = Store::open(path.to_str().unwrap()).await.unwrap();
     assert!(Store::open(path.to_str().unwrap()).await.is_err());
     let session = store.create_session().await.unwrap();
-    user(&store, &session, "一个需要稍后提取的事实").await;
+    user(&store, &session, &"一个需要稍后提取的事实".repeat(1000)).await;
     let job = store.claim_job().await.unwrap().unwrap();
     store.retry_job(&job, 1).await.unwrap();
     assert_eq!(store.job_stats().await.unwrap()["dead"], 1);

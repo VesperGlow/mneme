@@ -92,6 +92,7 @@ fn config(temp: &tempfile::TempDir, base: &str, qq_base: &str) -> Config {
     c.qq.api_base = qq_base.into();
     c.qq.token_url = format!("{qq_base}/app/getAppAccessToken");
     c.memory.poll_seconds = 1;
+    c.memory.extract_every_chars = 1;
     c.validate().unwrap();
     c
 }
@@ -460,7 +461,7 @@ async fn first_private_message_dedup_restart_cross_session_memory_and_token_refr
             .all(|m| m["recipient"] == "owner" && m["msg_seq"] == 1)
     );
     drop(sent);
-    assert_eq!(app.store.history(&session, 100).await.unwrap().len(), 2);
+    assert_eq!(app.store.history(&session, 100).await.unwrap().len(), 4);
     stop.send(true).unwrap();
     worker.await.unwrap();
     memory.await.unwrap();

@@ -26,6 +26,9 @@ fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     config.llm.model = "fixture-model".into();
     config.llm.base_url = base.into();
     config.memory.poll_seconds = 1;
+    config.memory.extract_every_chars = 1;
+    config.llm.context_chars = 16000;
+    config.llm.history_turns = 16;
     config.validate().unwrap();
     config
 }
@@ -70,6 +73,7 @@ async fn crud_statistics_filters_history_and_auth() {
     for path in [
         "/v1/console/auth",
         "/v1/console/stats",
+        "/v1/console/messages",
         "/v1/console/system",
         "/v1/memories",
     ] {
@@ -504,4 +508,189 @@ async fn deletion_during_reranking_also_redacts_rejected_debug_candidates() {
     );
     fake.abort();
     model.abort();
+}
+
+#[tokio::test]
+async fn console_transcript_includes_qq_and_web_in_the_shared_context() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let config = config(&temp, &base);
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config.clone(), rx.clone()).await.unwrap();
+    let router = api::router(app.clone());
+    let api_session = app.store.conversation().await.unwrap();
+    // QQ and the API must now point at the same context, even when API was opened first.
+    app.store
+        .qq_accept(
+            "fixture",
+            mneme::qq_store::Incoming {
+                message_id: id(),
+                sender: "owner".into(),
+                content: "来自 QQ 的旧消息".into(),
+                expires_at: now() + 300,
+            },
+        )
+        .await
+        .unwrap();
+    let old: String =
+        sqlx::query_scalar("SELECT session_id FROM qq_sessions WHERE app_id='fixture'")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    let BeginTurn::Started(qq_user) = app
+        .store
+        .begin_turn(
+            &old,
+            &sqlx::query_scalar::<_, String>(
+                "SELECT id FROM qq_inbox WHERE app_id='fixture' ORDER BY seq LIMIT 1",
+            )
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+            "来自 QQ 的旧消息",
+        )
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    app.store
+        .complete_turn(&qq_user, "这是 QQ 回复")
+        .await
+        .unwrap();
+    assert_eq!(
+        call(&router, "GET", "/v1/messages", json!({})).await.1["messages"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let history = call(&router, "GET", "/v1/console/messages", json!({}))
+        .await
+        .1;
+    assert_eq!(history["messages"].as_array().unwrap().len(), 2);
+    assert_eq!(history["messages"][0]["content"], "来自 QQ 的旧消息");
+    assert_eq!(history["messages"][1]["channel"], "qq");
+    // The obsolete command cannot fork the global context.
+    app.store
+        .qq_accept(
+            "fixture",
+            mneme::qq_store::Incoming {
+                message_id: id(),
+                sender: "owner".into(),
+                content: "/新会话".into(),
+                expires_at: now() + 300,
+            },
+        )
+        .await
+        .unwrap();
+    let current: String =
+        sqlx::query_scalar("SELECT session_id FROM qq_sessions WHERE app_id='fixture'")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(old, current);
+    let BeginTurn::Started(failed) = app
+        .store
+        .begin_turn(
+            &current,
+            &sqlx::query_scalar::<_, String>(
+                "SELECT id FROM qq_inbox WHERE app_id='fixture' ORDER BY seq DESC LIMIT 1",
+            )
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+            "未完成的 QQ 消息",
+        )
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    app.store.fail_turn(&failed, "interrupted").await.unwrap();
+    let BeginTurn::Started(web) = app
+        .store
+        .begin_turn(&api_session, &id(), "来自网页的消息")
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    app.store.complete_turn(&web, "这是网页回复").await.unwrap();
+    let asset = id();
+    sqlx::query("INSERT INTO assets(id,session_id,mime,data,width,height,kind,created_at) VALUES(?,?,'image/jpeg',X'FFD8FF',1,1,'upload',?)")
+        .bind(&asset).bind(&old).bind(now()).execute(&app.store.pool).await.unwrap();
+    sqlx::query("INSERT INTO message_assets(message_id,asset_id,position) VALUES(?,?,0)")
+        .bind(&qq_user.id)
+        .bind(&asset)
+        .execute(&app.store.pool)
+        .await
+        .unwrap();
+    let call_id = id();
+    sqlx::query("INSERT INTO tool_calls(id,session_id,turn_id,call_id,name,action,arguments,status,result,created_at) VALUES(?,?,?,?,'browser','screenshot','{}','completed',?,?)")
+        .bind(&call_id).bind(&old).bind(&qq_user.turn_id).bind(id()).bind(json!({"asset_id":asset}).to_string()).bind(now()).execute(&app.store.pool).await.unwrap();
+    let history = call(&router, "GET", "/v1/console/messages", json!({}))
+        .await
+        .1;
+    let messages = history["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 5);
+    assert_eq!(messages[0]["channel"], "qq");
+    assert_eq!(messages[2]["channel"], "qq");
+    assert_eq!(messages[2]["status"], "failed");
+    assert_eq!(messages[3]["channel"], "api");
+    assert_eq!(history["assets"][0]["id"], asset);
+    assert_eq!(history["tool_calls"][0]["id"], call_id);
+    assert_eq!(app.store.history(&api_session, 100).await.unwrap().len(), 4);
+    assert_eq!(app.store.history(&old, 100).await.unwrap().len(), 4);
+    drop(router);
+    app.store.pool.close().await;
+    drop(app);
+    let app = App::new(config, rx).await.unwrap();
+    let router = api::router(app);
+    assert_eq!(
+        call(&router, "GET", "/v1/console/messages", json!({}))
+            .await
+            .1,
+        history
+    );
+    fake.abort();
+}
+
+#[tokio::test]
+async fn console_transcript_is_bounded_and_includes_in_progress_turns() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (app, _stop, fake) = app(&temp).await;
+    let router = api::router(app.clone());
+    let session = app.store.create_session().await.unwrap();
+    for i in 0..102 {
+        let BeginTurn::Started(user) = app
+            .store
+            .begin_turn(&session, &id(), &format!("消息 {i}"))
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        app.store.complete_turn(&user, "回复").await.unwrap();
+    }
+    let history = call(&router, "GET", "/v1/console/messages", json!({}))
+        .await
+        .1;
+    assert_eq!(history["messages"].as_array().unwrap().len(), 200);
+    assert_eq!(history["messages"][0]["content"], "消息 2");
+    let BeginTurn::Started(user) = app
+        .store
+        .begin_turn(&session, &id(), "正在处理的消息")
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    let history = call(&router, "GET", "/v1/console/messages", json!({}))
+        .await
+        .1;
+    let last = history["messages"].as_array().unwrap().last().unwrap();
+    assert_eq!(last["id"], user.id);
+    assert_eq!(last["status"], "generating");
+    fake.abort();
 }

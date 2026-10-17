@@ -1,4 +1,4 @@
-use crate::{App, chat, domain::*, store::enqueue};
+use crate::{App, chat, domain::*};
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 
@@ -14,7 +14,8 @@ pub async fn status(app: &App, session: &str) -> Result<Value> {
     Ok(
         json!({"history_turns":turns,"max_history_turns":app.config.llm.history_turns,
         "context_chars":app.config.llm.context_chars,"summary_chars":app.config.llm.summary_chars,
-        "summary":summary,"compactions":compactions,"updated_at":updated_at}),
+        "summary":summary,"compactions":compactions,"updated_at":updated_at,
+        "memory_extract_chars":app.config.memory.extract_every_chars,"memory_pending_chars":app.store.extraction_pending_chars().await?}),
     )
 }
 
@@ -72,23 +73,7 @@ pub(crate) async fn prepare(
             .fetch_one(&app.store.pool)
             .await?;
         let mut tx = app.store.pool.begin_with("BEGIN IMMEDIATE").await?;
-        for source in prefix.iter().filter(|m| m.role == "user") {
-            let processed: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)",
-            )
-            .bind(&source.id)
-            .fetch_one(&mut *tx)
-            .await?;
-            if !processed {
-                enqueue(
-                    &mut tx,
-                    &format!("extract:{}", source.turn_id),
-                    "extract",
-                    &source.id,
-                )
-                .await?;
-            }
-        }
+        app.store.schedule_extraction(&mut tx).await?;
         sqlx::query("INSERT INTO conversation_context(session_id,summary,through_seq,compactions,updated_at) VALUES(?,?,?,1,?) ON CONFLICT(session_id) DO UPDATE SET summary=excluded.summary,through_seq=excluded.through_seq,compactions=compactions+1,updated_at=excluded.updated_at")
             .bind(&user.session_id).bind(next_summary).bind(next_through).bind(now()).execute(&mut *tx).await?;
         tx.commit().await?;

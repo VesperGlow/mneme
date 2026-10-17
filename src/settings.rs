@@ -407,7 +407,7 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         "DELETE FROM conversation_context",
         "DELETE FROM conversation_aliases",
         "DELETE FROM extracted_messages",
-        "DELETE FROM metadata WHERE key='conversation.id'",
+        "DELETE FROM metadata WHERE key IN ('conversation.id','conversation.scope') OR key LIKE 'memory.extraction.%'",
         "DELETE FROM messages",
         "DELETE FROM turns",
         "DELETE FROM sessions",

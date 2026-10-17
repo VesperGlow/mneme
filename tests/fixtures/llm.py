@@ -57,14 +57,22 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.flush()
             self.wfile.write(b"data: [DONE]\n\n")
         else:
-            target = json.loads(messages[-1]["content"])["target"]["content"]
+            payload = json.loads(messages[-1]["content"])
+            targets = payload.get("targets", [payload.get("target", {})])
+            target = next((t for t in reversed(targets) if "我住在成都" in t.get("content", "")), {})
             memories = []
-            if "我住在成都" in target:
+            if "我住在成都" in target.get("content", ""):
                 memories.append({"key": "user.residence", "content": "用户住在成都。", "kind": "fact",
                                  "importance": 0.8, "confidence": 0.99, "entities": ["成都"],
                                  "source_quote": "我住在成都", "valid_until": None,
                                  "sensitive": False, "equivalent_to": None})
-            data = json.dumps({"choices": [{"message": {"content": json.dumps({"memories": memories}, ensure_ascii=False)},
+            if memories and "targets" in payload:
+                memories[0]["source_id"] = target["id"]
+            result = {"memories": memories}
+            if "max_chars" in payload:
+                text = payload.get("previous_summary", "") + "。".join(m["content"] for m in payload["messages"] if m["role"] == "user")
+                result = {"summary": text[:payload["max_chars"]] or "继续此前的话题。"}
+            data = json.dumps({"choices": [{"message": {"content": json.dumps(result, ensure_ascii=False)},
                                             "finish_reason": "stop"}]}).encode()
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))

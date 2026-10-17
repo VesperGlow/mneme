@@ -7,6 +7,7 @@ const path = require('node:path');
 const BASE = 'http://127.0.0.1:18080';
 const TOKEN = 'console-test-token-01234567890123456789';
 const PASSWORD = 'console-fixture-password';
+const qqHistoryMessages = process.env.MNEME_QQ_HISTORY_UI_TEST === '1' ? 2 : 0;
 const output = path.resolve('artifacts');
 fs.mkdirSync(output, { recursive: true });
 
@@ -101,16 +102,29 @@ fs.mkdirSync(output, { recursive: true });
     await reopened.goto(`${BASE}/console/#chat`);
     await reopened.locator('#chat-form').waitFor();
     assert.equal(await reopened.locator('#new-chat,#chat-session').count(), 0);
+    if (qqHistoryMessages) {
+      await reopened.getByText('这是 QQ 中已保存的完整回复。', { exact: true }).waitFor();
+      assert.equal(await reopened.locator('.chat-message').count(), qqHistoryMessages);
+      assert((await reopened.locator('.chat-message small').first().innerText()).includes('QQ'));
+      assert.equal(await reopened.evaluate(() => window.__qq_xss), undefined);
+      assert.equal(await reopened.locator('.chat-message img').count(), 0);
+    }
     for (const message of ['我住在成都', '下周计划去图书馆', '继续刚才的话题']) {
       await reopened.locator('#chat-message').fill(message);
       await reopened.getByRole('button', { name: '发送', exact: true }).click();
       await reopened.locator('#chat-message:not([disabled])').waitFor();
     }
     await reopened.locator('.conversation-summary').waitFor();
-    assert.equal(await reopened.locator('.chat-message').count(), 6);
+    assert.equal(await reopened.locator('.chat-message').count(), 6 + qqHistoryMessages);
     await reopened.reload();
     await reopened.locator('#chat-form').waitFor();
-    assert.equal(await reopened.locator('.chat-message').count(), 6);
+    assert.equal(await reopened.locator('.chat-message').count(), 6 + qqHistoryMessages);
+    await reopened.locator('#chat-message').fill('正在输入的草稿，需要保留');
+    const elsewhere = await context.request.post(`${BASE}/v1/chat`, { data: { request_id: require('node:crypto').randomUUID(), message: '另一客户端新增的消息' } });
+    assert.equal(elsewhere.status(), 200);
+    await reopened.getByText('另一客户端新增的消息', { exact: true }).waitFor();
+    assert.equal(await reopened.locator('#chat-message').inputValue(), '正在输入的草稿，需要保留');
+    assert.equal(await reopened.locator('.chat-message').count(), 8 + qqHistoryMessages);
     const slow = reopened.waitForResponse(response => new URL(response.url()).pathname === '/v1/chat');
     await reopened.locator('#chat-message').fill('继续刚才的话题 __slow_chat__');
     await reopened.getByRole('button', { name: '发送', exact: true }).click();
@@ -119,7 +133,7 @@ fs.mkdirSync(output, { recursive: true });
     await reopened.getByText('上一轮回复正在继续生成，完成后会自动显示。', { exact: true }).waitFor();
     assert.equal(await reopened.locator('#send-chat').isDisabled(), true);
     await reopened.locator('#chat-message:not([disabled])').waitFor();
-    assert.equal(await reopened.locator('.chat-message').count(), 8);
+    assert.equal(await reopened.locator('.chat-message').count(), 10 + qqHistoryMessages);
     await reopened.screenshot({ path: path.join(output, 'console-chat.png'), fullPage: true });
     await reopened.close();
     const mobileContext = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, deviceScaleFactor: 1, locale: 'zh-CN', reducedMotion: 'reduce' });

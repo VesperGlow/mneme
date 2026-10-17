@@ -1,7 +1,4 @@
-use crate::{
-    domain::{id, now},
-    store::Store,
-};
+use crate::{domain::now, store::Store};
 use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -110,27 +107,12 @@ impl Store {
         .fetch_one(&mut *tx)
         .await?;
         ensure!(queued < 256, "QQ queue full");
-        let mut session: Option<String> = sqlx::query_scalar(
-            "SELECT session_id FROM qq_sessions WHERE app_id=? AND user_openid=?",
-        )
-        .bind(app_id)
-        .bind(&message.sender)
-        .fetch_optional(&mut *tx)
-        .await?;
-        if session.is_none() || text == "/新会话" {
-            let new = id();
-            sqlx::query("INSERT INTO sessions(id,created_at) VALUES(?,?)")
-                .bind(&new)
-                .bind(now())
-                .execute(&mut *tx)
-                .await?;
-            sqlx::query("INSERT INTO qq_sessions(app_id,user_openid,session_id) VALUES(?,?,?) ON CONFLICT(app_id,user_openid) DO UPDATE SET session_id=excluded.session_id")
-                .bind(app_id).bind(&message.sender).bind(&new).execute(&mut *tx).await?;
-            session = Some(new);
-        }
+        let session = Self::conversation_in(&mut tx).await?;
+        sqlx::query("INSERT INTO qq_sessions(app_id,user_openid,session_id) VALUES(?,?,?) ON CONFLICT(app_id,user_openid) DO UPDATE SET session_id=excluded.session_id")
+            .bind(app_id).bind(&message.sender).bind(&session).execute(&mut *tx).await?;
         let reply: Option<String> = match text {
-                "/新会话" => Some("已开启新会话，长期记忆仍会保留。".into()),
-                "/帮助" => Some("直接发送文字即可聊天。\n/新会话：清空当前对话上下文，保留长期记忆。\n记忆管理与遗忘请使用本机 Mneme Console。".into()),
+                "/新会话" => Some("QQ、网页和 API 始终延续同一段对话，无需开启新会话。".into()),
+                "/帮助" => Some("直接发送文字即可聊天。\nQQ、网页和 API 共用同一份持续上下文。\n记忆管理与遗忘请使用本机 Mneme Console。".into()),
                 // Do not put an obsolete pairing code in history or send it to the LLM.
                 _ if text == "/绑定" || text.starts_with("/绑定 ") => Some("无需绑定，直接发送文字即可聊天。".into()),
                 _ if text.is_empty() => Some("目前支持文字对话，请发送文字内容。".into()),
@@ -139,7 +121,7 @@ impl Store {
             };
         sqlx::query("INSERT INTO qq_inbox(id,app_id,message_id,user_openid,content,session_id,reply,available_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(request).bind(app_id).bind(message.message_id).bind(message.sender)
-            .bind(if reply.is_some(){""}else{text}).bind(session.unwrap()).bind(reply)
+            .bind(if reply.is_some(){""}else{text}).bind(session).bind(reply)
             .bind(now()).bind(message.expires_at).bind(now()).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(Acceptance::Queued)

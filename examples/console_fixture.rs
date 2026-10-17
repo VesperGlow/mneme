@@ -26,6 +26,42 @@ async fn main() -> anyhow::Result<()> {
     config.validate()?;
     let (stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(config, rx).await?;
+    if std::env::var("MNEME_QQ_HISTORY_UI_TEST").as_deref() == Ok("1") {
+        app.store
+            .qq_accept(
+                "history-fixture",
+                mneme::qq_store::Incoming {
+                    message_id: mneme::domain::id(),
+                    sender: "fixture-owner".into(),
+                    content: "来自 QQ 的既有聊天记录 <img src=x onerror=\"window.__qq_xss=1\">"
+                        .into(),
+                    expires_at: mneme::domain::now() + 300,
+                },
+            )
+            .await?;
+        let session: String =
+            sqlx::query_scalar("SELECT session_id FROM qq_sessions WHERE app_id='history-fixture'")
+                .fetch_one(&app.store.pool)
+                .await?;
+        let mneme::store::BeginTurn::Started(user) = app
+            .store
+            .begin_turn(
+                &session,
+                &sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM qq_inbox WHERE app_id='history-fixture'",
+                )
+                .fetch_one(&app.store.pool)
+                .await?,
+                "来自 QQ 的既有聊天记录 <img src=x onerror=\"window.__qq_xss=1\">",
+            )
+            .await?
+        else {
+            anyhow::bail!("fixture turn could not start")
+        };
+        app.store
+            .complete_turn(&user, "这是 QQ 中已保存的完整回复。")
+            .await?;
+    }
     for (content, kind, importance, entities, expired) in [
         (
             "用户目前住在成都，喜欢这座城市慢下来的生活节奏。",

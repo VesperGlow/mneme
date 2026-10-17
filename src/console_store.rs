@@ -40,6 +40,15 @@ pub enum WriteResult {
     Duplicate,
 }
 
+#[derive(Serialize, sqlx::FromRow)]
+pub struct TranscriptMessage {
+    #[serde(flatten)]
+    #[sqlx(flatten)]
+    pub message: Message,
+    pub channel: String,
+    pub status: String,
+}
+
 impl MemoryWrite {
     pub fn valid(&self) -> bool {
         !self.content.trim().is_empty()
@@ -64,6 +73,15 @@ impl MemoryWrite {
 }
 
 impl Store {
+    /// The management transcript includes all transports, including archived QQ conversations.
+    /// Generation history remains scoped to its own conversation and complete turns.
+    pub async fn console_history(&self) -> Result<Vec<TranscriptMessage>> {
+        let mut messages = sqlx::query_as("SELECT m.id,m.session_id,m.turn_id,m.role,m.content,m.created_at,t.status,t.channel FROM messages m JOIN turns t ON t.id=m.turn_id ORDER BY m.seq DESC LIMIT 200")
+            .fetch_all(&self.pool).await?;
+        messages.reverse();
+        Ok(messages)
+    }
+
     pub async fn memory_page(&self, f: &MemoryFilter) -> Result<MemoryPage> {
         let limit = f.limit.unwrap_or(30).clamp(1, 100);
         let offset = f.offset.unwrap_or(0).max(0);

@@ -11,6 +11,7 @@ use std::{path::Path, sync::Arc, time::Duration};
 #[derive(Clone)]
 pub struct Store {
     pub pool: SqlitePool,
+    pub(crate) extract_every_chars: usize,
     _lock: Arc<std::fs::File>,
 }
 
@@ -25,6 +26,8 @@ pub enum BeginTurn {
     Conflict,
     InvalidAssets,
 }
+pub(crate) type MemoryRecords = Vec<(Candidate, Vec<f32>, Option<i64>)>;
+pub(crate) type BatchMemoryRecords = Vec<(Message, MemoryRecords)>;
 
 impl Store {
     pub async fn open(path: &str) -> Result<Self> {
@@ -65,6 +68,7 @@ impl Store {
         sqlx::migrate!().run(&pool).await?;
         Ok(Self {
             pool,
+            extract_every_chars: 10_000,
             _lock: Arc::new(lock),
         })
     }
@@ -89,49 +93,86 @@ impl Store {
     }
 
     pub async fn create_session(&self) -> Result<String> {
-        let session = id();
-        sqlx::query("INSERT INTO sessions(id,created_at) VALUES(?,?)")
-            .bind(&session)
-            .bind(now())
-            .execute(&self.pool)
-            .await?;
-        Ok(session)
+        self.conversation().await
     }
 
-    /// One durable API/WebUI conversation; join legacy API history on first use.
-    /// QQ keeps its transport conversation and is excluded from this migration.
+    /// All transports share one durable context and one generation lock.
     pub async fn conversation(&self) -> Result<String> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        if let Some(session) = sqlx::query_scalar::<_, String>(
+        let session = Self::conversation_in(&mut tx).await?;
+        tx.commit().await?;
+        Ok(session)
+    }
+    pub(crate) async fn conversation_in(tx: &mut Transaction<'_, Sqlite>) -> Result<String> {
+        let saved = sqlx::query_scalar::<_, String>(
             "SELECT value FROM metadata WHERE key='conversation.id'",
         )
-        .fetch_optional(&mut *tx)
-        .await?
-        {
-            return Ok(session);
+        .fetch_optional(&mut **tx)
+        .await?;
+        let global: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM metadata WHERE key='conversation.scope' AND value='global')")
+            .fetch_one(&mut **tx).await?;
+        if global && let Some(session) = &saved {
+            return Ok(session.clone());
         }
-        let sessions: Vec<String> = sqlx::query_scalar("SELECT id FROM sessions s WHERE NOT EXISTS(SELECT 1 FROM qq_sessions q WHERE q.session_id=s.id) AND NOT EXISTS(SELECT 1 FROM qq_inbox q WHERE q.session_id=s.id) ORDER BY created_at,id")
-            .fetch_all(&mut *tx).await?;
-        let session = sessions.first().cloned().unwrap_or_else(id);
+        let sessions: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM sessions ORDER BY created_at,id")
+                .fetch_all(&mut **tx)
+                .await?;
+        let session = saved
+            .or_else(|| sessions.first().cloned())
+            .unwrap_or_else(id);
         sqlx::query("INSERT OR IGNORE INTO sessions(id,created_at) VALUES(?,?)")
             .bind(&session)
             .bind(now())
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
+        let histories: Vec<String> = sqlx::query_scalar("SELECT DISTINCT session_id FROM messages")
+            .fetch_all(&mut **tx)
+            .await?;
+        if histories.len() > 1 {
+            // Rebuild from the preserved raw history; separate rolling summaries cannot simply
+            // share a cursor without skipping messages from another transport.
+            sqlx::query("DELETE FROM conversation_context")
+                .execute(&mut **tx)
+                .await?;
+        } else if let Some(old) = histories.first() {
+            sqlx::query("DELETE FROM conversation_context WHERE session_id<>?")
+                .bind(old)
+                .execute(&mut **tx)
+                .await?;
+            sqlx::query(
+                "UPDATE conversation_context SET session_id=? WHERE session_id=? AND session_id<>?",
+            )
+            .bind(&session)
+            .bind(old)
+            .bind(&session)
+            .execute(&mut **tx)
+            .await?;
+        }
+        // Mark old QQ turns before moving their session IDs. New turns use the inbox ID.
+        sqlx::query("UPDATE turns SET channel='qq' WHERE session_id IN (SELECT session_id FROM qq_sessions UNION SELECT session_id FROM qq_inbox)")
+            .execute(&mut **tx).await?;
         for old in &sessions {
-            for table in ["messages", "turns", "assets", "tool_calls"] {
+            for table in [
+                "messages",
+                "turns",
+                "assets",
+                "tool_calls",
+                "qq_sessions",
+                "qq_inbox",
+            ] {
                 sqlx::query(&format!(
                     "UPDATE {table} SET session_id=? WHERE session_id=?"
                 ))
                 .bind(&session)
                 .bind(old)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
             }
-            sqlx::query("INSERT INTO conversation_aliases(session_id,conversation_id) VALUES(?,?)")
+            sqlx::query("INSERT INTO conversation_aliases(session_id,conversation_id) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET conversation_id=excluded.conversation_id")
                 .bind(old)
                 .bind(&session)
-                .execute(&mut *tx)
+                .execute(&mut **tx)
                 .await?;
         }
         sqlx::query(
@@ -139,13 +180,18 @@ impl Store {
         )
         .bind(&session)
         .bind(&session)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-        sqlx::query("INSERT INTO metadata(key,value) VALUES('conversation.id',?)")
+        sqlx::query("UPDATE conversation_aliases SET conversation_id=?")
             .bind(&session)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        tx.commit().await?;
+        sqlx::query("INSERT INTO metadata(key,value) VALUES('conversation.id',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .bind(&session)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("INSERT INTO metadata(key,value) VALUES('conversation.scope','global') ON CONFLICT(key) DO UPDATE SET value='global'")
+            .execute(&mut **tx).await?;
         Ok(session)
     }
 
@@ -234,11 +280,12 @@ impl Store {
             created_at: now(),
         };
         sqlx::query(
-            "INSERT INTO turns(id,session_id,status,created_at) VALUES(?,?,'generating',?)",
+            "INSERT INTO turns(id,session_id,status,created_at,channel) VALUES(?,?,'generating',?,CASE WHEN EXISTS(SELECT 1 FROM qq_inbox WHERE id=?) THEN 'qq' ELSE 'api' END)",
         )
         .bind(request)
         .bind(session)
         .bind(message.created_at)
+        .bind(request)
         .execute(&mut *tx)
         .await?;
         sqlx::query("INSERT INTO messages(id,session_id,turn_id,role,content,created_at) VALUES(?,?,?,'user',?,?)")
@@ -279,13 +326,7 @@ impl Store {
             .bind(&user.turn_id)
             .execute(&mut *tx)
             .await?;
-        enqueue(
-            &mut tx,
-            &format!("extract:{}", user.turn_id),
-            "extract",
-            &user.id,
-        )
-        .await?;
+        self.schedule_extraction(&mut tx).await?;
         tx.commit().await?;
         Ok(message_id)
     }
@@ -302,6 +343,46 @@ impl Store {
             .await?;
         tx.commit().await?;
         Ok(())
+    }
+
+    /// Count full conversation text, then enqueue one extraction for each completed interval.
+    /// A single long turn stays whole. The cursor and its job commit with the reply.
+    pub(crate) async fn schedule_extraction(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
+        let through: i64 = sqlx::query_scalar("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM metadata WHERE key='memory.extraction.through_seq'),0)")
+            .fetch_one(&mut **tx).await?;
+        let rows: Vec<(String,i64,i64)> = sqlx::query_as("SELECT u.id,u.seq,length(u.content)+length(a.content) FROM messages u JOIN turns t ON t.id=u.turn_id JOIN messages a ON a.turn_id=t.id AND a.role='assistant' WHERE u.role='user' AND t.status='complete' AND u.seq>? ORDER BY u.seq")
+            .bind(through).fetch_all(&mut **tx).await?;
+        let mut chars = 0i64;
+        let mut sources = Vec::new();
+        for (message, seq, size) in rows {
+            chars += size;
+            let processed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?) OR EXISTS(SELECT 1 FROM jobs WHERE kind='extract' AND payload=?)")
+                .bind(&message).bind(&message).fetch_one(&mut **tx).await?;
+            if !processed {
+                sources.push(message);
+            }
+            if chars >= self.extract_every_chars as i64 {
+                if !sources.is_empty() {
+                    enqueue(
+                        tx,
+                        &format!("extract:batch:{seq}"),
+                        "extract",
+                        &json!({"message_ids":sources}).to_string(),
+                    )
+                    .await?;
+                }
+                sqlx::query("INSERT INTO metadata(key,value) VALUES('memory.extraction.through_seq',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                    .bind(seq.to_string()).execute(&mut **tx).await?;
+                sources.clear();
+                chars = 0;
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn extraction_pending_chars(&self) -> Result<i64> {
+        Ok(sqlx::query_scalar("SELECT COALESCE(SUM(length(u.content)+length(a.content)),0) FROM messages u JOIN turns t ON t.id=u.turn_id JOIN messages a ON a.turn_id=t.id AND a.role='assistant' WHERE u.role='user' AND t.status='complete' AND u.seq>COALESCE((SELECT CAST(value AS INTEGER) FROM metadata WHERE key='memory.extraction.through_seq'),0)")
+            .fetch_one(&self.pool).await?)
     }
 
     pub async fn history(&self, session: &str, turns: i64) -> Result<Vec<Message>> {
@@ -351,49 +432,74 @@ impl Store {
         job_id: &str,
     ) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        Self::apply_candidates_in(&mut tx, source, candidates).await?;
+        sqlx::query("DELETE FROM jobs WHERE id=?")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub(crate) async fn apply_batch(
+        &self,
+        records: BatchMemoryRecords,
+        job_id: &str,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        for (source, candidates) in records {
+            Self::apply_candidates_in(&mut tx, &source, candidates).await?;
+        }
+        sqlx::query("DELETE FROM jobs WHERE id=?")
+            .bind(job_id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn apply_candidates_in(
+        tx: &mut Transaction<'_, Sqlite>,
+        source: &Message,
+        candidates: Vec<(Candidate, Vec<f32>, Option<i64>)>,
+    ) -> Result<()> {
         let processed: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)",
         )
         .bind(&source.id)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
         if processed {
-            sqlx::query("DELETE FROM jobs WHERE id=?")
-                .bind(job_id)
-                .execute(&mut *tx)
-                .await?;
-            tx.commit().await?;
             return Ok(());
         }
         let source_seq: i64 = sqlx::query_scalar("SELECT seq FROM messages WHERE id=?")
             .bind(&source.id)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut **tx)
             .await?;
         let source_qq: Option<i64> =
             sqlx::query_scalar("SELECT seq FROM qq_inbox WHERE id=? AND session_id=?")
                 .bind(&source.turn_id)
                 .bind(&source.session_id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut **tx)
                 .await?;
         let suppressed: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM suppressed_sources WHERE message_id=?)",
         )
         .bind(&source.id)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut **tx)
         .await?;
         if suppressed {
-            sqlx::query("DELETE FROM jobs WHERE id=?")
-                .bind(job_id)
-                .execute(&mut *tx)
+            sqlx::query("INSERT OR IGNORE INTO extracted_messages(message_id) VALUES(?)")
+                .bind(&source.id)
+                .execute(&mut **tx)
                 .await?;
-            tx.commit().await?;
             return Ok(());
         }
         for (candidate, embedding, valid_until) in candidates {
             let barrier: Option<(i64, i64)> =
                 sqlx::query_as("SELECT through_seq,through_qq FROM forget_barriers WHERE slot=?")
                     .bind(&candidate.key)
-                    .fetch_optional(&mut *tx)
+                    .fetch_optional(&mut **tx)
                     .await?;
             if barrier
                 .is_some_and(|(seq, qq)| source_seq <= seq || source_qq.is_some_and(|s| s <= qq))
@@ -405,7 +511,7 @@ impl Store {
                 "SELECT through_seq,through_qq FROM content_barriers WHERE content_hash=?",
             )
             .bind(&hash)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut **tx)
             .await?;
             if content_barrier
                 .is_some_and(|(seq, qq)| source_seq <= seq || source_qq.is_some_and(|s| s <= qq))
@@ -415,12 +521,12 @@ impl Store {
             let exact: Option<Memory> =
                 sqlx::query_as("SELECT * FROM memories WHERE content_hash=? AND status='active'")
                     .bind(&hash)
-                    .fetch_optional(&mut *tx)
+                    .fetch_optional(&mut **tx)
                     .await?;
             let current: Option<Memory> =
                 sqlx::query_as("SELECT * FROM memories WHERE slot=? AND status='active'")
                     .bind(&candidate.key)
-                    .fetch_optional(&mut *tx)
+                    .fetch_optional(&mut **tx)
                     .await?;
             // Late retried jobs cannot overwrite a more recently observed value of a slot.
             if current.as_ref().is_some_and(|m| m.source_seq > source_seq)
@@ -436,15 +542,15 @@ impl Store {
             });
             let (memory_id, revision) = if let Some(memory) = reinforce {
                 sqlx::query("UPDATE memories SET importance=MAX(importance,?),confidence=MAX(confidence,?),updated_at=?,source_seq=?,valid_until=?,revision=revision+1 WHERE id=?")
-                    .bind(candidate.importance).bind(candidate.confidence).bind(source.created_at).bind(source_seq).bind(valid_until).bind(&memory.id).execute(&mut *tx).await?;
+                    .bind(candidate.importance).bind(candidate.confidence).bind(source.created_at).bind(source_seq).bind(valid_until).bind(&memory.id).execute(&mut **tx).await?;
                 (memory.id, memory.revision + 1)
             } else {
                 let new_id = id();
                 if let Some(old) = current {
                     sqlx::query("UPDATE memories SET status='superseded',superseded_by=?,revision=revision+1 WHERE id=?")
-                        .bind(&new_id).bind(&old.id).execute(&mut *tx).await?;
+                        .bind(&new_id).bind(&old.id).execute(&mut **tx).await?;
                     enqueue(
-                        &mut tx,
+                        tx,
                         &format!("project:{}:{}", old.id, old.revision + 1),
                         "project",
                         &old.id,
@@ -455,13 +561,13 @@ impl Store {
                     .bind(&new_id).bind(&candidate.key).bind(&candidate.content).bind(hash).bind(&candidate.kind)
                     .bind(candidate.importance).bind(candidate.confidence).bind(serde_json::to_string(&candidate.entities)?)
                     .bind(serde_json::to_string(&embedding)?).bind(source.created_at).bind(source.created_at).bind(source_seq).bind(valid_until)
-                    .execute(&mut *tx).await?;
+                    .execute(&mut **tx).await?;
                 (new_id, 1)
             };
             sqlx::query("INSERT OR IGNORE INTO memory_sources(memory_id,message_id,quote,observed_at) VALUES(?,?,?,?)")
-                .bind(&memory_id).bind(&source.id).bind(&candidate.source_quote).bind(source.created_at).execute(&mut *tx).await?;
+                .bind(&memory_id).bind(&source.id).bind(&candidate.source_quote).bind(source.created_at).execute(&mut **tx).await?;
             enqueue(
-                &mut tx,
+                tx,
                 &format!("project:{memory_id}:{revision}"),
                 "project",
                 &memory_id,
@@ -470,13 +576,8 @@ impl Store {
         }
         sqlx::query("INSERT OR IGNORE INTO extracted_messages(message_id) VALUES(?)")
             .bind(&source.id)
-            .execute(&mut *tx)
+            .execute(&mut **tx)
             .await?;
-        sqlx::query("DELETE FROM jobs WHERE id=?")
-            .bind(job_id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
         Ok(())
     }
 
