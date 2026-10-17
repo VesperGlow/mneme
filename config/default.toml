@@ -9,7 +9,7 @@ model = "auto"
 temperature = 0.7
 max_tokens = 1200
 timeout_seconds = 120
-context_chars = 100000
+context_tokens = 100000
 # 持续对话触及任一上限时压缩旧轮次，保留摘要与近期原文。
 history_turns = 1000
 summary_chars = 2000

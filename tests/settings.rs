@@ -26,7 +26,7 @@ fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     config.llm.base_url = base.into();
     config.memory.poll_seconds = 1;
     config.memory.extract_every_chars = 1;
-    config.llm.context_chars = 16000;
+    config.llm.context_tokens = 16000;
     config.llm.history_turns = 16;
     config
 }
@@ -220,7 +220,7 @@ async fn persona_applies_to_context_and_survives_restart() {
             .0,
         StatusCode::BAD_REQUEST
     );
-    for length in [5000, 6000] {
+    for length in [6000, 7000] {
         let mut oversized = persona.clone();
         oversized["output_format"] = json!("字".repeat(length));
         assert_eq!(
@@ -832,10 +832,13 @@ fn legacy_config_gets_continuity_defaults_and_rejects_invalid_limits() {
         .split("[console]")
         .next()
         .unwrap()
-        .replace("summary_chars = 2000", "");
+        .replace("summary_chars = 2000", "")
+        .replace("context_tokens = 100000", "context_chars = 16000");
     let after = text.split("[models]").nth(1).unwrap();
     let legacy: Config = toml::from_str(&format!("{before}\n[models]{after}")).unwrap();
     assert_eq!(legacy.llm.summary_chars, 2000);
+    assert_eq!(legacy.llm.context_tokens, 100_000);
+    assert_eq!(legacy.llm.legacy_context_chars, Some(16_000));
     assert_eq!(legacy.console.session_days, 30);
     assert!(!legacy.console.secure_cookie);
     let temp = tempfile::TempDir::new().unwrap();

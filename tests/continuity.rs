@@ -245,12 +245,12 @@ async fn compaction_preserves_summary_raw_evidence_and_durable_memory_jobs_acros
 }
 
 #[tokio::test]
-async fn character_limit_compacts_before_turn_limit_and_failed_summary_keeps_watermark() {
+async fn token_limit_compacts_before_turn_limit_and_failed_summary_keeps_watermark() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, fake) = common::fake_services().await;
     let mut c = config(&temp, &base);
     c.llm.history_turns = 100;
-    c.llm.context_chars = 12000;
+    c.llm.context_tokens = 12000;
     c.validate().unwrap();
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(c, rx).await.unwrap();
@@ -297,7 +297,7 @@ async fn global_context_batches_every_ten_thousand_characters_across_transports_
     let mut c = config(&temp, &base);
     c.llm.history_turns = 1000;
     c.memory.extract_every_chars = 10_000;
-    assert_eq!(c.llm.context_chars, 100_000);
+    assert_eq!(c.llm.context_tokens, 100_000);
     c.validate().unwrap();
     let (stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(c.clone(), rx.clone()).await.unwrap();
@@ -400,6 +400,46 @@ async fn global_context_batches_every_ten_thousand_characters_across_transports_
 }
 
 #[tokio::test]
+async fn token_budget_preserves_more_than_a_hundred_thousand_english_characters() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut c = config(&temp, &base);
+    c.llm.history_turns = 1000;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let session = app.store.conversation().await.unwrap();
+    let text = "word ".repeat(800);
+    for _ in 0..30 {
+        seed(&app.store, &session, &text).await;
+    }
+    let history = app.store.history(&session, 1000).await.unwrap();
+    assert!(
+        history
+            .iter()
+            .map(|m| m.content.chars().count())
+            .sum::<usize>()
+            > 100_000
+    );
+    let expected = history
+        .iter()
+        .map(|m| mneme::tokens::message(&m.content))
+        .sum::<usize>();
+    assert!(expected < 30_000);
+    let router = api::router(app);
+    let status = data(&router, "/v1/conversation").await;
+    assert_eq!(status["context"]["context_used_tokens"], expected);
+    assert_eq!(status["context"]["tokens_estimated"], true);
+    let wire = chat(&router, "Continue our conversation.").await;
+    assert!(wire.contains("event: done"), "{wire}");
+    assert!(!wire.contains("event: compaction"));
+    assert_eq!(
+        data(&router, "/v1/conversation").await["context"]["compactions"],
+        0
+    );
+    fake.abort();
+}
+
+#[tokio::test]
 async fn hundred_thousand_context_does_not_compact_at_sixteen_turns() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, fake) = common::fake_services().await;
@@ -425,7 +465,7 @@ async fn hundred_thousand_context_does_not_compact_at_sixteen_turns() {
     }
     assert!(compacted);
     let state = data(&router, "/v1/conversation").await;
-    assert_eq!(state["context"]["context_chars"], 100_000);
+    assert_eq!(state["context"]["context_tokens"], 100_000);
     assert!(
         state["context"]["summary"]
             .as_str()

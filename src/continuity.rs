@@ -11,9 +11,16 @@ pub async fn status(app: &App, session: &str) -> Result<Value> {
     let (summary, through, compactions, updated_at) = row.unwrap_or_default();
     let turns: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages m JOIN turns t ON t.id=m.turn_id WHERE m.session_id=? AND m.seq>? AND m.role='user' AND t.status='complete'")
         .bind(session).bind(through).fetch_one(&app.store.pool).await?;
+    let texts: Vec<String> = sqlx::query_scalar("SELECT m.content FROM messages m JOIN turns t ON t.id=m.turn_id WHERE m.session_id=? AND t.status='complete' AND m.seq>? AND m.turn_id IN (SELECT turn_id FROM messages WHERE role='user' AND seq>?)")
+        .bind(session).bind(through).bind(through).fetch_all(&app.store.pool).await?;
+    let used_tokens = texts
+        .iter()
+        .map(|text| crate::tokens::message(text))
+        .sum::<usize>()
+        + crate::tokens::count(&summary);
     Ok(
-        json!({"history_turns":turns,"max_history_turns":app.config.llm.history_turns,
-        "context_chars":app.config.llm.context_chars,"summary_chars":app.config.llm.summary_chars,
+        json!({"history_turns":turns,"context_used_tokens":used_tokens,"max_history_turns":app.config.llm.history_turns,
+        "context_tokens":app.config.llm.context_tokens,"tokenizer":crate::tokens::TOKENIZER,"tokens_estimated":true,"summary_chars":app.config.llm.summary_chars,
         "summary":summary,"compactions":compactions,"updated_at":updated_at,
         "memory_extract_chars":app.config.memory.extract_every_chars,"memory_pending_chars":app.store.extraction_pending_chars().await?}),
     )
@@ -40,14 +47,21 @@ pub(crate) async fn prepare(
             .bind(&user.session_id).bind(through).bind((app.config.llm.history_turns + 1)*2).fetch_all(&app.store.pool).await?;
         chat::attach_history_assets(app, &mut history).await?;
         let base = chat::context_with_summary(app, vec![], user, memories, &summary);
-        let used: usize = base.iter().map(|m| m.content.chars().count()).sum();
+        let used = crate::tokens::chat(&base) + app.config.llm.max_tokens as usize;
         let budget = app
             .config
             .llm
-            .context_chars
+            .context_tokens
             .saturating_sub(used)
-            .saturating_sub(if app.tools.is_some() { 6000 } else { 0 });
-        let cost: usize = history.iter().map(|m| m.content.chars().count()).sum();
+            .saturating_sub(if app.tools.is_some() {
+                crate::tokens::TOOL_RESERVE
+            } else {
+                0
+            });
+        let cost: usize = history
+            .iter()
+            .map(|m| crate::tokens::message(&m.content))
+            .sum();
         if history.len() / 2 < app.config.llm.history_turns as usize && cost <= budget {
             return Ok((history, summary));
         }
@@ -58,8 +72,11 @@ pub(crate) async fn prepare(
         for pair in history.as_chunks::<2>().0 {
             take += 2;
             count -= 2;
-            remaining =
-                remaining.saturating_sub(pair.iter().map(|m| m.content.chars().count()).sum());
+            remaining = remaining.saturating_sub(
+                pair.iter()
+                    .map(|m| crate::tokens::message(&m.content))
+                    .sum(),
+            );
             if count / 2 <= (app.config.llm.history_turns as usize / 2) && remaining <= budget / 2 {
                 break;
             }
@@ -86,29 +103,29 @@ async fn summarize(app: &App, previous: &str, messages: &[Message]) -> Result<St
     // Bound each request even for unusually large historic replies. Keep message identity/role
     // on every fragment, and commit the watermark only after the entire prefix succeeds.
     let mut batch = Vec::new();
-    let mut batch_chars = 0;
+    let mut batch_tokens = 0;
     for message in messages {
         let chars: Vec<char> = message.content.chars().collect();
         let mut offset = 0;
         while offset < chars.len() {
-            let mut end = chars.len().min(offset + app.config.llm.context_chars);
+            let mut end = chars.len().min(offset + app.config.llm.context_tokens);
             loop {
                 let item = json!({"id":message.id,"role":message.role,"created_at":message.created_at,"content":chars[offset..end].iter().collect::<String>()});
-                let cost = item.to_string().chars().count() + 1;
-                let limit = app
-                    .config
-                    .llm
-                    .context_chars
-                    .saturating_sub(serde_json::to_string(&summary)?.chars().count() + 1000);
-                if batch_chars + cost <= limit {
-                    batch_chars += cost;
+                let cost = crate::tokens::count(&item.to_string()) + 1;
+                let limit = app.config.llm.context_tokens.saturating_sub(
+                    crate::tokens::count(&serde_json::to_string(&summary)?)
+                        + crate::tokens::count(SUMMARY_PROMPT)
+                        + 2800,
+                );
+                if batch_tokens + cost <= limit {
+                    batch_tokens += cost;
                     batch.push(item);
                     offset = end;
                     break;
                 }
                 if !batch.is_empty() {
                     summary = summarize_batch(app, &summary, std::mem::take(&mut batch)).await?;
-                    batch_chars = 0;
+                    batch_tokens = 0;
                 } else {
                     ensure!(end - offset > 1, "summary leaves no room for source text");
                     end = offset + (end - offset) / 2;

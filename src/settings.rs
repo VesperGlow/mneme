@@ -187,7 +187,7 @@ async fn settings(State(app): State<App>) -> ApiResult<Json<Value>> {
     let persona = app.persona.read().unwrap().clone();
     let configured = app.console_security.lock().await.password.is_some();
     Ok(Json(
-        json!({"persona":persona,"default_persona":app.config.persona,"password_configured":configured,
+        json!({"persona":persona,"default_persona":app.config.persona,"model":app.config.llm.model,"password_configured":configured,
         "session_days":app.config.console.session_days,"graph_cleanup_pending":metadata(&app.store, GRAPH_RESET).await?.is_some()}),
     ))
 }

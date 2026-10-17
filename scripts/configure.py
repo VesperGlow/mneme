@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 ALLOWED = {
     'MNEME_CONSOLE_PASSWORD', 'MNEME_CONSOLE_SESSION_DAYS', 'MNEME_CONSOLE_SECURE_COOKIE',
-    'MNEME_LLM_CONTEXT_CHARS', 'MNEME_LLM_HISTORY_TURNS', 'MNEME_MEMORY_EXTRACT_CHARS',
+    'MNEME_LLM_CONTEXT_CHARS', 'MNEME_LLM_CONTEXT_TOKENS', 'MNEME_LLM_HISTORY_TURNS', 'MNEME_MEMORY_EXTRACT_CHARS',
     'MNEME_API_TOKEN', 'MNEME_LLM_API_KEY', 'MNEME_NEO4J_PASSWORD',
     'MNEME_LLM_BASE_URL', 'MNEME_LLM_MODEL', 'MNEME_QQ_APP_ID',
     'MNEME_QQ_APP_SECRET', 'MNEME_QQ_SANDBOX', 'MNEME_QQ_LISTEN',
@@ -105,7 +105,7 @@ def configure(source, dest):
     if not days.isascii() or not days.isdecimal() or not 1 <= int(days) <= 365:
         raise ValueError('MNEME_CONSOLE_SESSION_DAYS 必须为 1–365 的整数。')
     for key, default, minimum, maximum in [
-        ('MNEME_LLM_CONTEXT_CHARS', '100000', 2000, 100000),
+        ('MNEME_LLM_CONTEXT_TOKENS', '100000', 2000, 1000000),
         ('MNEME_LLM_HISTORY_TURNS', '1000', 1, 10000),
         ('MNEME_MEMORY_EXTRACT_CHARS', '10000', 1, 100000),
     ]:
@@ -113,6 +113,7 @@ def configure(source, dest):
         if not value.isascii() or not value.isdecimal() or not minimum <= int(value) <= maximum:
             raise ValueError(f'{key} 必须为 {minimum}–{maximum} 的整数。')
         values[key] = value
+    values.pop('MNEME_LLM_CONTEXT_CHARS', None)
     if generated:
         lines = source.read_text().splitlines()
         for key, value in generated.items():

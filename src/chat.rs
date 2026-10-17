@@ -28,6 +28,11 @@ pub(crate) async fn generate(
     let (history, summary) =
         crate::continuity::prepare(app, user, &recalled.memories, output).await?;
     let messages = context_with_summary(app, history, user, &recalled.memories, &summary);
+    anyhow::ensure!(
+        crate::tokens::chat(&messages) + app.config.llm.max_tokens as usize
+            <= app.config.llm.context_tokens,
+        "conversation exceeds token budget"
+    );
     let response = if app.tools.is_some() {
         tokio::time::timeout(
             std::time::Duration::from_secs(app.config.tools.turn_timeout_seconds),
@@ -132,22 +137,24 @@ pub(crate) fn context_with_summary(
                 .into(),
         });
     }
-    let fixed: usize = messages
-        .iter()
-        .map(|m| m.content.chars().count())
-        .sum::<usize>()
-        + user.content.chars().count()
-        + if app.tools.is_some() { 6000 } else { 0 };
-    let memory_budget = app.config.llm.context_chars.saturating_sub(fixed + 200);
+    let fixed = crate::tokens::chat(&messages)
+        + crate::tokens::message(&user.content)
+        + app.config.llm.max_tokens as usize
+        + if app.tools.is_some() {
+            crate::tokens::TOOL_RESERVE
+        } else {
+            0
+        };
+    let memory_budget = app.config.llm.context_tokens.saturating_sub(fixed + 200);
     let mut data = Vec::new();
-    let mut memory_chars = 0;
+    let mut memory_tokens = 0;
     for memory in memories {
         let item = json!({"id":memory.memory.id,"fact":memory.memory.content,"observed_at":memory.memory.updated_at,"valid_until":memory.memory.valid_until,"confidence":memory.memory.confidence});
-        let cost = item.to_string().chars().count() + 1;
-        if memory_chars + cost > memory_budget {
+        let cost = crate::tokens::count(&item.to_string()) + 1;
+        if memory_tokens + cost > memory_budget {
             break;
         }
-        memory_chars += cost;
+        memory_tokens += cost;
         data.push(item);
     }
     if !data.is_empty() {
@@ -164,16 +171,18 @@ pub(crate) fn context_with_summary(
             content: "我会把这些内容仅作为历史参考，并以本轮对话中的信息为准。".into(),
         });
     }
-    let used: usize = messages
-        .iter()
-        .map(|m| m.content.chars().count())
-        .sum::<usize>()
-        + user.content.chars().count();
-    let reserve = if app.tools.is_some() { 6000 } else { 0 };
+    let used = crate::tokens::chat(&messages)
+        + crate::tokens::message(&user.content)
+        + app.config.llm.max_tokens as usize;
+    let reserve = if app.tools.is_some() {
+        crate::tokens::TOOL_RESERVE
+    } else {
+        0
+    };
     let mut remaining = app
         .config
         .llm
-        .context_chars
+        .context_tokens
         .saturating_sub(used)
         .saturating_sub(reserve);
     let mut selected: Vec<_> = Vec::new();
@@ -181,7 +190,7 @@ pub(crate) fn context_with_summary(
     for pair in history.as_chunks::<2>().0.iter().rev() {
         let chars = pair
             .iter()
-            .map(|m| m.content.chars().count())
+            .map(|m| crate::tokens::message(&m.content))
             .sum::<usize>();
         if chars > remaining {
             break;
@@ -213,15 +222,26 @@ async fn generate_with_tools(
     crate::assets::attach_current(app, user, &mut base).await?;
     // Reserve a bounded tool round, keeping the persona and current user message intact.
     anyhow::ensure!(
-        prompt_chars(&base, &[]) <= app.config.llm.context_chars.saturating_sub(4000),
+        prompt_tokens(&base, &[])
+            <= app
+                .config
+                .llm
+                .context_tokens
+                .saturating_sub(app.config.llm.max_tokens as usize + 1000),
         "conversation context exceeds tool budget"
     );
     let mut rounds = Vec::<Vec<serde_json::Value>>::new();
     let definitions = crate::tools::definitions();
+    let schema_tokens = crate::tokens::count(&definitions.to_string()) + 20;
+    let limit = app
+        .config
+        .llm
+        .context_tokens
+        .saturating_sub(app.config.llm.max_tokens as usize + schema_tokens);
     let mut calls = 0usize;
     let mut answer = String::new();
     loop {
-        if calls >= app.config.tools.max_calls {
+        if calls >= app.config.tools.max_calls || prompt_tokens(&base, &rounds) > limit {
             tracing::info!(calls, "tool call limit reached; generating final answer");
             let final_text = finish_tools(
                 app,
@@ -299,10 +319,13 @@ async fn generate_with_tools(
             round[0]["reasoning_content"] = json!(reasoning);
         }
         let mut images = Vec::new();
-        let available =
-            app.config.llm.context_chars.saturating_sub(
-                prompt_chars(&base, &[]) + round[0].to_string().chars().count() + 400,
-            );
+        let available = app.config.llm.context_tokens.saturating_sub(
+            prompt_tokens(&base, &[])
+                + crate::tokens::wire_message(&round[0])
+                + app.config.llm.max_tokens as usize
+                + schema_tokens
+                + 5000,
+        );
         let per_result = (available / completion.tool_calls.len().max(1)).clamp(300, 3500);
         for call in &completion.tool_calls {
             let (result, image) = if calls >= app.config.tools.max_calls {
@@ -325,7 +348,7 @@ async fn generate_with_tools(
             round.push(json!({"role":"user","name":"tool_images","content":parts}));
         }
         rounds.push(round);
-        while rounds.len() > 1 && prompt_chars(&base, &rounds) > app.config.llm.context_chars {
+        while rounds.len() > 1 && prompt_tokens(&base, &rounds) > limit {
             rounds.remove(0);
         }
         if !answer.is_empty() {
@@ -359,9 +382,8 @@ async fn finish_tools(
     let available = app
         .config
         .llm
-        .context_chars
-        .saturating_sub(prompt_chars(&input, &[]) + 200)
-        .max(300);
+        .context_tokens
+        .saturating_sub(prompt_tokens(&input, &[]) + app.config.llm.max_tokens as usize + 5000);
     let mut selected = Vec::new();
     let mut remaining = available;
     for result in results.iter().rev() {
@@ -369,7 +391,7 @@ async fn finish_tools(
             break;
         }
         let result = crate::tools::bounded_result(result.clone(), remaining.min(3500));
-        let size = result.to_string().chars().count() + 2;
+        let size = crate::tokens::count(&result.to_string()) + 2;
         if size > remaining {
             break;
         }
@@ -383,6 +405,10 @@ async fn finish_tools(
         .rev()
         .flat_map(|round| round.iter().rev())
         .find(|m| m["name"] == "tool_images")
+        && prompt_tokens(&input, &[])
+            + crate::tokens::wire_message(images)
+            + app.config.llm.max_tokens as usize
+            <= app.config.llm.context_tokens
     {
         input.push(images.clone());
     }
@@ -409,30 +435,10 @@ async fn finish_tools(
         }
     }
 }
-fn prompt_chars(base: &[serde_json::Value], rounds: &[Vec<serde_json::Value>]) -> usize {
-    base.iter()
+fn prompt_tokens(base: &[serde_json::Value], rounds: &[Vec<serde_json::Value>]) -> usize {
+    3 + base
+        .iter()
         .chain(rounds.iter().flatten())
-        .map(|m| {
-            let text = if let Some(text) = m["content"].as_str() {
-                text.chars().count()
-            } else {
-                m["content"]
-                    .as_array()
-                    .map(|parts| {
-                        parts
-                            .iter()
-                            .map(|p| p["text"].as_str().map(|s| s.chars().count()).unwrap_or(0))
-                            .sum()
-                    })
-                    .unwrap_or(0)
-            };
-            text + m["reasoning_content"]
-                .as_str()
-                .map(|s| s.chars().count())
-                .unwrap_or(0)
-                + m.get("tool_calls")
-                    .map(|v| v.to_string().chars().count())
-                    .unwrap_or(0)
-        })
-        .sum()
+        .map(crate::tokens::wire_message)
+        .sum::<usize>()
 }

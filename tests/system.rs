@@ -32,7 +32,7 @@ fn config(temp: &TempDir, base: &str) -> Config {
     config.neo4j.base_url = base.into();
     config.memory.poll_seconds = 1;
     config.memory.extract_every_chars = 1;
-    config.llm.context_chars = 16000;
+    config.llm.context_tokens = 16000;
     config.llm.history_turns = 16;
     config.validate().unwrap();
     config

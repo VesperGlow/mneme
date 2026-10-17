@@ -19,7 +19,7 @@ class ConfigureTest(unittest.TestCase):
             first = configure.configure(source, dest)
             self.assertEqual(first['MNEME_LLM_BASE_URL'], 'https://provider.invalid/v1')
             self.assertEqual(first['MNEME_LLM_MODEL'], 'auto')
-            self.assertEqual(first['MNEME_LLM_CONTEXT_CHARS'], '100000')
+            self.assertEqual(first['MNEME_LLM_CONTEXT_TOKENS'], '100000')
             self.assertEqual(first['MNEME_LLM_HISTORY_TURNS'], '1000')
             self.assertEqual(first['MNEME_MEMORY_EXTRACT_CHARS'], '10000')
             self.assertGreaterEqual(len(first['MNEME_API_TOKEN']), 32)
@@ -55,6 +55,18 @@ class ConfigureTest(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     configure.configure(source, dest)
                 self.assertFalse(dest.exists())
+
+    def test_token_budget_migrates_legacy_environment(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source, dest = Path(temp) / '.env', Path(temp) / 'config'
+            original = 'MNEME_LLM_API_KEY=fixture\nMNEME_LLM_BASE_URL=https://provider.invalid/v1\n'
+            source.write_text(original + 'MNEME_LLM_CONTEXT_CHARS=16000\n')
+            values = configure.configure(source, dest)
+            self.assertEqual(values['MNEME_LLM_CONTEXT_TOKENS'], '100000')
+            self.assertNotIn('MNEME_LLM_CONTEXT_CHARS', values)
+            self.assertNotIn('MNEME_LLM_CONTEXT_CHARS', (dest / 'app.env').read_text())
+            source.write_text(original + 'MNEME_LLM_CONTEXT_TOKENS=200000\n')
+            self.assertEqual(configure.configure(source, dest)['MNEME_LLM_CONTEXT_TOKENS'], '200000')
 
     def test_tool_budget_overrides_legacy_config_and_rejects_invalid_limits(self):
         with tempfile.TemporaryDirectory() as temp:

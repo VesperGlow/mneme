@@ -138,6 +138,7 @@ pub struct Llm {
     model: String,
     temperature: f32,
     max_tokens: u32,
+    context_tokens: usize,
     pub metrics: std::sync::Arc<crate::telemetry::Metrics>,
 }
 
@@ -157,6 +158,7 @@ impl Llm {
             model: config.llm.model.clone(),
             temperature: config.llm.temperature,
             max_tokens: config.llm.max_tokens,
+            context_tokens: config.llm.context_tokens,
             metrics: Default::default(),
         })
     }
@@ -184,6 +186,14 @@ impl Llm {
         input: Value,
         max_tokens: u32,
     ) -> Result<Value> {
+        ensure!(
+            crate::tokens::message(system)
+                + crate::tokens::message(&input.to_string())
+                + 3
+                + max_tokens as usize
+                <= self.context_tokens,
+            "JSON request exceeds token budget"
+        );
         let response = self.client.post(&self.url).bearer_auth(&self.key)
             .json(&json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,
                 "messages":[{"role":"system","content":system},{"role":"user","content":input.to_string()}]}))
@@ -277,6 +287,18 @@ impl Llm {
         tool_conversation: bool,
         output: &mpsc::Sender<Event>,
     ) -> Result<Completion> {
+        ensure!(
+            3 + messages
+                .iter()
+                .map(crate::tokens::wire_message)
+                .sum::<usize>()
+                + tools
+                    .map(|t| crate::tokens::count(&t.to_string()) + 20)
+                    .unwrap_or(0)
+                + self.max_tokens as usize
+                <= self.context_tokens,
+            "model request exceeds token budget"
+        );
         let mut body = json!({"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens,"stream":true});
         if let Some(tools) = tools {
             body["tools"] = tools.clone();
@@ -445,6 +467,42 @@ pub async fn bounded_body(response: reqwest::Response, limit: usize) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::ToolTextGuard;
+
+    #[tokio::test]
+    async fn token_guard_includes_reply_reserve_json_and_tool_schemas_before_network() {
+        use super::*;
+        let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+        config.llm.base_url = "http://127.0.0.1:1".into();
+        config.llm.context_tokens = 3000;
+        let llm = Llm::new(&config).unwrap();
+        let (tx, _rx) = mpsc::channel(16);
+        let messages = vec![ChatMessage {
+            role: "user".into(),
+            content: "字".repeat(2000),
+        }];
+        assert!(
+            llm.stream(&messages, &tx)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("token budget")
+        );
+        assert!(
+            llm.complete_json("extract", json!({"source":"字".repeat(1000)}))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("token budget")
+        );
+        let result = llm
+            .round(
+                &[json!({"role":"user","content":"hi"})],
+                Some(&json!({"description":"字".repeat(3000)})),
+                &tx,
+            )
+            .await;
+        assert!(result.err().unwrap().to_string().contains("token budget"));
+    }
 
     #[test]
     fn dsml_is_never_visible_even_when_streamed_one_character_at_a_time() {

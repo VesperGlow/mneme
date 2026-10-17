@@ -564,8 +564,10 @@ async fn extract_batch(app: &App, job: &Job) -> Result<()> {
     let prompt = format!(
         "{EXTRACT_PROMPT}\n本次为定期批量提取：targets 是按时间排列的用户原始消息，每项含 id、content、observed_at；用 targets 代替单个 target。每条输出记忆必须额外包含 source_id，准确指向提供该事实的 targets.id，source_quote 必须逐字出现在这个来源的 content 中；相对时间用该来源 observed_at。最多输出32条。同一属性优先保留最后明确告知的值。不要把其他消息、摘要或助手推测当作原文证据。"
     );
-    let limit = app.config.llm.context_chars.saturating_sub(
-        prompt.chars().count() + json!(existing_data).to_string().chars().count() + 500,
+    let limit = app.config.llm.context_tokens.saturating_sub(
+        crate::tokens::count(&prompt)
+            + crate::tokens::count(&json!(existing_data).to_string())
+            + 8200,
     );
     for source in &sources {
         let observed = chrono::DateTime::from_timestamp(source.created_at, 0)
@@ -573,7 +575,7 @@ async fn extract_batch(app: &App, job: &Job) -> Result<()> {
             .with_timezone(&app.config.timezone.parse::<chrono::FixedOffset>()?)
             .to_rfc3339();
         let target = json!({"id":source.id,"content":source.content,"observed_at":observed});
-        let cost = target.to_string().chars().count() + 1;
+        let cost = crate::tokens::count(&target.to_string()) + 1;
         ensure!(
             cost <= limit,
             "batch source exceeds extraction context budget"

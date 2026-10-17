@@ -16,6 +16,7 @@ pub mod qq_store;
 pub mod settings;
 pub mod store;
 pub mod telemetry;
+pub mod tokens;
 pub mod tools;
 
 use config::Config;

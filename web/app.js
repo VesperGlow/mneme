@@ -5,7 +5,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const kinds = { fact: '事实', preference: '偏好', event: '经历', relationship: '关系', emotion: '情绪' };
   const colors = { fact: '#73906c', preference: '#c7ac7d', event: '#9aaec3', relationship: '#b4a0bb', emotion: '#c49b92' };
-  const pages = { chat: ['对话', 'CHAT', '把想法，慢慢说给我听', '让 Mneme 自主搜索、阅读网页，或一起看一张图片。'], tools: ['工具记录', 'TOOLS', '每一次行动，都看得见', '查看浏览器会话、工具调用、来源、耗时与错误。'], overview: ['概览', 'OVERVIEW', '让记忆，有迹可循。', '留意每一段积累，也看见记忆的变化。'], memories: ['记忆库', 'MEMORY LIBRARY', '整理你的记忆空间', '浏览、追溯与更新，让重要的事始终清晰。'], retrieval: ['检索实验室', 'RETRIEVAL LAB', '看见一次回想的过程', '从候选召回到精排，理解 Mneme 如何找到记忆。'], system: ['系统状态', 'SYSTEM STATUS', '一切运行，尽在眼前', '查看服务状态、调用表现与后台处理进度。'], settings: ['Agent 设置', 'AGENT SETTINGS', '让陪伴，更合你的心意', '调整性格、管理登录密码，或重新开始一段陪伴。'] };
+  const pages = { chat: ['对话'], memories: ['记忆库'], agent: ['Agent'], tools: ['工具记录'], retrieval: ['检索实验室'], system: ['系统状态'], settings: ['设置'] };
   const paths = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     book: '<path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4z"/><path d="M13 7a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2"/>',
@@ -28,7 +28,7 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
   };
   const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.book}</svg>`;
-  const state = { chatBusy: false, authenticated: false, route: 'overview', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, library: null, poll: 0 };
+  const state = { chatBusy: false, authenticated: false, route: 'chat', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, library: null, poll: 0 };
   const fmt = n => Number(n || 0).toLocaleString('zh-CN');
   const pct = n => `${Math.round(Number(n || 0) * 100)}%`;
   const date = (n, full = false) => n ? new Date(n * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', ...(full ? { year: 'numeric', hour: '2-digit', minute: '2-digit' } : {}) }) : '—';
@@ -66,7 +66,6 @@
   }
   function empty(title, description, action = '') { return `<div class="empty"><div class="empty-icon">${icon('leaf')}</div><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`; }
   const loading = text => `<div class="loading" role="status"><span class="spinner"></span>${esc(text || '正在读取记忆…')}</div>`;
-  const heading = (action = '') => { const [, eyebrow, title, description] = pages[state.route]; return `<header class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1${state.route === 'overview' ? ' class="serif"' : ''}>${title}</h1><p class="subheading">${description}</p></div>${action}</header>`; };
   const newButton = () => `<button class="btn primary" data-new>${icon('plus')}新增记忆</button>`;
   function login() {
     $('#app').innerHTML = `<main class="login"><section class="login-story"><a class="brand" href="/console/" aria-label="Mneme Console"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="login-copy"><div class="eyebrow">A SPACE FOR WHAT MATTERS</div><h1 class="serif">每一段记忆，<br>都值得被好好保管。</h1><p>在这里，整理那些值得留下的片段，<br>让每一次回想，都有迹可循。</p></div><div class="login-footer">PRIVATE BY DEFAULT · BUILT WITH CARE</div><div class="login-decoration"></div></section><section class="login-form-wrap"><form id="login-form" class="login-card"><div class="eyebrow">YOUR PRIVATE CONSOLE</div><h2>进入你的记忆空间</h2><p class="subheading">使用 WebUI 密码验证身份。</p><label class="field" for="password">登录密码<input id="password" name="password" type="password" placeholder="输入你的 WebUI 密码" autocomplete="current-password" minlength="10" maxlength="128" required autofocus></label><button class="btn primary" type="submit">解锁控制台${icon('arrow')}</button><div id="login-error" class="error-inline" role="alert"></div><div class="login-note">${icon('shield')}<span>登录状态安全保存在浏览器中，刷新或重新打开页面后可继续使用。主动退出或登录过期后需重新验证。</span></div></form></section></main>`;
@@ -96,29 +95,39 @@
     state.authenticated = false; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null;
     state.filter = { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }; clearTimeout(state.poll);
     for (const modal of $$('dialog')) { if (modal.open) modal.close(); modal.innerHTML = ''; }
+    setNavigation(false); delete document.body.dataset.page;
     $('#toast').textContent = ''; $('#toast').className = ''; document.body.classList.remove('dialog-open'); login();
   }
+  function setNavigation(open) {
+    document.body.classList.toggle('nav-open', open);
+    $('#menu-toggle')?.setAttribute('aria-expanded', String(open));
+  }
   function shell() {
-    $('#app').innerHTML = `<aside class="sidebar" aria-label="主导航"><a class="brand" href="#overview"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="nav-label">WORKSPACE</div><nav class="nav">${Object.entries(pages).map(([key, [name]], i) => `<a href="#${key}" data-nav="${key}" aria-label="${name}">${icon({ chat: 'spark', tools: 'chip', overview: 'grid', memories: 'book', retrieval: 'search', system: 'system', settings: 'edit' }[key])}<span>${key === 'settings' ? '设置' : key === 'retrieval' ? '检索' : name}</span></a>`).join('')}</nav><div class="sidebar-foot"><div class="flex">${icon('shield')}私有记忆空间</div><p>让每一段陪伴，都有记忆。<br>MNEME · LOCAL CONSOLE</p></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">你的记忆工作台<span>/</span><strong id="breadcrumb-current">概览</strong></div><div class="top-actions"><button class="search-shortcut" id="search-shortcut">${icon('search')}搜索记忆<kbd>/</kbd></button><div class="verified"><i class="dot"></i>身份已验证</div><i class="top-divider"></i><button id="refresh" class="icon-btn" aria-label="刷新当前页面" title="刷新">${icon('refresh')}</button><button id="logout" class="icon-btn" aria-label="退出登录" title="退出登录">${icon('logout')}</button></div></header><main class="page"><div id="page" aria-live="polite"></div><footer class="page-foot"><span>Mneme Console · 让记忆成为陪伴的延续</span><span>PRIVATE WORKSPACE</span></footer></main></div>`;
-    $('#logout').onclick = logout; $('#refresh').onclick = route; $('#search-shortcut').onclick = focusSearch;
+    const navigation = key => `<a href="#${key}" data-nav="${key}" aria-label="${pages[key][0]}">${icon({ chat: 'spark', memories: 'book', agent: 'leaf', tools: 'chip', retrieval: 'search', system: 'system', settings: 'edit' }[key])}<span>${pages[key][0]}</span></a>`;
+    $('#app').innerHTML = `<button class="menu-toggle icon-btn" id="menu-toggle" aria-label="打开导航" aria-expanded="false" aria-controls="sidebar">${icon('grid')}</button><button class="nav-backdrop" id="nav-backdrop" aria-label="关闭导航" tabindex="-1"></button><aside class="sidebar" id="sidebar" aria-label="主导航"><a class="brand" href="#chat" aria-label="Mneme 对话"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">YOUR COMPANION</div></div></a><nav class="nav">${['chat', 'memories', 'agent'].map(navigation).join('')}<div class="nav-separator"></div>${['tools', 'retrieval', 'system'].map(navigation).join('')}</nav><div class="sidebar-foot"><nav class="nav account-nav">${navigation('settings')}</nav><div class="account-row"><div class="verified"><i class="dot"></i><span>身份已验证</span></div><button id="logout" class="icon-btn" aria-label="退出登录" title="退出登录">${icon('logout')}</button></div></div></aside><div class="workspace"><main class="page" id="main-content"><div id="page" aria-live="polite"></div></main></div>`;
+    $('#logout').onclick = logout;
+    $('#menu-toggle').onclick = () => setNavigation(!document.body.classList.contains('nav-open'));
+    $('#nav-backdrop').onclick = () => setNavigation(false);
+    $$('.sidebar [data-nav]').forEach(link => { link.onclick = () => setNavigation(false); });
   }
   async function route() {
     if (!state.authenticated) return;
     for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
     clearTimeout(state.poll); const epoch = ++state.epoch;
-    state.route = Object.hasOwn(pages, location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
+    const requested = location.hash.slice(1) === 'overview' ? 'memories' : location.hash.slice(1);
+    state.route = Object.hasOwn(pages, requested) ? requested : 'chat';
+    document.body.dataset.page = state.route;
     $$('[data-nav]').forEach(link => { const active = link.dataset.nav === state.route; link.classList.toggle('active', active); if (active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
-    $('#breadcrumb-current').textContent = pages[state.route][0]; document.title = `${pages[state.route][0]} · Mneme Console`;
-    $('#page').innerHTML = heading(['overview', 'memories'].includes(state.route) ? newButton() : '') + loading(state.route === 'system' ? '正在探测服务状态…' : '正在读取数据…');
-    try { await ({ overview, memories: library, retrieval: retrievalPage, system: systemPage, settings: settingsPage, chat: chatPage, tools: toolsPage }[state.route])(epoch); }
-    catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#page').innerHTML = heading() + `<section class="panel">${empty('暂时无法读取数据', errorText(error), '<button class="btn" data-reload>重新加载</button>')}</section>`; }
+    document.title = `${pages[state.route][0]} · Mneme Console`;
+    $('#page').innerHTML = loading(state.route === 'system' ? '正在探测服务状态…' : '正在读取数据…');
+    try { await ({ memories: library, agent: agentPage, retrieval: retrievalPage, system: systemPage, settings: settingsPage, chat: chatPage, tools: toolsPage }[state.route])(epoch); }
+    catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#page').innerHTML = `<section class="panel">${empty('暂时无法读取数据', errorText(error), '<button class="btn" data-reload>重新加载</button>')}</section>`; }
   }
   function focusSearch() { if (!state.authenticated) return; if (state.route === 'memories') $('#memory-search')?.focus(); else { location.hash = 'memories'; setTimeout(() => $('#memory-search')?.focus(), 150); } }
-  async function overview(epoch) {
-    const [stats, latest] = await Promise.all([api('/v1/console/stats'), api('/v1/memories?limit=5&sort=created')]); if (epoch !== state.epoch) return;
+  function memorySummary(stats) {
     const pending = Number(stats.jobs.pending || 0) + Number(stats.jobs.running || 0);
-    const cards = [['记忆总量', stats.total, '所有未删除的记忆', 'book'], ['有效记忆', stats.active, `${fmt(stats.invalid)} 条记忆已失效`, 'leaf'], ['近期新增', stats.recent_7_days, '过去 7 × 24 小时', 'spark'], ['后台任务', pending, stats.jobs.dead ? `${fmt(stats.jobs.dead)} 个任务需要重试` : '提取与索引更新', 'clock']];
-    $('#page').innerHTML = heading(newButton()) + `<section class="metrics" aria-label="记忆统计">${cards.map(([label, n, hint, glyph], i) => `<article class="metric${i === 1 ? ' featured' : ''}"><div class="metric-label">${label}${icon(glyph)}</div><div class="metric-number">${fmt(n)}<small>${i === 3 ? '个' : '条'}</small></div><div class="metric-hint">${esc(hint)}</div></article>`).join('')}</section><section class="charts"><article class="panel"><div class="panel-head between"><div><h2>记忆的生长</h2><p class="subheading">最近 7 个自然日的新增记忆 · UTC</p></div><span class="badge">近 7 日</span></div><div class="chart-wrap">${activityChart(stats.activity)}</div></article><article class="panel"><div class="panel-head"><h2>每种记忆，都有位置</h2><p class="subheading">按记忆类型分布</p></div>${distribution(stats.kinds, stats.total)}</article></section><section class="panel"><div class="panel-head between"><div><h2>最近留下的片段</h2><p class="subheading">来自交流，也来自你的用心整理</p></div><a class="btn ghost small" href="#memories">全部记忆${icon('arrow')}</a></div>${latest.memories.length ? `<div class="table-scroll"><table class="recent-table"><thead><tr><th>记忆内容</th><th>类型</th><th>创建时间</th></tr></thead><tbody>${latest.memories.map(m => `<tr><td class="memory-cell"><button class="text-btn memory-title" data-detail="${esc(m.id)}">${esc(m.content)}</button><div class="memory-meta">${esc(entityArray(m).slice(0, 3).map(e => `# ${e}`).join('   ')) || (m.origin === 'manual' ? '手动记录' : '来自对话')}</div></td><td>${kindBadge(m.kind)}</td><td class="table-time">${date(m.created_at, true)}</td></tr>`).join('')}</tbody></table></div>` : empty('记忆，从第一段交流开始', '与 Mneme 交流后，值得留下的信息会逐渐积累。你也可以手动记录一条记忆。', newButton())}</section>`;
+    const cards = [['记忆总量', stats.total, '所有未删除的记忆', 'book'], ['有效记忆', stats.active, `${fmt(stats.invalid)} 条已失效`, 'leaf'], ['近 7 天新增', stats.recent_7_days, '持续积累的片段', 'spark'], ['后台任务', pending, stats.jobs.dead ? `${fmt(stats.jobs.dead)} 个任务需要重试` : '提取与索引同步', 'clock']];
+    return `<section class="metrics" aria-label="记忆统计">${cards.map(([label, n, hint, glyph], i) => `<article class="metric${i === 1 ? ' featured' : ''}"><div class="metric-label">${label}${icon(glyph)}</div><div class="metric-number">${fmt(n)}<small>${i === 3 ? '个' : '条'}</small></div><div class="metric-hint">${esc(hint)}</div></article>`).join('')}</section><section class="charts memory-charts"><article class="panel"><div class="panel-head between"><h2>记忆趋势</h2><small>近 7 天 · UTC</small></div><div class="chart-wrap">${activityChart(stats.activity)}</div></article><article class="panel"><div class="panel-head"><h2>类型分布</h2></div>${distribution(stats.kinds, stats.total)}</article></section>`;
   }
   function activityChart(activity) {
     const max = Math.max(1, ...activity.map(a => a.count)); const grid = [0, 1, 2, 3].map(i => `<line class="chart-grid" x1="25" x2="575" y1="${25 + i * 36}" y2="${25 + i * 36}"/>`).join('');
@@ -129,8 +138,9 @@
     return `<div class="distribution"><div class="donut"><svg viewBox="0 0 160 160" aria-hidden="true"><circle cx="80" cy="80" r="60" fill="none" stroke="#f0f3eb" stroke-width="14"/>${circles}</svg><div class="donut-center"><strong>${fmt(total)}</strong><small>条记忆</small></div></div><div class="legend">${Object.keys(kinds).map(kind => `<div class="legend-row ${kind}"><i class="dot"></i>${kinds[kind]}<strong>${fmt(counts[kind])}</strong></div>`).join('')}</div></div>`;
   }
   async function library(epoch) {
+    const stats = await api('/v1/console/stats'); if (epoch !== state.epoch) return;
     const f = state.filter;
-    $('#page').innerHTML = heading(newButton()) + `<div class="tabs" role="group" aria-label="记忆状态">${[['all', '全部记忆'], ['active', '有效'], ['invalid', '已失效'], ['deleted', '已删除']].map(([key, label]) => `<button class="tab${f.status === key ? ' active' : ''}" data-status="${key}" aria-pressed="${f.status === key}">${label}</button>`).join('')}</div><section class="panel"><form class="filters" id="filter-form"><div class="search-field">${icon('search')}<label class="sr-only" for="memory-search">搜索记忆</label><input id="memory-search" type="search" value="${esc(f.q)}" placeholder="搜索内容、实体或属性键…" maxlength="500" autocomplete="off"></div><label class="sr-only" for="kind-filter">筛选记忆类型</label><select id="kind-filter" class="filter-select"><option value="">所有类型</option>${Object.entries(kinds).map(([key, name]) => `<option value="${key}"${f.kind === key ? ' selected' : ''}>${name}</option>`).join('')}</select><label class="sr-only" for="sort-filter">排序方式</label><select id="sort-filter" class="filter-select">${[['updated', '最近更新'], ['created', '最近创建'], ['oldest', '最早创建'], ['importance', '重要性优先'], ['confidence', '可信度优先']].map(([key, name]) => `<option value="${key}"${f.sort === key ? ' selected' : ''}>${name}</option>`).join('')}</select></form><div id="library-results">${loading()}</div></section>`;
+    $('#page').innerHTML = memorySummary(stats) + `<div class="library-toolbar"><div class="tabs" role="group" aria-label="记忆状态">${[['all', '全部记忆'], ['active', '有效'], ['invalid', '已失效'], ['deleted', '已删除']].map(([key, label]) => `<button class="tab${f.status === key ? ' active' : ''}" data-status="${key}" aria-pressed="${f.status === key}">${label}</button>`).join('')}</div>${newButton()}</div><section class="panel"><form class="filters" id="filter-form"><div class="search-field">${icon('search')}<label class="sr-only" for="memory-search">搜索记忆</label><input id="memory-search" type="search" value="${esc(f.q)}" placeholder="搜索内容、实体或属性键…" maxlength="500" autocomplete="off"></div><label class="sr-only" for="kind-filter">筛选记忆类型</label><select id="kind-filter" class="filter-select"><option value="">所有类型</option>${Object.entries(kinds).map(([key, name]) => `<option value="${key}"${f.kind === key ? ' selected' : ''}>${name}</option>`).join('')}</select><label class="sr-only" for="sort-filter">排序方式</label><select id="sort-filter" class="filter-select">${[['updated', '最近更新'], ['created', '最近创建'], ['oldest', '最早创建'], ['importance', '重要性优先'], ['confidence', '可信度优先']].map(([key, name]) => `<option value="${key}"${f.sort === key ? ' selected' : ''}>${name}</option>`).join('')}</select></form><div id="library-results">${loading()}</div></section>`;
     $('#filter-form').onsubmit = event => { event.preventDefault(); clearTimeout(library.debounce); state.filter.q = $('#memory-search').value; state.filter.offset = 0; loadLibrary(epoch); };
     $('#memory-search').oninput = () => { clearTimeout(library.debounce); library.debounce = setTimeout(() => { if (epoch !== state.epoch) return; state.filter.q = $('#memory-search').value; state.filter.offset = 0; loadLibrary(epoch); }, 280); };
     $('#kind-filter').onchange = event => { state.filter.kind = event.target.value; state.filter.offset = 0; loadLibrary(epoch); };
@@ -185,7 +195,7 @@
     $('#confirm-delete', dialog).onclick = async event => { const button = event.currentTarget; button.disabled = true; try { await api(`/v1/memories/${encodeURIComponent(id)}?expected_revision=${m.revision}`, { method: 'DELETE' }); closeDialog('confirm'); closeDialog('detail'); state.detail = null; toast('记忆已删除，旧任务不会恢复它。'); route(); } catch (error) { if (error.name !== 'AbortError' && state.authenticated) { $('#delete-error').textContent = errorText(error); button.disabled = false; } } };
   }
   async function retrievalPage() {
-    $('#page').innerHTML = heading() + `<section class="panel"><form class="lab-query" id="retrieval-form"><label for="retrieval-query" class="sr-only">检索问题</label><textarea id="retrieval-query" maxlength="4000" placeholder="输入一个真实的问题，看看 Mneme 会想起什么…" required></textarea><div class="lab-bottom"><div class="examples"><button type="button" class="example" data-example="我平时喜欢喝什么咖啡？">咖啡偏好</button><button type="button" class="example" data-example="我现在住在哪座城市？">目前住址</button></div><button class="btn primary" type="submit" id="run-retrieval">运行检索${icon('arrow')}</button></div></form></section><div id="retrieval-results">${empty('从一个问题，开始回想', '这里会展示真实的召回候选、精排分数、筛除原因与最终结果。')}</div>`;
+    $('#page').innerHTML = `<section class="panel"><form class="lab-query" id="retrieval-form"><label for="retrieval-query" class="sr-only">检索问题</label><textarea id="retrieval-query" maxlength="4000" placeholder="输入一个真实的问题，看看 Mneme 会想起什么…" required></textarea><div class="lab-bottom"><div class="examples"><button type="button" class="example" data-example="我平时喜欢喝什么咖啡？">咖啡偏好</button><button type="button" class="example" data-example="我现在住在哪座城市？">目前住址</button></div><button class="btn primary" type="submit" id="run-retrieval">运行检索${icon('arrow')}</button></div></form></section><div id="retrieval-results">${empty('从一个问题，开始回想', '这里会展示真实的召回候选、精排分数、筛除原因与最终结果。')}</div>`;
     $('#retrieval-form').onsubmit = async event => { event.preventDefault(); const query = $('#retrieval-query').value.trim(); if (!query) return; const epoch = state.epoch; const button = $('#run-retrieval'); button.disabled = true; $('#retrieval-results').innerHTML = loading('正在检索与精排…'); try { const data = await send('/v1/console/retrieval', { query }); if (epoch !== state.epoch) return; renderRetrieval(data); } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#retrieval-results').innerHTML = empty('这次回想没有完成', errorText(error)); } finally { if (epoch === state.epoch) button.disabled = false; } };
   }
   function renderRetrieval(data) {
@@ -194,11 +204,11 @@
     $('#retrieval-results').innerHTML = `<section class="panel trace-summary"><strong>${data.degraded ? '部分通道不可用，已使用可用结果' : '本次检索已完成'}</strong><span class="badge ${data.degraded ? 'amber' : 'green'}"><i class="dot"></i>${data.degraded ? '降级检索' : '完整检索'}</span><span class="badge">总耗时 ${ms(trace.total_ms)}</span><span class="badge">编码 ${ms(trace.embedding_ms)}</span><span class="badge">精排 ${ms(trace.rerank_ms)}</span></section><section class="panel spaced"><div class="panel-head between"><div><h2>最终想起的记忆</h2><p class="subheading">精排、时效与上下文预算共同决定</p></div><span class="badge green">${data.results.length} 条</span></div>${data.results.length ? `<div class="recall-list">${data.results.map((r, i) => `<article class="recall-row"><span class="hit-rank">${i + 1}</span><div class="recall-content"><button class="text-btn prewrap" data-detail="${esc(r.memory.id)}">${esc(r.memory.content)}</button><small>${r.channels.map(c => esc(labels[c]?.[0] || c)).join(' · ')}</small></div><span class="hit-score">${r.score.toFixed(4)}</span></article>`).join('')}</div>` : empty('没有足够相关的记忆', '可以调整问题，或先检查记忆是否已生效、索引是否已同步。')}</section><div class="spaced between"><div><div class="eyebrow">RECALL CHANNELS</div><h2>候选从哪里来</h2></div><small>不同通道的原始分数不可直接比较</small></div><section class="channel-grid spaced">${trace.channels.map(channel => `<article class="panel"><header class="panel-head between"><div><h2>${esc(labels[channel.name]?.[0] || channel.name)}</h2><p class="subheading">${esc(labels[channel.name]?.[1] || '')}</p></div><span class="badge ${channel.state === 'healthy' ? '' : 'amber'}">${channel.state === 'healthy' ? ms(channel.duration_ms) : '不可用'}</span></header><div class="channel-hits">${channel.hits.length ? channel.hits.map(hit => `<div class="hit"><span class="hit-rank">${hit.rank}</span><div class="hit-body">${hit.content ? `<button class="text-btn" data-detail="${esc(hit.id)}">${esc(hit.content)}</button>` : '<span class="muted">内容已删除或不可用</span>'}${hit.excluded ? '<span class="badge">不参与召回</span>' : ''}</div><span class="hit-score">${hit.score === null ? '—' : hit.score.toFixed(4)}</span></div>`).join('') : '<div class="empty">该通道没有候选</div>'}</div></article>`).join('')}</section><section class="panel spaced"><div class="panel-head"><h2>Reranker 与最终排序</h2><p class="subheading">${trace.reranker_state === 'healthy' ? `精排阈值 ${data.rerank_min_score} · 最终得分包含相关性、融合排名和时间强度` : trace.reranker_state === 'skipped' ? '没有有效候选，未调用精排' : '精排不可用，按 RRF 融合排名回退'}</p></div><div class="table-scroll"><table><thead><tr><th>候选记忆</th><th>精排顺序</th><th>RRF</th><th>Reranker</th><th>最终得分</th><th>结果</th></tr></thead><tbody>${trace.candidates.map(c => `<tr><td class="memory-cell">${esc(c.content || '内容已删除或不可用')}</td><td>${c.rerank_rank ?? '—'}</td><td>${c.rrf_score.toFixed(4)}</td><td>${c.rerank_score === null ? '—' : c.rerank_score.toFixed(4)}</td><td>${c.final_score === null ? '—' : c.final_score.toFixed(4)}</td><td><span class="badge${c.selected ? ' green' : ''}">${c.selected ? '已召回' : esc(reason[c.reason] || '未选中')}</span></td></tr>`).join('') || '<tr><td colspan="6" class="muted">没有有效候选</td></tr>'}</tbody></table></div></section>`;
   }
   async function systemPage(epoch) {
-    const [data, qq] = await Promise.all([api('/v1/console/system'), api('/v1/qq/status')]); if (epoch !== state.epoch) return;
+    const data = await api('/v1/console/system'); if (epoch !== state.epoch) return;
     const labels = { llm: ['语言模型', 'spark', '外部兼容 API'], neo4j: ['Neo4j', 'graph', '知识图谱与混合检索'], embedding: ['Embedding', 'chip', '本地 CPU 语义编码'], reranker: ['Reranker', 'system', '本地 CPU 相关性精排'] };
     const services = Object.entries(data.services).map(([key, s]) => { const [label, glyph, desc] = labels[key]; const metric = s.metrics; return `<article class="panel service"><div class="between"><div class="flex"><div class="service-icon">${icon(glyph)}</div><div><div class="service-title">${label}</div><div class="service-model">${desc}</div></div></div><span class="badge ${s.state === 'healthy' ? 'green' : s.state === 'unknown' ? 'amber' : 'red'}"><i class="dot"></i>${s.state === 'healthy' ? '可用' : s.state === 'unknown' ? '待确认' : '不可用'}</span></div><p class="service-model spaced">${esc(s.model || 'Neo4j · Cypher HTTP')}</p><div class="service-metrics"><div><small>探测耗时</small><strong>${s.latency_ms.toFixed(0)}<span>ms</span></strong></div><div><small>平均调用耗时</small><strong>${metric.requests ? ms(metric.average_ms) : '—'}</strong></div><div><small>调用 / 失败</small><strong>${fmt(metric.requests)}<span>/ ${fmt(metric.failures)}</span></strong></div></div></article>`; }).join('');
-    $('#page').innerHTML = heading() + `<div class="notice">${icon('info')}<span>LLM 通过模型目录接口探测，不执行生成；接口不受支持时显示“待确认”。CPU 模型状态表示服务已加载。性能统计来自当前进程已完成的真实调用。</span></div><section class="service-grid spaced">${services}</section><section class="panel spaced"><div class="system-facts"><div><small>连续运行</small><strong>${uptime(data.uptime_seconds)}</strong></div><div><small>SQLite 数据文件</small><strong>${bytes(data.database_bytes)}</strong></div><div><small>向量维度</small><strong>${data.dimensions}</strong></div><div><small>服务版本</small><strong>v${esc(data.version)}</strong></div></div></section><section class="panel job-card spaced"><div class="between"><div><h2>后台处理队列</h2><p class="subheading">记忆提取和索引同步持续在后台进行</p></div><div class="flex"><span class="badge">待处理 ${fmt(data.jobs.pending)}</span><span class="badge green">运行中 ${fmt(data.jobs.running)}</span><span class="badge${data.jobs.dead ? ' amber' : ''}">失败 ${fmt(data.jobs.dead)}</span></div></div><div class="between spaced"><small>SQLite 正常 · 检查时间 ${date(data.checked_at, true)}${data.cached ? ' · 10 秒内缓存' : ''}</small><div class="flex"><button class="btn small" data-maintenance="reindex">重建索引</button><button class="btn small" data-maintenance="jobs/retry"${data.jobs.dead ? '' : ' disabled'}>重试失败任务</button></div></div></section>`;
-    $('#page').insertAdjacentHTML('beforeend', `<section class="panel job-card spaced"><div class="between"><div><h2>QQ 机器人</h2><p class="subheading">${qq.enabled ? `AppID ${esc(qq.app_id)} · 个人单聊` : '在 .env 填写 QQ AppID 和 AppSecret 后启用'}</p></div><span class="badge ${qq.has_session ? 'green' : 'amber'}">${qq.has_session ? '个人会话已建立' : qq.bound ? '等待新会话' : qq.enabled ? '等待首条私聊' : '未启用'}</span></div>${qq.enabled ? `<p class="hint spaced">直接私聊即可开始，无需绑定码。首次私聊自动建立个人会话，重启后继续使用。</p><div class="spaced"><small>待处理 ${fmt(qq.queue.pending)} · 运行中 ${fmt(qq.queue.running)} · 已发送 ${fmt(qq.queue.sent)} · 失败 ${fmt(qq.queue.dead)}</small></div>` : ''}</section>`);
+    $('#page').innerHTML = `<div class="notice">${icon('info')}<span>LLM 通过模型目录接口探测，不执行生成；接口不受支持时显示“待确认”。CPU 模型状态表示服务已加载。性能统计来自当前进程已完成的真实调用。</span></div><section class="service-grid spaced">${services}</section><section class="panel spaced"><div class="system-facts"><div><small>连续运行</small><strong>${uptime(data.uptime_seconds)}</strong></div><div><small>SQLite 数据文件</small><strong>${bytes(data.database_bytes)}</strong></div><div><small>向量维度</small><strong>${data.dimensions}</strong></div><div><small>服务版本</small><strong>v${esc(data.version)}</strong></div></div></section><section class="panel job-card spaced"><div class="between"><div><h2>后台处理队列</h2><p class="subheading">记忆提取和索引同步持续在后台进行</p></div><div class="flex"><span class="badge">待处理 ${fmt(data.jobs.pending)}</span><span class="badge green">运行中 ${fmt(data.jobs.running)}</span><span class="badge${data.jobs.dead ? ' amber' : ''}">失败 ${fmt(data.jobs.dead)}</span></div></div><div class="between spaced"><small>SQLite 正常 · 检查时间 ${date(data.checked_at, true)}${data.cached ? ' · 10 秒内缓存' : ''}</small><div class="flex"><button class="btn small" data-maintenance="reindex">重建索引</button><button class="btn small" data-maintenance="jobs/retry"${data.jobs.dead ? '' : ' disabled'}>重试失败任务</button></div></div></section>`;
+
   }
   const toolLabels = { search: '搜索网页', navigate: '打开网页', read: '阅读网页', click: '点击', type: '输入关键词', scroll: '滚动', screenshot: '网页截图', back: '返回', wait: '等待渲染', close: '关闭浏览器', view_image: '查看图片' };
   const objectURLs = new Set();
@@ -218,34 +228,65 @@
   function toolMarkup(call) {
     return `<article class="tool-entry"><div class="between"><strong>${esc(toolLabels[call.action] || call.name)}</strong><span class="badge ${call.status === 'completed' ? 'green' : call.status === 'failed' ? 'red' : 'amber'}">${call.status === 'completed' ? '已完成' : call.status === 'failed' ? '失败' : '执行中'}${call.elapsed_ms != null ? ` · ${ms(call.elapsed_ms)}` : ''}</span></div>${call.error ? `<p class="error-inline">${esc(call.error)}</p>` : ''}<div class="source-list">${sources(call.result)}</div>${call.result?.asset_id ? `<button class="btn small" data-image="${esc(call.result.asset_id)}">查看图片</button>` : ''}</article>`;
   }
-  const contextUsage = context => `上下文 ${fmt(context.history_turns)} / ${fmt(context.max_history_turns)} 轮 · ${fmt(context.context_chars)} 字上限 · 已压缩 ${fmt(context.compactions)} 次 · 记忆提取 ${fmt(context.memory_pending_chars)} / ${fmt(context.memory_extract_chars)} 字`;
+  const contextUsage = context => `上下文 ${fmt(context.context_used_tokens)} / ${fmt(context.context_tokens)} tokens（估算）`;
+  function answerMarkup(text) {
+    const inline = value => value.split(/(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\))/g).map(part => {
+      if (part.startsWith('`')) return `<code>${esc(part.slice(1, -1))}</code>`;
+      const link = part.match(/^\[([^\]]+)\]\((.+)\)$/);
+      const url = link && safeLink(link[2]);
+      if (url) return `<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">${esc(link[1])}</a>`;
+      return esc(part).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    }).join('');
+    return String(text).split(/(```[\s\S]*?(?:```|$))/g).map(block => {
+      if (block.startsWith('```')) {
+        const lines = block.replace(/```$/, '').slice(3).split('\n');
+        const language = lines.shift();
+        return `<div class="code-block"><small>${esc(language || '代码')}</small><pre><code>${esc(lines.join('\n'))}</code></pre></div>`;
+      }
+      return block.split(/\n\s*\n/).filter(Boolean).map(paragraph => {
+        const lines = paragraph.split('\n');
+        if (lines.every(line => /^[-*] /.test(line))) return `<ul>${lines.map(line => `<li>${inline(line.slice(2))}</li>`).join('')}</ul>`;
+        return `<p>${lines.map(line => /^#{1,4} /.test(line) ? `<strong class="answer-heading">${inline(line.replace(/^#{1,4} /, ''))}</strong>` : inline(line)).join('<br>')}</p>`;
+      }).join('');
+    }).join('');
+  }
   function transcriptMarkup(history) {
-    return history.messages.map(message => `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small><div class="prewrap">${esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || empty('开始一段交流', '这里会显示 QQ 和网页中的聊天记录，也可以直接发送消息继续交流。');
+    return history.messages.map(message => `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small><div class="${message.role === 'assistant' ? 'answer-body' : 'prewrap'}">${message.role === 'assistant' ? answerMarkup(message.content) : esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || `<div class="chat-welcome"><img src="/console/icon.svg" alt=""><h2>今天，想聊些什么？</h2><p>从这一刻开始，延续每一段交流。</p></div>`;
   }
   async function chatPage(epoch) {
     const [tools, history] = await Promise.all([api('/v1/console/tools'), api('/v1/console/messages')]); if (epoch !== state.epoch) return;
     const data = history.conversation;
-    const busy = state.chatBusy || Boolean(data.active_turn);
-    if (busy) state.poll = setTimeout(() => { if (epoch === state.epoch) route(); }, 1500);
-    $('#page').innerHTML = heading() + `<section class="panel chat-panel"><div class="chat-toolbar"><div class="conversation-status"><strong>持续对话</strong><small id="chat-context">${esc(contextUsage(data.context))}</small></div><span class="badge ${tools.state === 'healthy' ? 'green' : ''}">${tools.enabled ? tools.state === 'healthy' ? '浏览器工具可用' : '浏览器工具暂不可用' : '纯文本对话'}</span></div>${data.context.summary ? `<details class="conversation-summary"><summary>对话摘要 · 全局共享，达到上限自动整理</summary><p class="prewrap">${esc(data.context.summary)}</p></details>` : '<p class="conversation-hint">QQ、网页和 API 共用上下文，达到上限自动压缩，累计新增文字后定期提取长期记忆。</p>'}${data.active_turn ? '<p class="conversation-hint" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<div id="chat-messages" class="chat-messages">${transcriptMarkup(history)}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" maxlength="4000" placeholder="和 Mneme 聊聊，或请它搜索、阅读网页…"${busy ? ' disabled' : ''}></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="between"><label class="btn small image-upload">${icon('plus')}上传图片<input id="chat-files" type="file" accept="image/png,image/jpeg,image/webp" multiple${!tools.enabled || busy ? ' disabled' : ''}></label><small>最多 4 张 · PNG / JPEG / WebP · 每张 8 MiB · 需支持图片与工具调用的模型</small><button class="btn primary" id="send-chat"${busy ? ' disabled' : ''}>发送${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form></section>`;
+    $('#page').innerHTML = `<section class="chat-panel" aria-label="与 Mneme 对话"><div id="chat-messages" class="chat-messages" role="log" aria-label="对话记录">${transcriptMarkup(history)}</div><div class="composer-wrap">${data.active_turn ? '<p class="chat-resuming" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" rows="1" maxlength="4000" placeholder="给 Mneme 发消息…"></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="composer-actions"><label class="icon-btn image-upload" title="上传图片 · 最多 4 张，每张 8 MiB">${icon('plus')}<span class="sr-only">上传图片</span><input id="chat-files" type="file" aria-label="上传图片" accept="image/png,image/jpeg,image/webp" multiple></label><span class="composer-hint">Enter 发送 · Shift + Enter 换行</span><button class="send-button" id="send-chat" aria-label="发送" title="发送">${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form><details class="chat-context-details"><summary id="chat-context">${esc(contextUsage(data.context))}</summary><div class="context-popover"><p>QQ、网页与 API 共用一段持续对话。达到上限后自动整理历史，每 ${fmt(data.context.memory_extract_chars)} 字提取长期记忆。</p><p>已整理 <span id="chat-compactions">${fmt(data.context.compactions)}</span> 次 · 当前用量只统计历史与摘要，模型实际用量可能有差异</p><p id="chat-summary" class="prewrap conversation-summary">${esc(data.context.summary || '对话摘要将在整理历史后显示。')}</p></div></details></div></section>`;
     const uploads = []; let uploading = false;
-    const renderUploads = () => { $('#chat-attachments').innerHTML = uploads.map((a, i) => `<span class="tag">图片 ${i + 1}<button type="button" class="icon-btn" data-remove-upload="${i}" aria-label="移除图片 ${i + 1}">${icon('close')}</button></span>`).join(''); $$('[data-remove-upload]').forEach(button => { button.onclick = () => { uploads.splice(Number(button.dataset.removeUpload), 1); renderUploads(); }; }); };
+    const composer = $('#chat-message');
+    const updateComposer = () => {
+      const locked = state.chatBusy || Boolean(data.active_turn) || uploading;
+      composer.disabled = locked;
+      $('#send-chat').disabled = locked || (!composer.value.trim() && !uploads.length);
+      $('#chat-files').disabled = locked || !tools.enabled;
+      $$('[data-remove-upload]').forEach(button => { button.disabled = locked; });
+    };
+    composer.oninput = () => { composer.style.height = 'auto'; composer.style.height = `${Math.min(composer.scrollHeight, 240)}px`; updateComposer(); };
+    composer.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!$('#send-chat').disabled) $('#chat-form').requestSubmit(); } };
+    updateComposer();
+    const renderUploads = () => { $('#chat-attachments').innerHTML = uploads.map((a, i) => `<span class="tag">图片 ${i + 1}<button type="button" class="icon-btn" data-remove-upload="${i}" aria-label="移除图片 ${i + 1}">${icon('close')}</button></span>`).join(''); $$('[data-remove-upload]').forEach(button => { button.onclick = () => { uploads.splice(Number(button.dataset.removeUpload), 1); renderUploads(); }; }); updateComposer(); };
     $('#chat-files').onchange = async event => {
       const files = [...event.target.files]; event.target.value = ''; const errorEl = $('#chat-error'); errorEl.textContent = '';
       if (files.length + uploads.length > 4 || files.some(file => file.size > 8 * 1024 * 1024)) { errorEl.textContent = '最多上传 4 张图片，每张不超过 8 MiB。'; return; }
-      const sendButton = $('#send-chat'); sendButton.disabled = true; uploading = true;
+      uploading = true; updateComposer();
       try { for (const file of files) { const asset = await api('/v1/images', { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }); if (epoch !== state.epoch) return; uploads.push(asset.asset_id); renderUploads(); } }
       catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = '图片上传未完成，请检查图片格式与工具服务。'; }
-      finally { uploading = false; if (epoch === state.epoch) sendButton.disabled = Boolean(data.active_turn); }
+      finally { uploading = false; if (epoch === state.epoch) updateComposer(); }
     };
     $('#chat-form').onsubmit = async event => {
-      event.preventDefault(); if (state.chatBusy || data.active_turn) return;
+      event.preventDefault(); if (state.chatBusy || data.active_turn || uploading) return;
       const message = $('#chat-message').value.trim() || (uploads.length ? '请查看我上传的图片。' : ''); if (!message) return;
       const assets = [...uploads]; const requestId = crypto.randomUUID(); const errorEl = $('#chat-error'); errorEl.textContent = ''; state.chatBusy = true;
-      for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea')) element.disabled = true;
-      const messages = $('#chat-messages'); $('.empty', messages)?.remove();
-      messages.insertAdjacentHTML('beforeend', `<article class="chat-message user"><small>你</small><div class="prewrap">${esc(message)}</div></article><article class="chat-message assistant" id="chat-current"><small>Mneme</small><div class="prewrap" id="chat-answer"></div><div class="chat-tools" id="chat-live-tools"></div><small id="chat-progress">正在思考…</small></article>`);
-      let persisted = false; let failed = false;
+      updateComposer();
+      const messages = $('#chat-messages'); $('.chat-welcome', messages)?.remove();
+      messages.insertAdjacentHTML('beforeend', `<article class="chat-message user"><small>你</small><div class="prewrap">${esc(message)}</div></article><article class="chat-message assistant" id="chat-current"><small>Mneme</small><div class="answer-body" id="chat-answer"></div><div class="chat-tools" id="chat-live-tools"></div><small id="chat-progress">正在思考…</small></article>`);
+      messages.scrollTop = messages.scrollHeight;
+      let persisted = false; let failed = false; let answer = '';
       try {
         const response = await fetch('/v1/chat', { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: requestId, message, assets }) });
         if (!response.ok) { if (response.status === 401) clearLogin(); throw new ApiFailure(response.status, (await response.json()).error); }
@@ -259,30 +300,35 @@
             const raw = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'); if (!raw) continue;
             const data = JSON.parse(raw); if (name === 'done') persisted = data.persisted; if (name === 'error') failed = true;
             if (epoch !== state.epoch) continue;
+            const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
             if (name === 'compaction') $('#chat-progress').textContent = data.status === 'running' ? '正在整理历史，延续对话…' : '历史已整理，正在思考…';
-            if (name === 'delta') { $('#chat-answer').textContent += data.content; $('#chat-progress').textContent = '正在回复…'; }
+            if (name === 'delta') { answer += data.content; $('#chat-answer').innerHTML = answerMarkup(answer); $('#chat-progress').textContent = '正在回复…'; }
             if (name === 'tool') { const id = `tool-${data.id}`; let element = document.getElementById(id); if (!element) { element = document.createElement('div'); element.id = id; $('#chat-live-tools').append(element); } element.innerHTML = toolMarkup(data); $('#chat-progress').textContent = data.status === 'running' ? `正在${toolLabels[data.action] || '执行工具'}…` : '正在继续思考…'; }
             if (name === 'error') $('#chat-progress').textContent = '本轮失败，临时输出未保存。';
+            if (follow) messages.scrollTop = messages.scrollHeight;
           }
           if (done) break;
         }
         if (!persisted) throw new Error(failed ? 'generation_failed' : 'stream_interrupted');
       } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = `本轮未确认完成，可稍后刷新会话检查。${errorText(error)}`; }
-      finally { state.chatBusy = false; if (epoch === state.epoch && state.authenticated) { if (persisted) route(); else { for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea')) element.disabled = false; } } }
+      finally { state.chatBusy = false; if (epoch === state.epoch && state.authenticated) { if (persisted) route(); else updateComposer(); } }
     };
-    const last = $('.chat-message:last-child'); last?.scrollIntoView({ block: 'nearest' });
-    if (!busy) {
+    $('#chat-messages').scrollTop = $('#chat-messages').scrollHeight;
+    {
       let previous = JSON.stringify([history.messages, history.assets, history.tool_calls]);
       const refreshTranscript = async () => {
-        if (epoch !== state.epoch || state.chatBusy) return;
+        if (epoch !== state.epoch) return;
+        if (state.chatBusy) { state.poll = setTimeout(refreshTranscript, 3000); return; }
         try {
           if (!document.hidden) {
             const latest = await api('/v1/console/messages');
             if (epoch !== state.epoch || state.chatBusy) return;
             data.active_turn = latest.conversation.active_turn;
             $('#chat-context').textContent = contextUsage(latest.conversation.context);
-            for (const element of $$('#chat-form button,#chat-form textarea')) element.disabled = uploading || Boolean(data.active_turn);
-            $('#chat-files').disabled = uploading || !tools.enabled || Boolean(data.active_turn);
+            $('#chat-compactions').textContent = fmt(latest.conversation.context.compactions);
+            $('#chat-summary').textContent = latest.conversation.context.summary || '对话摘要将在整理历史后显示。';
+            if (!data.active_turn) $('.chat-resuming')?.remove();
+            updateComposer();
             const revision = JSON.stringify([latest.messages, latest.assets, latest.tool_calls]);
             if (revision !== previous) {
               const container = $('#chat-messages');
@@ -300,32 +346,47 @@
   async function toolsPage(epoch) {
     const [status, data] = await Promise.all([api('/v1/console/tools'), api('/v1/console/tools/calls')]); if (epoch !== state.epoch) return;
     const service = status.service || {};
-    $('#page').innerHTML = heading() + `<section class="panel job-card"><div class="between"><div><h2>mneme-tools</h2><p class="subheading">Playwright · Chromium / CDP · 真实浏览器搜索</p></div><span class="badge ${status.state === 'healthy' ? 'green' : 'amber'}">${status.enabled ? status.state === 'healthy' ? '可用' : '暂不可用' : '未启用'}</span></div><div class="system-facts"><div><small>浏览器会话</small><strong>${fmt(service.active_sessions)} / ${fmt(service.max_sessions)}</strong></div><div><small>每轮调用上限</small><strong>${fmt(status.max_calls)}</strong></div><div><small>调用 / 失败</small><strong>${fmt(status.metrics?.requests)} / ${fmt(status.metrics?.failures)}</strong></div><div><small>空闲回收</small><strong>${fmt((service.idle_timeout_seconds || 0) / 60)} 分</strong></div><div><small>浏览器沙箱</small><strong>${service.sandbox === true ? '已启用' : '不可用'}</strong></div><div><small>平均调用耗时</small><strong>${ms(status.metrics?.average_ms)}</strong></div></div><p class="hint">工具服务通过独立凭证与 Pod 内 localhost HTTP 连接。浏览器只允许访问公网 HTTP/HTTPS，图片由现有多模态 LLM 理解。</p></section><section class="panel spaced"><div class="panel-head"><h2>最近工具调用</h2><p class="subheading">状态、耗时、错误与实际读取的来源，最多显示 100 条</p></div><div class="tool-log-list">${data.calls.map(call => `<details class="tool-log"><summary><span>${esc(toolLabels[call.action] || call.name)}</span><span class="badge ${call.status === 'failed' ? 'red' : call.status === 'running' ? 'amber' : 'green'}">${esc(call.status)}</span><small>${ms(call.elapsed_ms)} · ${date(call.created_at, true)}</small></summary><div class="tool-log-body">${toolMarkup(call)}<p class="hint">会话 ${esc(call.session_id)} · 轮次 ${esc(call.turn_id)}</p><button class="btn small" data-close-browser="${esc(call.session_id)}">释放浏览器会话</button><details class="technical"><summary>结构化结果</summary><pre class="prewrap">${esc(JSON.stringify(call.result, null, 2))}</pre></details></div></details>`).join('') || empty('还没有工具调用', '前往对话页，让 Mneme 搜索网页、阅读资料或查看图片。', '<a class="btn" href="#chat">开始对话</a>')}</div></section>`;
+    $('#page').innerHTML = `<section class="panel job-card"><div class="between"><div><h2>mneme-tools</h2><p class="subheading">Playwright · Chromium / CDP · 真实浏览器搜索</p></div><span class="badge ${status.state === 'healthy' ? 'green' : 'amber'}">${status.enabled ? status.state === 'healthy' ? '可用' : '暂不可用' : '未启用'}</span></div><div class="system-facts"><div><small>浏览器会话</small><strong>${fmt(service.active_sessions)} / ${fmt(service.max_sessions)}</strong></div><div><small>每轮调用上限</small><strong>${fmt(status.max_calls)}</strong></div><div><small>调用 / 失败</small><strong>${fmt(status.metrics?.requests)} / ${fmt(status.metrics?.failures)}</strong></div><div><small>空闲回收</small><strong>${fmt((service.idle_timeout_seconds || 0) / 60)} 分</strong></div><div><small>浏览器沙箱</small><strong>${service.sandbox === true ? '已启用' : '不可用'}</strong></div><div><small>平均调用耗时</small><strong>${ms(status.metrics?.average_ms)}</strong></div></div><p class="hint">工具服务通过独立凭证与 Pod 内 localhost HTTP 连接。浏览器只允许访问公网 HTTP/HTTPS，图片由现有多模态 LLM 理解。</p></section><section class="panel spaced"><div class="panel-head"><h2>最近工具调用</h2><p class="subheading">状态、耗时、错误与实际读取的来源，最多显示 100 条</p></div><div class="tool-log-list">${data.calls.map(call => `<details class="tool-log"><summary><span>${esc(toolLabels[call.action] || call.name)}</span><span class="badge ${call.status === 'failed' ? 'red' : call.status === 'running' ? 'amber' : 'green'}">${esc(call.status)}</span><small>${ms(call.elapsed_ms)} · ${date(call.created_at, true)}</small></summary><div class="tool-log-body">${toolMarkup(call)}<p class="hint">会话 ${esc(call.session_id)} · 轮次 ${esc(call.turn_id)}</p><button class="btn small" data-close-browser="${esc(call.session_id)}">释放浏览器会话</button><details class="technical"><summary>结构化结果</summary><pre class="prewrap">${esc(JSON.stringify(call.result, null, 2))}</pre></details></div></details>`).join('') || empty('还没有工具调用', '前往对话页，让 Mneme 搜索网页、阅读资料或查看图片。', '<a class="btn" href="#chat">开始对话</a>')}</div></section>`;
     $$('[data-close-browser]').forEach(button => { button.onclick = async () => { button.disabled = true; try { await send('/v1/console/tools/close', { session_id: button.dataset.closeBrowser }); toast('浏览器会话已释放。'); route(); } catch (error) { toast(errorText(error), true); button.disabled = false; } }; });
     if (data.calls.some(call => call.status === 'running')) state.poll = setTimeout(() => { if (epoch === state.epoch) route(); }, 3000);
   }
 
-  async function settingsPage(epoch) {
-    const data = await api('/v1/console/settings'); if (epoch !== state.epoch) return;
+  function qqCard(qq) {
+    return `<section class="panel job-card spaced"><div class="between"><div><h2>QQ 机器人</h2><p class="subheading">${qq.enabled ? `AppID ${esc(qq.app_id)} · 个人单聊` : '在 .env 填写 QQ AppID 和 AppSecret 后启用'}</p></div><span class="badge ${qq.has_session ? 'green' : 'amber'}">${qq.has_session ? '个人会话已建立' : qq.bound ? '等待新会话' : qq.enabled ? '等待首条私聊' : '未启用'}</span></div>${qq.enabled ? `<p class="hint spaced">直接私聊即可开始，无需绑定码。首次私聊自动建立个人会话，重启后继续使用。</p><div class="spaced"><small>待处理 ${fmt(qq.queue.pending)} · 运行中 ${fmt(qq.queue.running)} · 已发送 ${fmt(qq.queue.sent)} · 失败 ${fmt(qq.queue.dead)}</small></div>` : ''}</section>`;
+  }
+  async function agentPage(epoch) {
+    const [data, qq, conversation] = await Promise.all([api('/v1/console/settings'), api('/v1/qq/status'), api('/v1/conversation')]);
+    if (epoch !== state.epoch) return;
     const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '性格描述', 6000, '身份、个性与陪伴方式'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界'], ['output_format', '输出格式 Prompt', 6000, '例如：使用纯文本，分段回复，不使用 Markdown。留空表示不额外约束输出格式。']];
-    $('#page').innerHTML = heading() + `<div class="settings-stack">
-      <section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
+    $('#page').innerHTML = `<div class="agent-layout"><section class="panel agent-profile"><div class="agent-avatar">${icon('leaf')}</div><div><h2 id="agent-name">${esc(data.persona.name)}</h2><p>${esc(data.model)}</p></div><span class="badge green">全局共享对话</span></section><div class="agent-columns"><div class="settings-stack">      <section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
       <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
       <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
-      <section class="panel"><div class="panel-head between"><div><h2>WebUI 登录密码</h2><p class="subheading">控制台仅使用密码登录，刷新页面或重启服务后保持登录。</p></div><span class="badge ${data.password_configured ? 'green' : ''}">${data.password_configured ? '已设置' : '未设置'}</span></div>
-      <form id="password-form" class="settings-form">${data.password_configured ? '<label class="field">当前密码<input name="current_password" type="password" autocomplete="current-password" maxlength="128" required></label>' : ''}
-      <label class="field">新密码<input name="new_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required><span class="hint">10–128 个字符，支持中文和空格。</span></label><label class="field">确认新密码<input name="confirm_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
-      <small>修改密码后，所有已登录设备立即退出。登录有效期为 ${fmt(data.session_days)} 天，使用时自动续期。</small><div id="password-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="submit" class="btn primary">保存密码${icon('shield')}</button></div></form></section>
-      <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div>`;
+      <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div><aside class="agent-aside">${qqCard(qq)}<section class="panel context-card"><div class="panel-head"><h2>上下文与记忆</h2></div><div class="context-facts"><div><small>上下文预算</small><strong>${fmt(conversation.context.context_tokens)} tokens</strong></div><div><small>当前历史用量（估算）</small><strong>${fmt(conversation.context.context_used_tokens)} tokens</strong></div><div><small>定期提取记忆</small><strong>每 ${fmt(conversation.context.memory_extract_chars)} 字</strong></div><div><small>已压缩历史</small><strong>${fmt(conversation.context.compactions)} 次</strong></div></div><p class="hint">QQ、网页和 API 共用上下文。Token 用量按本地分词估算，可能与模型提供方的实际统计不同。历史用量仅含原文与摘要，生成时另计系统指令、记忆、工具及回复预留。</p></section></aside></div></div>`;
     const personaForm = $('#persona-form');
     $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };
     personaForm.onsubmit = async event => {
       event.preventDefault(); const button = $('button[type=submit]', personaForm); const errorEl = $('#persona-error'); button.disabled = true; errorEl.textContent = '';
       const persona = Object.fromEntries(fields.map(([key]) => [key, personaForm.elements[key].value]));
-      try { await send('/v1/console/persona', persona, 'PUT'); if (epoch === state.epoch) toast('性格已保存，下一轮对话开始生效。'); }
+      try { await send('/v1/console/persona', persona, 'PUT'); if (epoch === state.epoch) { $('#agent-name').textContent = persona.name; toast('性格已保存，下一轮对话开始生效。'); } }
       catch (error) { if (error.name !== 'AbortError') errorEl.textContent = errorText(error); }
       finally { button.disabled = false; }
     };
+    $('#reset-agent').onclick = () => {
+      const dialog = openDialog('confirm', `<form id="reset-form"><header class="dialog-head"><div><div class="eyebrow">RESET AGENT</div><h2>确认重新开始？</h2></div><button type="button" class="icon-btn" data-close="confirm" aria-label="取消重置">${icon('close')}</button></header><div class="dialog-body stack"><p class="subheading">所有对话、长期记忆及其来源和修订记录、QQ 个人会话与待发送回复都将被清空。此操作无法撤销，已有备份不受影响。</p><label class="check-label"><input type="checkbox" name="reset_persona">同时恢复配置文件中的默认性格</label><label class="field">输入 RESET 确认<input name="confirmation" autocomplete="off" spellcheck="false" pattern="RESET" required placeholder="RESET"></label><div class="error-inline" id="reset-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="confirm">取消</button><button type="submit" class="btn danger">确认重置</button></footer></form>`);
+      $('#reset-form', dialog).onsubmit = async event => {
+        event.preventDefault(); const form = event.target; const button = $('button[type=submit]', form); button.disabled = true; $('#reset-error').textContent = '';
+        try { await send('/v1/admin/reset', { confirmation: form.elements.confirmation.value, reset_persona: form.elements.reset_persona.checked }); closeDialog('confirm'); state.detail = null; state.library = null; toast('Agent 已重置，对话与记忆已清空，图谱将在后台清理。'); route(); }
+        catch (error) { if (error.name !== 'AbortError' && state.authenticated) $('#reset-error', dialog).textContent = errorText(error); button.disabled = false; }
+      };
+    };
+  }
+  async function settingsPage(epoch) {
+    const data = await api('/v1/console/settings'); if (epoch !== state.epoch) return;
+    $('#page').innerHTML = `<div class="settings-stack security-settings">      <section class="panel"><div class="panel-head between"><div><h2>WebUI 登录密码</h2><p class="subheading">控制台仅使用密码登录，刷新页面或重启服务后保持登录。</p></div><span class="badge ${data.password_configured ? 'green' : ''}">${data.password_configured ? '已设置' : '未设置'}</span></div>
+      <form id="password-form" class="settings-form">${data.password_configured ? '<label class="field">当前密码<input name="current_password" type="password" autocomplete="current-password" maxlength="128" required></label>' : ''}
+      <label class="field">新密码<input name="new_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required><span class="hint">10–128 个字符，支持中文和空格。</span></label><label class="field">确认新密码<input name="confirm_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+      <small>修改密码后，所有已登录设备立即退出。登录有效期为 ${fmt(data.session_days)} 天，使用时自动续期。</small><div id="password-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="submit" class="btn primary">保存密码${icon('shield')}</button></div></form></section>
+</div>`;
     const passwordForm = $('#password-form');
     const savePassword = async newPassword => {
       const current = passwordForm.elements.current_password?.value || '';
@@ -338,14 +399,6 @@
       button.disabled = true;
       try { await savePassword(passwordForm.elements.new_password.value); }
       catch (error) { if (error.name !== 'AbortError') errorEl.textContent = errorText(error); button.disabled = false; }
-    };
-    $('#reset-agent').onclick = () => {
-      const dialog = openDialog('confirm', `<form id="reset-form"><header class="dialog-head"><div><div class="eyebrow">RESET AGENT</div><h2>确认重新开始？</h2></div><button type="button" class="icon-btn" data-close="confirm" aria-label="取消重置">${icon('close')}</button></header><div class="dialog-body stack"><p class="subheading">所有对话、长期记忆及其来源和修订记录、QQ 个人会话与待发送回复都将被清空。此操作无法撤销，已有备份不受影响。</p><label class="check-label"><input type="checkbox" name="reset_persona">同时恢复配置文件中的默认性格</label><label class="field">输入 RESET 确认<input name="confirmation" autocomplete="off" spellcheck="false" pattern="RESET" required placeholder="RESET"></label><div class="error-inline" id="reset-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="confirm">取消</button><button type="submit" class="btn danger">确认重置</button></footer></form>`);
-      $('#reset-form', dialog).onsubmit = async event => {
-        event.preventDefault(); const form = event.target; const button = $('button[type=submit]', form); button.disabled = true; $('#reset-error').textContent = '';
-        try { await send('/v1/admin/reset', { confirmation: form.elements.confirmation.value, reset_persona: form.elements.reset_persona.checked }); closeDialog('confirm'); state.detail = null; state.library = null; toast('Agent 已重置，对话与记忆已清空，图谱将在后台清理。'); route(); }
-        catch (error) { if (error.name !== 'AbortError' && state.authenticated) $('#reset-error', dialog).textContent = errorText(error); button.disabled = false; }
-      };
     };
   }
   function uptime(seconds) { const hours = Math.floor(seconds / 3600); return hours >= 24 ? `${Math.floor(hours / 24)} 天 ${hours % 24} 时` : hours ? `${hours} 时 ${Math.floor(seconds % 3600 / 60)} 分` : `${Math.floor(seconds / 60)} 分`; }
@@ -365,8 +418,8 @@
     else if (target.dataset.maintenance) { target.disabled = true; send(`/v1/admin/${target.dataset.maintenance}`, {}).then(data => { toast(data.retried !== undefined ? `已重新排队 ${data.retried} 个任务。` : `已安排 ${data.queued} 条记忆同步索引。`); }).catch(error => { if (error.name !== 'AbortError') toast(errorText(error), true); }).finally(() => { target.disabled = false; }); }
   });
   for (const dialog of $$('dialog')) { dialog.addEventListener('close', () => { if (!$$('dialog[open]').length) document.body.classList.remove('dialog-open'); }); dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeDialog(dialog.id); } }); }
-  window.addEventListener('hashchange', () => { for (const dialog of $$('dialog')) if (dialog.open) closeDialog(dialog.id); state.detail = null; route(); });
-  document.addEventListener('keydown', event => { if (event.key === '/' && state.authenticated && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$$('dialog[open]').length) { event.preventDefault(); focusSearch(); } });
+  window.addEventListener('hashchange', () => { setNavigation(false); for (const dialog of $$('dialog')) if (dialog.open) closeDialog(dialog.id); state.detail = null; route(); });
+  document.addEventListener('keydown', event => { if (event.key === 'Escape') setNavigation(false); if (event.key === '/' && state.authenticated && !['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName) && !$$('dialog[open]').length) { event.preventDefault(); focusSearch(); } });
   async function restoreLogin() {
     $('#app').innerHTML = loading('正在恢复登录…');
     try { await api('/v1/console/auth'); state.authenticated = true; shell(); await route(); }

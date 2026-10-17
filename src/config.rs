@@ -87,13 +87,20 @@ pub struct LlmConfig {
     pub temperature: f32,
     pub max_tokens: u32,
     pub timeout_seconds: u64,
-    pub context_chars: usize,
+    #[serde(default = "default_context_tokens")]
+    pub context_tokens: usize,
+    /// Accepted for old TOML files; generation is now bounded by context_tokens.
+    #[serde(default, rename = "context_chars")]
+    pub legacy_context_chars: Option<usize>,
     pub history_turns: i64,
     #[serde(default = "default_summary_chars")]
     pub summary_chars: usize,
 }
 fn default_summary_chars() -> usize {
     2000
+}
+fn default_context_tokens() -> usize {
+    100_000
 }
 
 #[derive(Clone, Deserialize)]
@@ -160,12 +167,27 @@ pub struct Persona {
 }
 
 impl Config {
+    fn parse_document(text: &str) -> Result<Self> {
+        let mut config: Self = toml::from_str(text).context("invalid configuration")?;
+        let document: toml::Value = toml::from_str(text)?;
+        // Old installations kept the original 16-turn default in their mounted file.
+        // Upgrade that default together with the character-to-token migration; an
+        // explicit new token configuration or environment override remains authoritative.
+        if config.llm.legacy_context_chars.is_some()
+            && document["llm"].get("context_tokens").is_none()
+            && config.llm.history_turns == 16
+        {
+            config.llm.history_turns = 1000;
+        }
+        Ok(config)
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         if Path::new(".env").exists() {
             dotenvy::from_path(".env").map_err(|_| anyhow::anyhow!("invalid .env file"))?;
         }
-        let mut config: Self =
-            toml::from_str(&std::fs::read_to_string(path)?).context("invalid configuration")?;
+        let text = std::fs::read_to_string(path)?;
+        let mut config = Self::parse_document(&text)?;
         config.api_token = env::var("MNEME_API_TOKEN").context("MNEME_API_TOKEN is required")?;
         config.llm_key = env::var("MNEME_LLM_API_KEY").context("MNEME_LLM_API_KEY is required")?;
         config.neo4j_password =
@@ -220,8 +242,9 @@ impl Config {
         {
             config.llm.model = value;
         }
-        if let Ok(value) = env::var("MNEME_LLM_CONTEXT_CHARS") {
-            config.llm.context_chars = value.parse().context("invalid MNEME_LLM_CONTEXT_CHARS")?;
+        if let Ok(value) = env::var("MNEME_LLM_CONTEXT_TOKENS") {
+            config.llm.context_tokens =
+                value.parse().context("invalid MNEME_LLM_CONTEXT_TOKENS")?;
         }
         if let Ok(value) = env::var("MNEME_LLM_HISTORY_TURNS") {
             config.llm.history_turns = value.parse().context("invalid MNEME_LLM_HISTORY_TURNS")?;
@@ -412,8 +435,8 @@ impl Config {
         ensure!(
             self.llm.history_turns > 0
                 && self.llm.history_turns <= 10_000
-                && self.llm.context_chars >= 2000
-                && self.llm.context_chars <= 100000,
+                && self.llm.context_tokens >= 2000
+                && self.llm.context_tokens <= 1_000_000,
             "invalid context limits"
         );
         ensure!(
@@ -436,9 +459,11 @@ impl Config {
             "invalid persona size or name"
         );
         ensure!(
-            self.llm.context_chars
-                >= persona_chars + self.memory.context_chars + self.llm.summary_chars + 7000,
-            "context_chars must fit the persona, memory JSON, and a 4000-character user message"
+            self.llm.context_tokens
+                >= crate::tokens::count(&serde_json::to_string(&self.persona)?)
+                    + self.llm.max_tokens as usize
+                    + 1000,
+            "context_tokens must fit the persona, reply reserve, and message overhead"
         );
         ensure!(
             self.llm.temperature.is_finite() && (0.0..=2.0).contains(&self.llm.temperature),
@@ -452,5 +477,30 @@ impl Config {
             "invalid Neo4j database"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Config;
+    #[test]
+    fn old_defaults_upgrade_but_explicit_token_and_turn_settings_are_preserved() {
+        let legacy = include_str!("../config/default.toml")
+            .replace("context_tokens = 100000", "context_chars = 16000")
+            .replace("history_turns = 1000", "history_turns = 16");
+        let upgraded = Config::parse_document(&legacy).unwrap();
+        assert_eq!(upgraded.llm.context_tokens, 100_000);
+        assert_eq!(upgraded.llm.history_turns, 1000);
+        let custom =
+            Config::parse_document(&legacy.replace("history_turns = 16", "history_turns = 50"))
+                .unwrap();
+        assert_eq!(custom.llm.history_turns, 50);
+        let explicit = Config::parse_document(&legacy.replace(
+            "context_chars = 16000",
+            "context_chars = 16000\ncontext_tokens = 200000",
+        ))
+        .unwrap();
+        assert_eq!(explicit.llm.context_tokens, 200_000);
+        assert_eq!(explicit.llm.history_turns, 16);
     }
 }
