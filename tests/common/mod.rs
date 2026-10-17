@@ -60,7 +60,8 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                     nodes.insert(p["id"].as_str().unwrap().into(),p["content"].as_str().unwrap().into());
                     vec![json!({"row":[p["id"]]})]
                 } else if cypher.contains("DETACH DELETE") {
-                    nodes.remove(p["id"].as_str().unwrap()); vec![]
+                    if let Some(id) = p["id"].as_str() { nodes.remove(id); } else { nodes.clear(); }
+                    vec![]
                 } else if cypher.contains("queryNodes") || cypher.starts_with("MATCH (n:ActiveMemory)") || cypher.starts_with("MATCH (m:ActiveMemory)") {
                     nodes.keys().map(|id|json!({"row":[id,0.87]})).collect()
                 } else { vec![] };

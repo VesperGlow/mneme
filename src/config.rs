@@ -92,7 +92,7 @@ pub struct MemoryConfig {
     pub rerank_min_score: f64,
     pub allow_sensitive: bool,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Persona {
     pub name: String,

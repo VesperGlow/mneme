@@ -85,15 +85,15 @@ python3 scripts/chat.py --session '上次输出的会话 UUID'
 
 先在一个会话说“我现在住在成都，我喜欢不加糖的拿铁”，等待后台队列处理完毕，再启动新的 `chat.py` 会话询问住址或偏好。提取是异步的，不保证在回复结束瞬间已经可召回。`/health/ready` 返回队列的 `pending/running/dead` 数量；首次没有记忆时，检索索引会在第一条投影任务执行时创建。
 
-人格配置位于 `~/.config/mneme/config.toml` 的 `[persona]`，包含名字、描述、交流方式和边界。修改后执行 `systemctl --user restart mneme-api.service`。人格指令每轮重新加入，不依赖可能被裁剪的历史消息。
+可在 Console 的 **Agent 设置** 中修改名字、性格描述、交流方式和边界，保存后下一轮对话立即生效，重启后保留。初始人格来自 `~/.config/mneme/config.toml` 的 `[persona]`；WebUI 保存的设置优先于文件，可用“填入配置文件默认值”后保存来恢复。人格指令每轮重新加入，不依赖可能被裁剪的历史消息。
 
 ## Mneme Console
 
-打开 **http://127.0.0.1:8080/console/**，使用同一个 API Token 登录内置管理后台。支持仪表盘、记忆增删改查、来源与历史版本、混合检索调试和系统状态；适配桌面与移动端。页面和资源由 Axum 直接提供，不增加容器或运行依赖。Token 仅保存在当前页面内存，刷新、退出或闲置 30 分钟后重新验证。使用及升级说明见 [docs/console.md](docs/console.md)。
+打开 **http://127.0.0.1:8080/console/**，首次使用 API Token 登录内置管理后台。支持仪表盘、记忆增删改查、来源与历史版本、混合检索调试、系统状态及 **Agent 设置**；适配桌面与移动端。设置页可配置独立 WebUI 密码、修改性格，或经确认清空对话与记忆来重置 Agent。页面和资源由 Axum 直接提供，不增加容器或运行依赖。登录凭证仅保存在当前页面内存，刷新、退出或闲置 30 分钟后重新验证。使用及升级说明见 [docs/console.md](docs/console.md)。
 
 ## HTTP API
 
-除 `/health/live` 和 Console 静态登录页面/资源外，所有 API 均要求 `Authorization: Bearer <token>`，响应禁止缓存。JSON 请求最大 32 KiB，单次消息最多 4000 字符。没有 Cookie 登录、浏览器跨域放行或多租户功能。
+除 `/health/live`、Console 静态登录页面/资源和密码登录接口 `/v1/console/login` 外，所有 API 均要求 `Authorization: Bearer <token>`（API Token 或密码登录返回的临时会话凭证），响应禁止缓存。JSON 请求最大 32 KiB，单次消息最多 4000 字符。没有 Cookie 登录、浏览器跨域放行或多租户功能。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -110,6 +110,10 @@ python3 scripts/chat.py --session '上次输出的会话 UUID'
 | DELETE | `/v1/memories/{id}` | 逻辑删除，立即停止检索并屏蔽旧任务；后台清理图谱 |
 | POST | `/v1/admin/jobs/retry` | 重置死信任务的尝试次数并重试 |
 | POST | `/v1/admin/reindex` | 从 SQLite 排队重建所有记忆的 Neo4j 投影 |
+| GET | `/v1/console/settings` | 当前性格、文件默认值、WebUI 密码设置状态 |
+| PUT | `/v1/console/persona` | 保存性格，下一轮对话生效 |
+| PUT | `/v1/console/password` | 设置或移除 WebUI 密码，使已有密码会话失效 |
+| POST | `/v1/admin/reset` | 要求 confirmation=RESET，清空对话、记忆、任务及 QQ 会话；可同时恢复默认性格 |
 
 SSE 事件依次为 `meta`、多次 `delta`、`done`；失败时发送 `error`。`meta` 包含 `memory_ids` 和 `retrieval_degraded`。`done.persisted=true` 表示完整回复与记忆任务已经提交，之前的 delta 都是暂时输出。客户端断开后服务继续完成本轮；可通过 GET turn 查询结果。同一 `request_id` 和相同消息重试会重放已完成回复，不重复生成或提取。未完成/失败的旧 ID 返回 409，需查询状态，重试生成使用新 UUID。
 

@@ -1096,6 +1096,7 @@ dependencies = [
  "fs2",
  "futures-util",
  "reqwest",
+ "ring",
  "serde",
  "serde_json",
  "sha2",

@@ -50,7 +50,7 @@ pub fn build_context(
     user: &Message,
     memories: &[Recall],
 ) -> Vec<ChatMessage> {
-    let persona = &app.config.persona;
+    let persona = app.persona.read().unwrap();
     let current = chrono::Utc::now()
         .with_timezone(&app.config.timezone.parse::<chrono::FixedOffset>().unwrap());
     let system = format!(

@@ -4,7 +4,8 @@
 
 | 模块 | 职责 |
 |---|---|
-| `api` | 鉴权、SSE、会话并发、人格与上下文预算 |
+| `api` | 鉴权、SSE、会话并发 |
+| `chat` / `settings` | 人格与上下文预算、即时性格设置、WebUI 密码会话、事务重置与图谱清理 |
 | `store` | SQLite 事务、对话状态机、记忆版本、持久化任务 |
 | `llm` | 外部 Chat Completions、分片 SSE 解析、严格提取 JSON |
 | `models` | 本地模型协议、维度/数值校验、超时 |
@@ -33,7 +34,7 @@ Neo4j 投影为至少一次投递，使用 MERGE 和按 ID 删除保证幂等。
 - `memory_sources`：记忆到用户消息的多对多证据，包含原文引文和观察时间。
 - `jobs`：可恢复的提取队列与投影 outbox。
 - `forget_barriers`：手动/衰减遗忘时记录已观察消息的最高序号，阻止旧提取任务复活该 slot。
-- `metadata`：未来迁移和行为模块的格式元数据预留。
+- `metadata`：模型选型缓存、WebUI 性格覆盖、密码哈希、QQ 账号归属及待执行的图谱清理标记。密码会话只保存在进程内存中，重启后失效。
 - `memory_revisions`：由同一 SQLite 事务内的触发器记录新增/修订快照；迁移为旧数据建立初始快照。
 - `content_barriers` / `suppressed_sources`：人工编辑和删除时屏蔽旧内容及其原始消息，阻止旧提取任务绕过属性键保护。
 

@@ -5,7 +5,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const kinds = { fact: '事实', preference: '偏好', event: '经历', relationship: '关系', emotion: '情绪' };
   const colors = { fact: '#73906c', preference: '#c7ac7d', event: '#9aaec3', relationship: '#b4a0bb', emotion: '#c49b92' };
-  const pages = { overview: ['概览', 'OVERVIEW', '让记忆，有迹可循。', '留意每一段积累，也看见记忆的变化。'], memories: ['记忆库', 'MEMORY LIBRARY', '整理你的记忆空间', '浏览、追溯与更新，让重要的事始终清晰。'], retrieval: ['检索实验室', 'RETRIEVAL LAB', '看见一次回想的过程', '从候选召回到精排，理解 Mneme 如何找到记忆。'], system: ['系统状态', 'SYSTEM STATUS', '一切运行，尽在眼前', '查看服务状态、调用表现与后台处理进度。'] };
+  const pages = { overview: ['概览', 'OVERVIEW', '让记忆，有迹可循。', '留意每一段积累，也看见记忆的变化。'], memories: ['记忆库', 'MEMORY LIBRARY', '整理你的记忆空间', '浏览、追溯与更新，让重要的事始终清晰。'], retrieval: ['检索实验室', 'RETRIEVAL LAB', '看见一次回想的过程', '从候选召回到精排，理解 Mneme 如何找到记忆。'], system: ['系统状态', 'SYSTEM STATUS', '一切运行，尽在眼前', '查看服务状态、调用表现与后台处理进度。'], settings: ['Agent 设置', 'AGENT SETTINGS', '让陪伴，更合你的心意', '调整性格、管理登录密码，或重新开始一段陪伴。'] };
   const paths = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     book: '<path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4z"/><path d="M13 7a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2"/>',
@@ -28,7 +28,7 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
   };
   const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.book}</svg>`;
-  const state = { token: '', route: 'overview', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, lastActivity: Date.now(), library: null, poll: 0 };
+  const state = { token: '', authMethod: 'token', route: 'overview', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, lastActivity: Date.now(), library: null, poll: 0 };
   const fmt = n => Number(n || 0).toLocaleString('zh-CN');
   const pct = n => `${Math.round(Number(n || 0) * 100)}%`;
   const date = (n, full = false) => n ? new Date(n * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', ...(full ? { year: 'numeric', hour: '2-digit', minute: '2-digit' } : {}) }) : '—';
@@ -49,7 +49,7 @@
     const response = await fetch(path, { ...options, cache: 'no-store', credentials: 'omit', redirect: 'error', signal: state.controller.signal, headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${state.token}`, ...options.headers } });
     const body = await response.json();
     if (!response.ok) {
-      if (response.status === 401 && state.token && $('#page')) { logout(); toast('登录已失效，请重新输入 Token。', true); }
+      if (response.status === 401 && state.token && $('#page')) { logout(); toast('登录已失效，请重新登录。', true); }
       throw new ApiFailure(response.status, body.error || 'request_failed');
     }
     return body;
@@ -58,7 +58,13 @@
   function errorText(error) {
     if (error.code === 'duplicate_memory') return '已有相同内容的有效记忆，请编辑已有记录。';
     if (error.code === 'memory_changed_reload') return '这条记忆已发生变化，请关闭窗口后重新打开，核对最新版本。';
-    if (error.status === 401) return 'Token 不正确，请重新输入。';
+    if (error.code === 'invalid_persona') return '请填写名字（最多 80 字）；性格各项合计最多 6000 字，并须符合当前上下文容量。';
+    if (error.code === 'invalid_password') return '新密码须为 10–128 个字符，且不能全部为空格。';
+    if (error.code === 'current_password_incorrect') return '当前密码不正确，请重新输入。';
+    if (error.code === 'agent_busy') return 'Agent 正在处理请求或后台任务，请稍后重试。';
+    if (error.code === 'reset_confirmation_required') return '请输入 RESET 确认重置。';
+    if (error.code === 'login_rate_limited') return '尝试过于频繁，请稍等一秒后重试。';
+    if (error.status === 401) return '登录凭证不正确或已失效，请重新输入。';
     if (error.status === 400 || error.status === 422) return '请检查输入：内容最多 500 字，实体最多 8 个，评分须在 0–100% 之间。';
     if (error.status === 404) return '没有找到这条记忆，请刷新列表。';
     return '暂时无法完成请求，请检查服务连接后重试。';
@@ -68,22 +74,36 @@
   const heading = (action = '') => { const [, eyebrow, title, description] = pages[state.route]; return `<header class="page-heading"><div><div class="eyebrow">${eyebrow}</div><h1${state.route === 'overview' ? ' class="serif"' : ''}>${title}</h1><p class="subheading">${description}</p></div>${action}</header>`; };
   const newButton = () => `<button class="btn primary" data-new>${icon('plus')}新增记忆</button>`;
   function login() {
-    $('#app').innerHTML = `<main class="login"><section class="login-story"><a class="brand" href="/console/" aria-label="Mneme Console"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="login-copy"><div class="eyebrow">A SPACE FOR WHAT MATTERS</div><h1 class="serif">每一段记忆，<br>都值得被好好保管。</h1><p>在这里，整理那些值得留下的片段，<br>让每一次回想，都有迹可循。</p></div><div class="login-footer">PRIVATE BY DEFAULT · BUILT WITH CARE</div><div class="login-decoration"></div></section><section class="login-form-wrap"><form id="login-form" class="login-card"><div class="eyebrow">YOUR PRIVATE CONSOLE</div><h2>进入你的记忆空间</h2><p class="subheading">使用 Mneme API Token 验证身份。</p><label class="field" for="token">API Token<input id="token" name="token" type="password" placeholder="输入你的访问凭证" autocomplete="off" spellcheck="false" minlength="32" maxlength="512" required autofocus></label><button class="btn primary" type="submit">解锁控制台${icon('arrow')}</button><div id="login-error" class="error-inline" role="alert"></div><div class="login-note">${icon('shield')}<span>凭证仅保存在当前页面内存中。刷新页面或闲置 30 分钟后，需重新验证身份。</span></div></form></section></main>`;
+    $('#app').innerHTML = `<main class="login"><section class="login-story"><a class="brand" href="/console/" aria-label="Mneme Console"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="login-copy"><div class="eyebrow">A SPACE FOR WHAT MATTERS</div><h1 class="serif">每一段记忆，<br>都值得被好好保管。</h1><p>在这里，整理那些值得留下的片段，<br>让每一次回想，都有迹可循。</p></div><div class="login-footer">PRIVATE BY DEFAULT · BUILT WITH CARE</div><div class="login-decoration"></div></section><section class="login-form-wrap"><form id="login-form" class="login-card"><div class="eyebrow">YOUR PRIVATE CONSOLE</div><h2>进入你的记忆空间</h2><p class="subheading">使用 WebUI 密码或 API Token 验证身份。</p><label class="field login-method">登录方式<select id="login-method"><option value="token">API Token</option><option value="password">WebUI 密码</option></select></label><label class="field" for="token"><span id="credential-label">API Token</span><input id="token" name="token" type="password" placeholder="输入你的访问凭证" autocomplete="off" spellcheck="false" minlength="32" maxlength="512" required autofocus></label><button class="btn primary" type="submit">解锁控制台${icon('arrow')}</button><div id="login-error" class="error-inline" role="alert"></div><div class="login-note">${icon('shield')}<span>凭证仅保存在当前页面内存中。刷新页面或闲置 30 分钟后，需重新验证身份。</span></div></form></section></main>`;
+    $('#login-method').value = state.authMethod;
+    const updateLoginMethod = () => {
+      state.authMethod = $('#login-method').value;
+      const password = state.authMethod === 'password';
+      $('#credential-label').textContent = password ? 'WebUI 密码' : 'API Token';
+      const input = $('#token'); input.value = ''; input.minLength = password ? 10 : 32; input.maxLength = password ? 128 : 512;
+      input.autocomplete = password ? 'current-password' : 'off';
+    };
+    $('#login-method').onchange = updateLoginMethod; updateLoginMethod();
     $('#login-form').addEventListener('submit', async event => {
       event.preventDefault(); const button = $('button[type=submit]', event.target); button.disabled = true; $('#login-error').textContent = '';
-      state.token = $('#token').value.trim(); $('#token').value = '';
-      try { await api('/v1/console/auth'); state.lastActivity = Date.now(); shell(); route(); }
+      const credential = $('#token').value; $('#token').value = '';
+      try {
+        if (state.authMethod === 'password') state.token = (await send('/v1/console/login', { password: credential })).token;
+        else { state.token = credential.trim(); await api('/v1/console/auth'); }
+        state.lastActivity = Date.now(); shell(); route();
+      }
       catch (error) { state.token = ''; $('#login-error').textContent = errorText(error); button.disabled = false; $('#token').focus(); }
     });
   }
   function logout() {
+    if (state.token.startsWith('console-')) fetch('/v1/console/logout', { method: 'POST', credentials: 'omit', cache: 'no-store', keepalive: true, headers: { Authorization: `Bearer ${state.token}` } }).catch(() => {});
     state.token = ''; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null;
     state.filter = { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }; clearTimeout(state.poll);
     for (const modal of $$('dialog')) { if (modal.open) modal.close(); modal.innerHTML = ''; }
     $('#toast').textContent = ''; $('#toast').className = ''; document.body.classList.remove('dialog-open'); login();
   }
   function shell() {
-    $('#app').innerHTML = `<aside class="sidebar" aria-label="主导航"><a class="brand" href="#overview"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="nav-label">WORKSPACE</div><nav class="nav">${Object.entries(pages).map(([key, [name]], i) => `<a href="#${key}" data-nav="${key}" aria-label="${name}">${icon(['grid', 'book', 'search', 'system'][i])}<span>${name}</span></a>`).join('')}</nav><div class="sidebar-foot"><div class="flex">${icon('shield')}私有记忆空间</div><p>让每一段陪伴，都有记忆。<br>MNEME · LOCAL CONSOLE</p></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">你的记忆工作台<span>/</span><strong id="breadcrumb-current">概览</strong></div><div class="top-actions"><button class="search-shortcut" id="search-shortcut">${icon('search')}搜索记忆<kbd>/</kbd></button><div class="verified"><i class="dot"></i>身份已验证</div><i class="top-divider"></i><button id="refresh" class="icon-btn" aria-label="刷新当前页面" title="刷新">${icon('refresh')}</button><button id="logout" class="icon-btn" aria-label="退出登录" title="退出登录">${icon('logout')}</button></div></header><main class="page"><div id="page" aria-live="polite"></div><footer class="page-foot"><span>Mneme Console · 让记忆成为陪伴的延续</span><span>PRIVATE WORKSPACE</span></footer></main></div>`;
+    $('#app').innerHTML = `<aside class="sidebar" aria-label="主导航"><a class="brand" href="#overview"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="nav-label">WORKSPACE</div><nav class="nav">${Object.entries(pages).map(([key, [name]], i) => `<a href="#${key}" data-nav="${key}" aria-label="${name}">${icon(['grid', 'book', 'search', 'system', 'edit'][i])}<span>${name}</span></a>`).join('')}</nav><div class="sidebar-foot"><div class="flex">${icon('shield')}私有记忆空间</div><p>让每一段陪伴，都有记忆。<br>MNEME · LOCAL CONSOLE</p></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">你的记忆工作台<span>/</span><strong id="breadcrumb-current">概览</strong></div><div class="top-actions"><button class="search-shortcut" id="search-shortcut">${icon('search')}搜索记忆<kbd>/</kbd></button><div class="verified"><i class="dot"></i>身份已验证</div><i class="top-divider"></i><button id="refresh" class="icon-btn" aria-label="刷新当前页面" title="刷新">${icon('refresh')}</button><button id="logout" class="icon-btn" aria-label="退出登录" title="退出登录">${icon('logout')}</button></div></header><main class="page"><div id="page" aria-live="polite"></div><footer class="page-foot"><span>Mneme Console · 让记忆成为陪伴的延续</span><span>PRIVATE WORKSPACE</span></footer></main></div>`;
     $('#logout').onclick = logout; $('#refresh').onclick = route; $('#search-shortcut').onclick = focusSearch;
   }
   async function route() {
@@ -93,7 +113,7 @@
     $$('[data-nav]').forEach(link => { const active = link.dataset.nav === state.route; link.classList.toggle('active', active); if (active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
     $('#breadcrumb-current').textContent = pages[state.route][0]; document.title = `${pages[state.route][0]} · Mneme Console`;
     $('#page').innerHTML = heading(['overview', 'memories'].includes(state.route) ? newButton() : '') + loading(state.route === 'system' ? '正在探测服务状态…' : '正在读取数据…');
-    try { await ({ overview, memories: library, retrieval: retrievalPage, system: systemPage }[state.route])(epoch); }
+    try { await ({ overview, memories: library, retrieval: retrievalPage, system: systemPage, settings: settingsPage }[state.route])(epoch); }
     catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#page').innerHTML = heading() + `<section class="panel">${empty('暂时无法读取数据', errorText(error), '<button class="btn" data-reload>重新加载</button>')}</section>`; }
   }
   function focusSearch() { if (!state.token) return; if (state.route === 'memories') $('#memory-search')?.focus(); else { location.hash = 'memories'; setTimeout(() => $('#memory-search')?.focus(), 150); } }
@@ -181,7 +201,54 @@
     const labels = { llm: ['语言模型', 'spark', '外部兼容 API'], neo4j: ['Neo4j', 'graph', '知识图谱与混合检索'], embedding: ['Embedding', 'chip', '本地 CPU 语义编码'], reranker: ['Reranker', 'system', '本地 CPU 相关性精排'] };
     const services = Object.entries(data.services).map(([key, s]) => { const [label, glyph, desc] = labels[key]; const metric = s.metrics; return `<article class="panel service"><div class="between"><div class="flex"><div class="service-icon">${icon(glyph)}</div><div><div class="service-title">${label}</div><div class="service-model">${desc}</div></div></div><span class="badge ${s.state === 'healthy' ? 'green' : s.state === 'unknown' ? 'amber' : 'red'}"><i class="dot"></i>${s.state === 'healthy' ? '可用' : s.state === 'unknown' ? '待确认' : '不可用'}</span></div><p class="service-model spaced">${esc(s.model || 'Neo4j · Cypher HTTP')}</p><div class="service-metrics"><div><small>探测耗时</small><strong>${s.latency_ms.toFixed(0)}<span>ms</span></strong></div><div><small>平均调用耗时</small><strong>${metric.requests ? ms(metric.average_ms) : '—'}</strong></div><div><small>调用 / 失败</small><strong>${fmt(metric.requests)}<span>/ ${fmt(metric.failures)}</span></strong></div></div></article>`; }).join('');
     $('#page').innerHTML = heading() + `<div class="notice">${icon('info')}<span>LLM 通过模型目录接口探测，不执行生成；接口不受支持时显示“待确认”。CPU 模型状态表示服务已加载。性能统计来自当前进程已完成的真实调用。</span></div><section class="service-grid spaced">${services}</section><section class="panel spaced"><div class="system-facts"><div><small>连续运行</small><strong>${uptime(data.uptime_seconds)}</strong></div><div><small>SQLite 数据文件</small><strong>${bytes(data.database_bytes)}</strong></div><div><small>向量维度</small><strong>${data.dimensions}</strong></div><div><small>服务版本</small><strong>v${esc(data.version)}</strong></div></div></section><section class="panel job-card spaced"><div class="between"><div><h2>后台处理队列</h2><p class="subheading">记忆提取和索引同步持续在后台进行</p></div><div class="flex"><span class="badge">待处理 ${fmt(data.jobs.pending)}</span><span class="badge green">运行中 ${fmt(data.jobs.running)}</span><span class="badge${data.jobs.dead ? ' amber' : ''}">失败 ${fmt(data.jobs.dead)}</span></div></div><div class="between spaced"><small>SQLite 正常 · 检查时间 ${date(data.checked_at, true)}${data.cached ? ' · 10 秒内缓存' : ''}</small><div class="flex"><button class="btn small" data-maintenance="reindex">重建索引</button><button class="btn small" data-maintenance="jobs/retry"${data.jobs.dead ? '' : ' disabled'}>重试失败任务</button></div></div></section>`;
-    $('#page').insertAdjacentHTML('beforeend', `<section class="panel job-card spaced"><div class="between"><div><h2>QQ 机器人</h2><p class="subheading">${qq.enabled ? `AppID ${esc(qq.app_id)} · 个人单聊` : '在 .env 填写 QQ AppID 和 AppSecret 后启用'}</p></div><span class="badge ${qq.bound ? 'green' : 'amber'}">${qq.bound ? '个人会话已建立' : qq.enabled ? '等待首条私聊' : '未启用'}</span></div>${qq.enabled ? `<p class="hint spaced">直接私聊即可开始，无需绑定码。首次私聊自动建立个人会话，重启后继续使用。</p><div class="spaced"><small>待处理 ${fmt(qq.queue.pending)} · 运行中 ${fmt(qq.queue.running)} · 已发送 ${fmt(qq.queue.sent)} · 失败 ${fmt(qq.queue.dead)}</small></div>` : ''}</section>`);
+    $('#page').insertAdjacentHTML('beforeend', `<section class="panel job-card spaced"><div class="between"><div><h2>QQ 机器人</h2><p class="subheading">${qq.enabled ? `AppID ${esc(qq.app_id)} · 个人单聊` : '在 .env 填写 QQ AppID 和 AppSecret 后启用'}</p></div><span class="badge ${qq.has_session ? 'green' : 'amber'}">${qq.has_session ? '个人会话已建立' : qq.bound ? '等待新会话' : qq.enabled ? '等待首条私聊' : '未启用'}</span></div>${qq.enabled ? `<p class="hint spaced">直接私聊即可开始，无需绑定码。首次私聊自动建立个人会话，重启后继续使用。</p><div class="spaced"><small>待处理 ${fmt(qq.queue.pending)} · 运行中 ${fmt(qq.queue.running)} · 已发送 ${fmt(qq.queue.sent)} · 失败 ${fmt(qq.queue.dead)}</small></div>` : ''}</section>`);
+  }
+  async function settingsPage(epoch) {
+    const data = await api('/v1/console/settings'); if (epoch !== state.epoch) return;
+    const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '性格描述', 6000, '身份、个性与陪伴方式'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界']];
+    $('#page').innerHTML = heading() + `<div class="settings-stack">
+      <section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
+      <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
+      <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
+      <section class="panel"><div class="panel-head between"><div><h2>WebUI 登录密码</h2><p class="subheading">设置独立密码后，可以直接用密码登录控制台。</p></div><span class="badge ${data.password_configured ? 'green' : ''}">${data.password_configured ? '已设置' : '未设置'}</span></div>
+      <form id="password-form" class="settings-form">${data.password_configured && state.authMethod === 'password' ? '<label class="field">当前密码<input name="current_password" type="password" autocomplete="current-password" maxlength="128" required></label>' : ''}
+      <label class="field">新密码<input name="new_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required><span class="hint">10–128 个字符，支持中文和空格。</span></label><label class="field">确认新密码<input name="confirm_password" type="password" autocomplete="new-password" minlength="10" maxlength="128" required></label>
+      <small>保存或移除密码后，所有密码登录会话立即失效。API Token 始终可用于登录和找回密码。</small><div id="password-error" class="error-inline" role="alert"></div><div class="settings-actions">${data.password_configured ? '<button type="button" class="btn" id="remove-password">移除 WebUI 密码</button>' : ''}<button type="submit" class="btn primary">保存密码${icon('shield')}</button></div></form></section>
+      <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div>`;
+    const personaForm = $('#persona-form');
+    $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };
+    personaForm.onsubmit = async event => {
+      event.preventDefault(); const button = $('button[type=submit]', personaForm); const errorEl = $('#persona-error'); button.disabled = true; errorEl.textContent = '';
+      const persona = Object.fromEntries(fields.map(([key]) => [key, personaForm.elements[key].value]));
+      try { await send('/v1/console/persona', persona, 'PUT'); if (epoch === state.epoch) toast('性格已保存，下一轮对话开始生效。'); }
+      catch (error) { if (error.name !== 'AbortError') errorEl.textContent = errorText(error); }
+      finally { button.disabled = false; }
+    };
+    const passwordForm = $('#password-form');
+    const savePassword = async newPassword => {
+      const current = passwordForm.elements.current_password?.value || '';
+      await send('/v1/console/password', { current_password: current, new_password: newPassword }, 'PUT');
+      state.authMethod = newPassword ? 'password' : 'token'; logout(); toast(newPassword ? '密码已保存，请重新登录。' : 'WebUI 密码已移除，请使用 API Token 登录。');
+    };
+    passwordForm.onsubmit = async event => {
+      event.preventDefault(); const button = $('button[type=submit]', passwordForm); const errorEl = $('#password-error'); errorEl.textContent = '';
+      if (passwordForm.elements.new_password.value !== passwordForm.elements.confirm_password.value) { errorEl.textContent = '两次输入的新密码不一致。'; return; }
+      button.disabled = true;
+      try { await savePassword(passwordForm.elements.new_password.value); }
+      catch (error) { if (error.name !== 'AbortError') errorEl.textContent = errorText(error); button.disabled = false; }
+    };
+    if ($('#remove-password')) $('#remove-password').onclick = () => {
+      const dialog = openDialog('confirm', `<header class="dialog-head"><h2>移除 WebUI 登录密码？</h2></header><div class="dialog-body"><p class="subheading">移除后仅能使用 API Token 登录，所有密码登录会话都会失效。</p><div class="error-inline spaced" id="remove-password-error" role="alert"></div></div><footer class="dialog-footer"><button class="btn" data-close="confirm">取消</button><button class="btn danger" id="confirm-remove-password">确认移除</button></footer>`);
+      $('#confirm-remove-password', dialog).onclick = async event => { const button = event.currentTarget; button.disabled = true; try { await savePassword(''); } catch (error) { if (error.name !== 'AbortError') $('#remove-password-error', dialog).textContent = errorText(error); button.disabled = false; } };
+    };
+    $('#reset-agent').onclick = () => {
+      const dialog = openDialog('confirm', `<form id="reset-form"><header class="dialog-head"><div><div class="eyebrow">RESET AGENT</div><h2>确认重新开始？</h2></div><button type="button" class="icon-btn" data-close="confirm" aria-label="取消重置">${icon('close')}</button></header><div class="dialog-body stack"><p class="subheading">所有对话、长期记忆及其来源和修订记录、QQ 个人会话与待发送回复都将被清空。此操作无法撤销，已有备份不受影响。</p><label class="check-label"><input type="checkbox" name="reset_persona">同时恢复配置文件中的默认性格</label><label class="field">输入 RESET 确认<input name="confirmation" autocomplete="off" spellcheck="false" pattern="RESET" required placeholder="RESET"></label><div class="error-inline" id="reset-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="confirm">取消</button><button type="submit" class="btn danger">确认重置</button></footer></form>`);
+      $('#reset-form', dialog).onsubmit = async event => {
+        event.preventDefault(); const form = event.target; const button = $('button[type=submit]', form); button.disabled = true; $('#reset-error').textContent = '';
+        try { await send('/v1/admin/reset', { confirmation: form.elements.confirmation.value, reset_persona: form.elements.reset_persona.checked }); closeDialog('confirm'); state.detail = null; state.library = null; toast('Agent 已重置，对话与记忆已清空，图谱将在后台清理。'); route(); }
+        catch (error) { if (error.name !== 'AbortError' && state.token) $('#reset-error', dialog).textContent = errorText(error); button.disabled = false; }
+      };
+    };
   }
   function uptime(seconds) { const hours = Math.floor(seconds / 3600); return hours >= 24 ? `${Math.floor(hours / 24)} 天 ${hours % 24} 时` : hours ? `${hours} 时 ${Math.floor(seconds % 3600 / 60)} 分` : `${Math.floor(seconds / 60)} 分`; }
   function bytes(n) { return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024).toFixed(0)} KB`; }

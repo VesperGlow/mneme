@@ -1,7 +1,7 @@
 pub use crate::chat::build_context;
 use crate::{App, domain::*, llm::emit, memory, store::BeginTurn};
 use axum::{
-    Json, Router,
+    Extension, Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
     http::{StatusCode, header},
     middleware::{self, Next},
@@ -48,6 +48,7 @@ pub fn router(app: App) -> Router {
                 .delete(forget),
         )
         .merge(crate::console::protected_routes())
+        .merge(crate::settings::protected_routes())
         .merge(crate::qq::protected_routes())
         .route("/v1/memories/search", post(search))
         .route("/v1/admin/jobs/retry", post(retry_jobs))
@@ -60,6 +61,7 @@ pub fn router(app: App) -> Router {
         )
         .merge(protected)
         .merge(crate::console::public_routes())
+        .merge(crate::settings::public_routes())
         .layer(DefaultBodyLimit::max(32 * 1024))
         .layer(middleware::from_fn(
             |request: Request, next: Next| async move {
@@ -79,7 +81,7 @@ pub fn router(app: App) -> Router {
         .with_state(app)
 }
 
-async fn authenticate(State(app): State<App>, request: Request, next: Next) -> Response {
+async fn authenticate(State(app): State<App>, mut request: Request, next: Next) -> Response {
     if request
         .headers()
         .get("sec-fetch-site")
@@ -93,8 +95,23 @@ async fn authenticate(State(app): State<App>, request: Request, next: Next) -> R
         .and_then(|h| h.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    if !bool::from(supplied.as_bytes().ct_eq(app.config.api_token.as_bytes())) {
+    let is_api_token = bool::from(supplied.as_bytes().ct_eq(app.config.api_token.as_bytes()));
+    if !is_api_token && !app.console_security.lock().await.authenticate(supplied) {
         return ApiError(StatusCode::UNAUTHORIZED, "unauthorized").into_response();
+    }
+    request
+        .extensions_mut()
+        .insert(crate::settings::AuthMethod(is_api_token));
+    let activity = if request.uri().path() == "/v1/admin/reset" {
+        None
+    } else {
+        match app.maintenance.clone().try_read_owned() {
+            Ok(guard) => Some(std::sync::Arc::new(guard)),
+            Err(_) => return ApiError(StatusCode::CONFLICT, "agent_busy").into_response(),
+        }
+    };
+    if let Some(guard) = &activity {
+        request.extensions_mut().insert(guard.clone());
     }
     next.run(request).await
 }
@@ -126,6 +143,7 @@ struct ChatRequest {
 }
 async fn chat(
     State(app): State<App>,
+    Extension(activity): Extension<crate::settings::ActivityGuard>,
     Path(session): Path<String>,
     Json(input): Json<ChatRequest>,
 ) -> ApiResult<Response> {
@@ -180,6 +198,7 @@ async fn chat(
         BeginTurn::Started(user) => {
             let output = output.clone();
             tokio::spawn(async move {
+                let _activity = activity;
                 let _permit = permit;
                 let mut shutdown = app.shutdown.clone();
                 let generation = crate::chat::generate(&app, &user, &output);

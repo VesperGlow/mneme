@@ -523,6 +523,8 @@ pub async fn worker(app: App) {
         if *shutdown.borrow() {
             break;
         }
+        let activity = app.maintenance.read().await;
+        let graph_clean = crate::settings::cleanup_graph(&app).await.is_ok();
         if maintenance_at <= Instant::now() {
             if let Err(_error) = app
                 .store
@@ -543,6 +545,7 @@ pub async fn worker(app: App) {
                     if job.kind == "extract" {
                         extract(&app, &job).await
                     } else {
+                        ensure!(graph_clean, "graph reset pending");
                         if !graph_ready {
                             app.graph.initialize().await?;
                             graph_ready = true;
@@ -588,6 +591,7 @@ pub async fn worker(app: App) {
                 }
             }
             Ok(None) | Err(_) => {
+                drop(activity);
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(app.config.memory.poll_seconds)) => {},
                     _ = shutdown.changed() => break,

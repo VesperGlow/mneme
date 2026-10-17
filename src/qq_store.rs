@@ -52,6 +52,11 @@ impl Store {
             .bind(key(app_id, "owner"))
             .fetch_optional(&self.pool)
             .await?;
+        let has_session: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM qq_sessions WHERE app_id=?)")
+                .bind(app_id)
+                .fetch_one(&self.pool)
+                .await?;
         let counts: Vec<(String, i64)> =
             sqlx::query_as("SELECT status,COUNT(*) FROM qq_inbox WHERE app_id=? GROUP BY status")
                 .bind(app_id)
@@ -61,7 +66,9 @@ impl Store {
         for (state, count) in counts {
             queue[&state] = json!(count);
         }
-        Ok(json!({"bound":owner.is_some(),"owner_openid":owner,"queue":queue}))
+        Ok(
+            json!({"bound":owner.is_some(),"has_session":has_session,"owner_openid":owner,"queue":queue}),
+        )
     }
 
     /// The first private message starts the personal session in the same transaction as its inbox.

@@ -272,6 +272,7 @@ async fn webhook(
     headers: HeaderMap,
     body: Bytes,
 ) -> ApiResult<Json<Value>> {
+    let _activity = app.maintenance.read().await;
     let config = &app.config.qq;
     if app.qq.is_none() {
         return Err(ApiError(StatusCode::NOT_FOUND, "qq_disabled"));
@@ -448,13 +449,16 @@ pub async fn worker(app: App) {
     };
     let mut shutdown = app.shutdown.clone();
     while !*shutdown.borrow() {
+        let activity = app.maintenance.read().await;
         let item = match app.store.qq_claim(&app.config.qq.app_id).await {
             Ok(Some(item)) => item,
             Ok(None) => {
+                drop(activity);
                 tokio::select! {_ = tokio::time::sleep(Duration::from_millis(250))=>{},_ = shutdown.changed()=>{}};
                 continue;
             }
             Err(_) => {
+                drop(activity);
                 tracing::error!("QQ queue read failed");
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 continue;

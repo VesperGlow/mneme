@@ -9,6 +9,7 @@ Console 内置在 Mneme 的 Axum 服务中。启动现有服务后打开 **http:
 - **详情**：原始内容、人工/自动来源、重要性、可信度、时间、实体、索引同步状态、最近 100 条来源消息及最近 100 次相关修订。对话来源可展开查看原始用户消息。旧版本通过相同属性键串联；人工编辑之前的证据仅用于追溯，不自动成为新内容的证明。
 - **检索实验室**：使用与实时对话完全相同的管线，展示 Neo4j 向量、CJK 全文、实体匹配、图谱扩展、近期 SQLite 补充候选、RRF 分数、Reranker 分数、最终得分和筛除原因。各通道原始分数不可直接比较；精排服务异常时显示回退状态。删除的内容不会在调试候选中回显。
 - **系统状态**：LLM、Neo4j、Embedding、Reranker 的连通/加载状态，探测耗时，当前进程已完成请求的平均耗时、次数、失败数，运行时间、SQLite 大小、任务队列。可重新排队失败任务或安排索引重建。
+- **Agent 设置**：编辑名字、性格描述、交流方式和边界，保存后下一轮对话生效；设置、修改或移除独立 WebUI 登录密码；输入 `RESET` 确认重置 Agent，可同时恢复配置文件中的默认性格。
 
 桌面端使用侧边导航和详情抽屉，移动端使用底部导航与自适应列表。支持键盘焦点、原生对话框、Escape 关闭以及 `/` 快速进入搜索。
 
@@ -24,6 +25,16 @@ ssh -L 8080:127.0.0.1:8080 user@server
 
 Token 仍是原有单用户管理凭证，授权者可以访问全部对话和记忆。Console 不引入多用户角色或额外账户系统。
 
+首次使用 API Token 登录后，可在 Agent 设置中设置 10–128 字符的 WebUI 密码。之后在登录页选择“WebUI 密码”，服务端验证后签发随机会话凭证，仅在页面内存保存。密码使用随机盐和 PBKDF2-HMAC-SHA256（600,000 次）哈希保存到 SQLite，不保存明文。会话闲置 30 分钟过期，退出会撤销当前会话；服务重启或密码变更会撤销所有密码会话。登录失败会短暂限速。API Token 始终保留原有权限，可用于找回或移除忘记的密码；通过密码会话修改密码时还需验证当前密码。
+
+## 性格与重置
+
+WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件的 `[persona]`，HTTP 与 QQ 对话均使用同一份即时设置。各项合计最多 6000 字，名字最多 80 字，且须符合当前上下文容量。点击“填入配置文件默认值”只填充表单，保存后生效。
+
+重置会在同一事务中删除所有会话、原始对话、长期记忆、来源、修订记录、遗忘屏障、后台任务和 QQ 收发队列。保留服务连接配置、API Token、WebUI 密码、QQ 账号归属及模型选型缓存；QQ 下一条新消息会重新建立会话。默认保留当前性格，勾选后可恢复文件默认值。界面要求输入 `RESET`，取消不会修改数据。
+
+服务端先暂停新任务领取，最多等待当前请求、生成与后台任务 3 秒；仍繁忙时返回 409 `agent_busy`，不清空任何数据。成功后旧记忆立即停止召回，Neo4j 清理通过持久化标记交给后台执行；图谱离线或服务重启后继续重试，清理完成前不投影新记忆。SQLite 逻辑记录已删除，但此功能不代表磁盘安全擦除，也不会删除已有备份或外部服务的数据。
+
 ## 编辑、删除与索引一致性
 
 新增和编辑先在一个 SQLite 事务内提交内容、修订快照和持久化投影任务。模型离线时仍可保存，页面显示“等待后台更新”；工作队列负责生成文档向量并更新 Neo4j 全文、向量和实体关系。内容没有变化时复用原向量。成功同步后记录 `indexed_revision`，不会用旧任务把新版本误标为已同步。
@@ -36,7 +47,7 @@ Token 仍是原有单用户管理凭证，授权者可以访问全部对话和�
 
 ## API
 
-所有接口继续使用 `Authorization: Bearer <MNEME_API_TOKEN>`。
+除密码登录外，所有接口使用 `Authorization: Bearer <MNEME_API_TOKEN 或临时会话凭证>`。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
@@ -49,6 +60,12 @@ Token 仍是原有单用户管理凭证，授权者可以访问全部对话和�
 | DELETE | `/v1/memories/{id}?expected_revision=2` | 删除并建立保护屏障；旧客户端可省略版本参数 |
 | POST | `/v1/console/retrieval` | `{"query":"我住在哪里？"}`，返回 results、trace、degraded |
 | GET | `/v1/console/system` | 服务状态和性能；探测结果缓存 10 秒 |
+| POST | `/v1/console/login` | `{"password":"…"}`，返回 token 和 expires_in；不要求 Bearer |
+| POST | `/v1/console/logout` | 撤销当前密码会话 |
+| GET | `/v1/console/settings` | persona、default_persona、password_configured、graph_cleanup_pending；不返回密码哈希或密钥 |
+| PUT | `/v1/console/persona` | `{"name":"…","description":"…","style":"…","boundaries":"…"}` |
+| PUT | `/v1/console/password` | `{"current_password":"…","new_password":"…"}`；new_password 为空表示移除，API Token 可免当前密码 |
+| POST | `/v1/admin/reset` | `{"confirmation":"RESET","reset_persona":false}`，返回删除条数和图谱清理排队状态 |
 
 新增/编辑请求示例：
 
@@ -102,4 +119,4 @@ npm install --prefix /tmp/mneme-console-qa --no-save --no-package-lock playwrigh
 NODE_PATH=/tmp/mneme-console-qa/node_modules node scripts/console-browser-test.cjs
 ```
 
-测试验证桌面、390px 移动端、真实 CRUD/历史修订、检索过程、系统状态、HTML 转义、退出/刷新与闲置锁定，并将截图保存到忽略的 `artifacts/`。测试结束后在第一个终端按 Ctrl+C 关闭临时服务。真实数据和外部付费 LLM 不参与该浏览器测试。
+测试验证桌面、390px 移动端、真实 CRUD/历史修订、检索过程、系统状态、HTML 转义、退出/刷新与闲置锁定，以及性格保存、密码登录/移除、取消和确认重置，并将截图保存到忽略的 `artifacts/`。测试结束后在第一个终端按 Ctrl+C 关闭临时服务。真实数据和外部付费 LLM 不参与该浏览器测试。
