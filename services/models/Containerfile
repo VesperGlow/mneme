@@ -6,6 +6,6 @@ WORKDIR /app
 COPY services/models/requirements.txt services/models/requirements.lock.txt ./
 RUN pip install --no-cache-dir torch==2.8.0+cpu --index-url https://download.pytorch.org/whl/cpu -c requirements.lock.txt \
     && pip install --no-cache-dir -r requirements.txt -c requirements.lock.txt
-COPY services/models/engine.py services/models/app.py ./
+COPY services/models/engine.py services/models/app.py services/models/artifacts.py services/models/artifacts.json ./
 EXPOSE 8090
 CMD ["uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8090", "--workers", "1", "--no-access-log"]

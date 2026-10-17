@@ -42,6 +42,26 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 
 若图谱被清空或恢复到较旧的快照，先确保 Neo4j 启动，再 POST `/v1/admin/reindex`。后台会重新创建索引并从 SQLite 向量和实体重建；无需再次调用外部 LLM。
 
+## 模型下载与多源回退
+
+模型服务默认按 `huggingface,modelscope` 下载。主源连接失败、HTTP 错误、文件大小或 SHA-256 校验失败时尝试下一个源；某个源成功后，本次启动后续文件优先使用该源。每次连接超时为 5 秒、读取超时为 15 秒，不经过 Hugging Face SDK 的 Xet/多轮退避重试。多个 DNS 地址和重定向可能使一次失败的实际耗时超过单次连接超时，日志会输出耗时和固定错误类别。
+
+`services/models/artifacts.json` 固定了两个模型、分词器、配置及 GTE 自定义代码共 13 个文件的版本、大小和 SHA-256；魔搭映射也固定到相应提交。不会改用 `main`/`master` 或自动换模型。下载先写源独立的 `.part` 文件，完整校验和刷盘后才原子发布到原有 Hugging Face 缓存。中断文件可续传，校验失败文件丢弃，两个源都失败则启动失败；不会以残缺模型提供推理。
+
+查看下载进度与 CPU 加载阶段：
+
+```bash
+podman logs -f mneme-models
+```
+
+旧缓存会在启动时校验后直接复用，不必重新下载；已有部分下载文件会保留。所有文件准备好后，Transformers 仅从本地加载，避免再次绕过下载器访问外部源。若 Hugging Face 长期不可达，可在模型 Quadlet 的 `[Container]` 段添加：
+
+```ini
+Environment=MNEME_MODEL_SOURCES=modelscope,huggingface
+```
+
+然后运行 `systemctl --user daemon-reload` 和 `systemctl --user restart mneme-models.service`。只填 `modelscope` 可禁用 Hugging Face 尝试；默认不需要设置。不要把 `HF_ENDPOINT` 设置为魔搭地址，两者的下载 URL/API 格式不同。`HF_ENDPOINT` 仅覆盖 Hugging Face 通道；本地缓存齐全后可按下文设置 `HF_HUB_OFFLINE=1`。
+
 ## 从 SQLite 备份恢复
 
 先用 `scripts/backup.py` 生成并检查备份。恢复时停止整个 target，确保没有 SQLite 写者，保留现有数据以便回滚。

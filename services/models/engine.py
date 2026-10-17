@@ -1,16 +1,15 @@
 """Pinned CPU-only model runtime. No model weights are sent to an external API."""
 import os
+import logging
 from collections import OrderedDict
 
 import torch
 import torch.nn.functional as F
 from transformers import AutoConfig, AutoModel, AutoModelForSequenceClassification, AutoTokenizer
 
-EMBED_MODEL = "Qwen/Qwen3-Embedding-0.6B"
-EMBED_REVISION = "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3"
-RERANK_MODEL = "Alibaba-NLP/gte-multilingual-reranker-base"
-RERANK_REVISION = "8215cf04918ba6f7b6a62bb44238ce2953d8831c"
-CODE_REVISION = "40ced75c3017eb27626c9d4ea981bde21a2662f4"
+from artifacts import EMBED_MODEL, EMBED_REVISION, RERANK_MODEL, RERANK_REVISION, CODE_REVISION, prepare_cache
+
+LOG = logging.getLogger("uvicorn.error")
 INSTRUCTION = "Given a Chinese conversation query, retrieve relevant personal memories and facts about the user."
 
 
@@ -18,8 +17,11 @@ class Engine:
     def __init__(self):
         torch.set_num_threads(int(os.getenv("MNEME_CPU_THREADS", "3")))
         torch.set_num_interop_threads(1)
-        offline = os.getenv("HF_HUB_OFFLINE", "0") == "1"
-        common = {"local_files_only": offline}
+        cache = prepare_cache()
+        # All remote I/O and source retries finish before Transformers runs.
+        # This also prevents custom-code imports from bypassing failover.
+        common = {"local_files_only": True, "cache_dir": str(cache)}
+        LOG.info("loading CPU embedding model=%s dtype=float32", EMBED_MODEL)
         self.embed_tokenizer = AutoTokenizer.from_pretrained(
             EMBED_MODEL, revision=EMBED_REVISION, padding_side="left", **common
         )
@@ -27,6 +29,7 @@ class Engine:
             EMBED_MODEL, revision=EMBED_REVISION, torch_dtype=torch.float32,
             attn_implementation="sdpa", low_cpu_mem_usage=True, use_safetensors=True, **common
         ).cpu().eval()
+        LOG.info("CPU embedding ready; loading reranker model=%s dtype=float32", RERANK_MODEL)
         self.rerank_tokenizer = AutoTokenizer.from_pretrained(
             RERANK_MODEL, revision=RERANK_REVISION, **common
         )
@@ -43,6 +46,7 @@ class Engine:
             low_cpu_mem_usage=True, use_safetensors=True, **common
         ).cpu().eval()
         self.cache = OrderedDict()
+        LOG.info("CPU embedding and reranker ready")
 
     @torch.inference_mode()
     def embed(self, texts, query=False):

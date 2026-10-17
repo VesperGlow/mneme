@@ -53,7 +53,9 @@ bash scripts/start.sh
 
 GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vesperglow/mneme-api` 与 `ghcr.io/vesperglow/mneme-models`。默认使用 `latest`；固定部署版本时，先 `export MNEME_IMAGE_TAG=sha-完整提交SHA`，再执行同样的拉取和安装命令。私有 GHCR 包需要先用具有 `read:packages` 权限的 GitHub Token 执行 `podman login ghcr.io -u VesperGlow`；也可以在 GitHub 包设置中改为公开。首次发布的包默认私有，详见 [GHCR 说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。从源码构建时，用 `bash scripts/build.sh` 代替拉取步骤，仍仅构建 amd64。
 
-首次启动会下载约 2 GB 模型文件，取决于网络需要几分钟。模型权重保存在持久卷中，没有打入镜像。安装脚本保留已有 `~/.config/mneme/config.toml`。如果网络访问 Hugging Face 需要代理，可在模型 Quadlet 中添加对应的代理环境变量，再重启；不要改动固定模型 revision。
+首次启动会下载约 2 GB 模型文件，取决于网络需要几分钟。默认先从 Hugging Face 下载，连接失败、HTTP 错误或校验失败后自动切换魔搭 ModelScope；切换成功后，本次启动优先使用可用源。权重、分词器、配置和 GTE 自定义代码均固定版本并校验 SHA-256，完整文件验证后才启用；下载中断可续传。已有完整缓存直接校验加载，无需联网。进度和源切换会记录在 `podman logs -f mneme-models` 中。
+
+模型文件保存在持久卷中，没有打入镜像。安装脚本保留已有 `~/.config/mneme/config.toml`。需要代理时，可在模型 Quadlet 添加对应的代理环境变量；源顺序可通过 `Environment=MNEME_MODEL_SOURCES=modelscope,huggingface` 调整，默认无需配置。不要改动固定模型 revision。
 
 所有容器属于 `mneme` Pod，共用网络命名空间：内部地址为 `127.0.0.1:7474` 和 `127.0.0.1:8090`。宿主机只发布本机 `127.0.0.1:8080`（API/Console）和 `127.0.0.1:8081`（仅 QQ 回调）；QQ 未配置时不启动第二个监听。需要远程使用 Console 时可通过 SSH 转发：`ssh -L 8080:127.0.0.1:8080 user@server`。
 

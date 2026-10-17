@@ -30,6 +30,7 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: python3 -m py_compile services/models/*.py scripts/*.py tests/fixtures/*.py
+      - run: python3 -m pip install -c services/models/requirements.lock.txt requests
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - run: node --check web/app.js && node --check scripts/console-browser-test.cjs
 
@@ -107,7 +108,7 @@ jobs:
           if [ "$SERVICE" = mneme-models ]; then
             sudo podman run --rm --read-only --cap-drop all --security-opt no-new-privileges \
               --tmpfs /tmp:rw,noexec,nosuid,size=256m "$IMAGE" \
-              python -c 'import torch, transformers, fastapi, safetensors; assert torch.version.cuda is None; print("CPU runtime ready")'
+              python -c 'import torch, transformers, fastapi, safetensors, engine; assert torch.version.cuda is None; print("CPU runtime and pinned artifact manifest ready")'
           else
             trap 'sudo podman rm -f mneme-ci >/dev/null 2>&1 || true' EXIT
             sudo podman run -d --name mneme-ci --read-only --cap-drop all --security-opt no-new-privileges \

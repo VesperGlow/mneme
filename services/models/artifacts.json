@@ -1,0 +1,88 @@
+[
+  {
+    "repo": "Qwen/Qwen3-Embedding-0.6B",
+    "revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+    "modelscope_repo": "Qwen/Qwen3-Embedding-0.6B",
+    "files": {
+      "config.json": {
+        "size": 727,
+        "sha256": "b5bf1f51fc45be473a54718cef92448d90a1be001bf9b9a44b8c7f10a19feaa9",
+        "modelscope_revision": "b5afe39ac0d47717f5104238e7df93635f36adec"
+      },
+      "merges.txt": {
+        "size": 1671853,
+        "sha256": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+        "modelscope_revision": "b5afe39ac0d47717f5104238e7df93635f36adec"
+      },
+      "model.safetensors": {
+        "size": 1191586416,
+        "sha256": "0437e45c94563b09e13cb7a64478fc406947a93cb34a7e05870fc8dcd48e23fd",
+        "modelscope_revision": "5092237580d1545d466a2d454c09f18181c341ec"
+      },
+      "tokenizer.json": {
+        "size": 11423705,
+        "sha256": "def76fb086971c7867b829c23a26261e38d9d74e02139253b38aeb9df8b4b50a",
+        "modelscope_revision": "c75dc100bea0a07420353465595ecfef791e7e83"
+      },
+      "tokenizer_config.json": {
+        "size": 9706,
+        "sha256": "253153d0738ceb4c668d2eff957714dd2bea0b56de772a9fdccd96cbf517e6a0",
+        "modelscope_revision": "b5afe39ac0d47717f5104238e7df93635f36adec"
+      },
+      "vocab.json": {
+        "size": 2776833,
+        "sha256": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+        "modelscope_revision": "b5afe39ac0d47717f5104238e7df93635f36adec"
+      }
+    }
+  },
+  {
+    "repo": "Alibaba-NLP/gte-multilingual-reranker-base",
+    "revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+    "modelscope_repo": "iic/gte-multilingual-reranker-base",
+    "files": {
+      "config.json": {
+        "size": 1494,
+        "sha256": "995730781d157e147c13ccdfe0eb20a0875c486b6c4de8c97f0bbd845549dbc0",
+        "modelscope_revision": "acf0d6e6b3d309b809deaa28c4cfaf2aa809449f"
+      },
+      "model.safetensors": {
+        "size": 611934706,
+        "sha256": "10ebaa49322dd7e01a13a91c49810939e3f91f231aceaa47fdf0cab3083954f6",
+        "modelscope_revision": "acf0d6e6b3d309b809deaa28c4cfaf2aa809449f"
+      },
+      "special_tokens_map.json": {
+        "size": 964,
+        "sha256": "8c785abebea9ae3257b61681b4e6fd8365ceafde980c21970d001e834cf10835",
+        "modelscope_revision": "acf0d6e6b3d309b809deaa28c4cfaf2aa809449f"
+      },
+      "tokenizer.json": {
+        "size": 17083021,
+        "sha256": "d6f76fe13d42f80dcee0cb86a1aeb5f14f8909bb8a8782f7a4a4ad76697ef164",
+        "modelscope_revision": "acf0d6e6b3d309b809deaa28c4cfaf2aa809449f"
+      },
+      "tokenizer_config.json": {
+        "size": 1340,
+        "sha256": "6f00514620aff01ba8b7291b2394e98daca5be264cb743805232d9ae27494b2a",
+        "modelscope_revision": "acf0d6e6b3d309b809deaa28c4cfaf2aa809449f"
+      }
+    }
+  },
+  {
+    "repo": "Alibaba-NLP/new-impl",
+    "revision": "40ced75c3017eb27626c9d4ea981bde21a2662f4",
+    "modelscope_repo": "iic/new-impl",
+    "files": {
+      "configuration.py": {
+        "size": 7127,
+        "sha256": "3411088045ffb8a9a0aa9936eae275896b39983a2ee5b08f091b44e6289e4fe4",
+        "modelscope_revision": "2432ad14e3d9c79d702d56c6614866e63f266d6c"
+      },
+      "modeling.py": {
+        "size": 59023,
+        "sha256": "374670b416fcc82f081c9cd28b5fd61c2bd91bbe18eb4798fcc48a81f9c250a0",
+        "modelscope_revision": "2432ad14e3d9c79d702d56c6614866e63f266d6c"
+      }
+    }
+  }
+]
