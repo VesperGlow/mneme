@@ -68,7 +68,7 @@ export async function createServer({ token, browser = new BrowserTools(), eager 
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  const browser = new BrowserTools({ executablePath: process.env.MNEME_CHROMIUM_PATH || '/usr/bin/chromium', engine: process.env.MNEME_SEARCH_ENGINE || 'bing' });
+  const browser = new BrowserTools({ executablePath: process.env.MNEME_CHROMIUM_PATH || '/usr/bin/chromium', engine: process.env.MNEME_SEARCH_ENGINE || 'google' });
   const app = await createServer({ token: process.env.MNEME_TOOLS_TOKEN, browser });
   await app.listen({ host: '127.0.0.1', port: Number(process.env.MNEME_TOOLS_PORT || 8091) });
   console.log(JSON.stringify({ event: 'tools_started', transport: 'loopback_http', sandbox: browser.sandbox }));

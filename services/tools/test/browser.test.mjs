@@ -15,6 +15,62 @@ test('session creation is bounded and a late context is disposed', async()=>{
   }finally{browser.browser=null;await browser.close();}
 });
 
+test('real sandboxed CDP: repeat search submissions, Google/Bing/DDG results and verification errors', {skip:process.env.MNEME_BROWSER_TEST!=='1',timeout:60000}, async()=>{
+  class FixturePolicy extends NetworkPolicy {
+    async resolve(input) {
+      const url=new URL(input);
+      if(['www.google.com','www.bing.com','html.duckduckgo.com'].includes(url.hostname)) return {url,host:url.hostname,port:443,address:'93.184.216.34',family:4};
+      return super.resolve(input);
+    }
+  }
+  const browser=new BrowserTools({policy:new FixturePolicy()});
+  const id='11111111-1111-4111-8111-111111111111';
+  try {
+    assert.equal(browser.engine,'google');
+    const session=await browser.session(id);
+    const queries=[];
+    await session.context.route(/^https:\/\/(www\.google\.com|www\.bing\.com|html\.duckduckgo\.com)\//,async route=>{
+      const url=new URL(route.request().url());
+      let body;
+      if(url.pathname==='/sorry/index') body='<title>Verification</title><p>Our systems have detected unusual traffic from your computer network.</p>';
+      else if(url.pathname==='/denied') return route.fulfill({status:403,contentType:'text/html',body:'<title>Access denied</title><p>Access denied</p>'});
+      else if(url.searchParams.has('q')) {
+        const query=url.searchParams.get('q');queries.push(query);
+        if(query==='verification') return route.fulfill({contentType:'text/html',body:'<title>Verification</title><p>Our systems have detected unusual traffic from your computer network.</p>'});
+        body=url.hostname==='www.google.com'
+          ? '<div id="search"><div class="MjjYud"><a href="https://www.debian.org/"><span>www.debian.org</span><h3>Debian official site</h3></a><p>The universal operating system. Documentation about unusual traffic.</p></div><div class="MjjYud"><a href="/url?q=https%3A%2F%2Fwww.rust-lang.org%2F"><h3>Rust official site</h3></a><p>A language for reliable software.</p></div></div>'
+          : url.hostname==='www.bing.com'
+            ? '<li class="b_algo"><h2><a href="https://www.debian.org/">Debian official site</a></h2><p>The universal operating system.</p></li>'
+            : '<div class="result"><a class="result__a" href="https://www.debian.org/">Debian official site</a><p>The universal operating system.</p></div>';
+      } else {
+        // Model the autocomplete handler that swallowed Enter in production.
+        const submit=url.hostname==='www.google.com'?'name="btnK"':url.hostname==='www.bing.com'?'id="sb_form_go"':'';
+        body=`<form action="/search" onkeydown="if(event.key==='Enter')event.preventDefault()"><input name="q"><input type="submit" ${submit} value="Search"></form>`;
+      }
+      await route.fulfill({contentType:'text/html; charset=utf-8',body:`<html><body>${body}</body></html>`});
+    });
+    for(const engine of ['google','bing','duckduckgo']) {
+      browser.engine=engine;
+      for(const query of ['Debian official website','Rust programming language']) {
+        const result=await browser.execute(id,{action:'search',query});
+        assert.equal(result.results[0].title,'Debian official site');
+        assert.equal(result.results[0].url,'https://www.debian.org/');
+        assert.match(result.results[0].snippet,/universal operating system/);
+        if(engine==='google') {
+          assert.equal(result.results.length,2);
+          assert.equal(result.results[1].url,'https://www.rust-lang.org/');
+        }
+      }
+    }
+    assert.equal(queries.length,6,'each search must submit exactly once');
+    browser.engine='google';
+    await assert.rejects(browser.execute(id,{action:'search',query:'verification'}),/search_verification_required/);
+    await assert.rejects(browser.execute(id,{action:'read'}),/page_verification_required/);
+    await assert.rejects(browser.execute(id,{action:'navigate',url:'https://www.google.com/denied'}),/page_access_denied/);
+    assert.equal(browser.sessions.size,1,'verification and HTTP errors must leave the browser recoverable');
+  } finally {await browser.close();}
+});
+
 test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expiry and SSRF', {skip:process.env.MNEME_BROWSER_TEST!=='1',timeout:60000}, async()=>{
   let privateReached=0,jsonRequests=0;
   const server=http.createServer((req,res)=>{

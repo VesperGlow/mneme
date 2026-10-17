@@ -238,7 +238,26 @@ async fn generate_with_tools(
         for round in &rounds {
             input.extend(round.clone());
         }
-        let completion = app.llm.round(&input, Some(&definitions), output).await?;
+        let completion = match app.llm.round(&input, Some(&definitions), output).await {
+            Ok(completion) => completion,
+            Err(_) if !rounds.is_empty() => {
+                tracing::warn!(
+                    calls,
+                    "model request interrupted after tools; generating final answer"
+                );
+                let final_text = finish_tools(
+                    app,
+                    &base,
+                    &rounds,
+                    "后续模型请求中断，请根据已获得的资料回答，并说明未完成的部分。",
+                    output,
+                )
+                .await?;
+                answer.push_str(&final_text);
+                return Ok(answer);
+            }
+            Err(error) => return Err(error),
+        };
         if !completion.content.is_empty() {
             anyhow::ensure!(
                 answer.len() + completion.content.len() <= 128000,

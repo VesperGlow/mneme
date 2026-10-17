@@ -34,7 +34,7 @@ MNEME_TOOLS_TOKEN=本机独立随机工具凭证 node services/tools/app.mjs
 
 ## 浏览器与多轮调用
 
-服务通过 Playwright 的 `connectOverCDP` 控制真实 Headless Chromium。`search` 打开 Bing 页面，填写搜索框并按 Enter，不调用任何搜索 API。浏览器 DOM 返回标题、正文、结构化搜索结果、来源链接、可操作元素引用和读取时间；正文提取复用 Mozilla Readability。搜索结果中的 Bing 跳转链接会解析为实际来源地址。搜索引擎出现验证码时返回 `search_verification_required`，不绕过人机验证；部分结果只在 DOM 中存在时标记 `rendering_limited`，由 Agent 根据实际读到的资料继续浏览。可以在工具容器中设置 `MNEME_SEARCH_ENGINE=duckduckgo` 改用其 HTML 搜索表单。
+服务通过 Playwright 的 `connectOverCDP` 控制真实 Headless Chromium。`search` 默认打开 Google 页面，填写搜索框并点击搜索提交按钮，不调用任何搜索 API；点击按钮避免自动补全吞掉 Enter 导致重复搜索停留首页。浏览器 DOM 返回标题、正文、结构化搜索结果、来源链接、可操作元素引用和读取时间；正文提取复用 Mozilla Readability。Google 和 Bing 的结果跳转链接会解析为实际来源地址。搜索引擎出现验证码时返回 `search_verification_required`，不绕过人机验证；服务器出口 IP 触发 Google 异常流量检查时也会明确返回该错误。普通导航遇到验证页、403 或 429 时分别返回 `page_verification_required`、`page_access_denied` 或 `page_rate_limited`。部分结果只在 DOM 中存在时标记 `rendering_limited`，由 Agent 根据实际读到的资料继续浏览。可以在工具容器中设置 `MNEME_SEARCH_ENGINE=google|bing|duckduckgo` 选择引擎，默认值为 `google`；不支持的名称会在启动时报错。
 
 导航在新文档提交后，最多等待 4 秒的 DOMContentLoaded 和 2.5 秒的正文渲染；慢脚本或持续传输的页面可返回已加载正文，并标记 `load_incomplete`，无可读正文及元素时标记 `rendering_pending`。元素引用在一次 DOM 快照中批量生成，避免逐元素 CDP 往返。浏览器启动和会话创建分别有 10 秒超时，会话创建耗时计入单次操作的 25 秒预算；超时后才返回的上下文也会被关闭。普通操作超时保留页面，便于 `read`、`wait` 或换站恢复；整个调用超过 25 秒时才关闭上下文以取消挂起任务。会话不存在或已回收时，读取和交互明确返回 `browser_session_missing_navigate_or_search`，必须重新导航或搜索，不会返回空白页假装读取成功。错误日志包含阶段和会话是否已关闭，便于区分操作、内容提取与截图超时。
 
@@ -53,6 +53,8 @@ MNEME_TOOLS_TOKEN=本机独立随机工具凭证 node services/tools/app.mjs
 | back / close | 返回上一页 / 释放当前浏览器会话 |
 
 Rust 解析分片 SSE 中的 tool_calls，等完整 `[DONE]` 后才执行。工具结果通过匹配的 `tool_call_id` 返回模型，模型可继续选择下一步。参数错误、浏览器故障与 SSRF 拒绝均以结构化错误返回，供模型纠正；工具调用次数和总时间有硬上限。对话断连继续完成的既有语义不变；相同 request_id 重放不会再次点击或搜索。图片及其顺序也参与请求幂等检查。
+
+已执行工具后，后续模型请求失败或流中断时，会将已有工具结果交给一次不带工具调用历史的纯文本请求收尾，不重做浏览器操作。如果收尾请求也失败，仍保存并返回明确的失败说明和已读取的来源，避免整轮浏览只有通用生成失败提示。
 
 默认每轮最多 200 次调用、整轮最长 1800 秒。已有部署的 `config.toml` 会保留旧值；在项目 `.env` 或 API 的 `~/.config/mneme/app.env` 中设置上述两个限制变量即可覆盖，工具容器的 `tools.env` 仍只需要工具凭证。次数范围 1–200，总时限范围 10–3600 秒。
 

@@ -17,7 +17,7 @@ const headers={Authorization:`Bearer ${token}`,'Content-Type':'application/json'
 const streamRequests=[];
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let child,ui;
-const engine=process.env.MNEME_SEARCH_ENGINE||'bing';
+const engine=process.env.MNEME_SEARCH_ENGINE||'google';
 const browser=new BrowserTools({engine});
 const tools=await createServer({token:toolsToken,browser});
 await tools.listen({host:'127.0.0.1',port:0});

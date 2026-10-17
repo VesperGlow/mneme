@@ -45,6 +45,9 @@ async fn services(mode: &'static str) -> (String, Arc<Mutex<Seen>>, tokio::task:
         assert_eq!(headers["authorization"],"Bearer fixture-llm-key");
         seen.lock().unwrap().llm.push(body.clone());
         let native_count=body["messages"].as_array().unwrap().iter().filter(|m|m["role"]=="tool").count();
+        if (mode=="after_tools_http" && native_count>0) || (mode=="after_tools_down" && (native_count>0 || body.get("tools").is_none())) {
+            return (StatusCode::SERVICE_UNAVAILABLE,Json(json!({"error":"fixture upstream unavailable"}))).into_response();
+        }
         let tool_messages=if mode=="long" {seen.lock().unwrap().actions.len()} else {native_count};
         let user=body["messages"].as_array().unwrap().iter().rev().find(|m|m["role"]=="user" && m["name"]!="tool_images").unwrap()["content"].to_string();
         let view=user.contains("查看图片标识");
@@ -63,7 +66,7 @@ async fn services(mode: &'static str) -> (String, Arc<Mutex<Seen>>, tokio::task:
             let second=json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":&args[split..]}}]},"finish_reason":"tool_calls"}]});
             wire.push_str(&format!("data: {first}\n\ndata: {second}\n\n"));
         }
-        if mode!="truncated"{wire.push_str("data: [DONE]\n\n");}
+        if mode!="truncated" && !(mode=="after_tools_truncated" && native_count>0 && body.get("tools").is_some()){wire.push_str("data: [DONE]\n\n");}
         let chunks:Vec<_>=wire.into_bytes().chunks(7).map(|b|Ok::<_,std::convert::Infallible>(b.to_vec())).collect();
         ([("content-type","text/event-stream")],Body::from_stream(futures_util::stream::iter(chunks))).into_response()
     }}));
@@ -366,6 +369,58 @@ async fn tool_failures_are_visible_and_budget_forces_a_final_answer() {
     assert!(!logs.to_string().contains(TOOL_TOKEN));
     service.abort();
     fake.abort();
+}
+
+#[tokio::test]
+async fn upstream_failure_after_tools_finishes_without_repeating_browser_actions() {
+    for mode in [
+        "after_tools_http",
+        "after_tools_truncated",
+        "after_tools_down",
+    ] {
+        let temp = tempfile::TempDir::new().unwrap();
+        let (base, seen, service) = services(mode).await;
+        let (models, fake) = common::fake_services().await;
+        let (_stop, rx) = tokio::sync::watch::channel(false);
+        let app = App::new(config(&temp, &base, &models), rx).await.unwrap();
+        let router = api::router(app.clone());
+        let session = app.store.create_session().await.unwrap();
+        let (_, wire) = chat(&router, &session, "浏览后给出答复", vec![]).await;
+        assert!(wire.contains("event: done"), "{mode}: {wire}");
+        assert!(!wire.contains("event: error"), "{mode}: {wire}");
+        let stored = app.store.history(&session, 10).await.unwrap();
+        let reply = &stored.last().unwrap().content;
+        assert!(
+            reply.contains("https://example.org/source"),
+            "{mode}: {reply}"
+        );
+        if mode == "after_tools_down" {
+            assert!(reply.contains("未能生成有效的最终答复"));
+        } else {
+            assert!(reply.contains("已完成多步浏览"));
+        }
+        {
+            let records = seen.lock().unwrap();
+            assert_eq!(records.actions.len(), 1, "{mode}: do not repeat actions");
+            assert_eq!(records.llm.len(), 3);
+            let final_request = records.llm.last().unwrap();
+            assert!(final_request.get("tools").is_none());
+            assert!(
+                final_request["messages"]
+                    .to_string()
+                    .contains("untrusted_tool_results")
+            );
+            assert!(
+                final_request["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|m| m["role"] != "tool" && m.get("tool_calls").is_none())
+            );
+        }
+        service.abort();
+        fake.abort();
+    }
 }
 
 #[tokio::test]

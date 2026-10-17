@@ -9,6 +9,16 @@ import { ToolError, NetworkPolicy, startEgressProxy } from './security.mjs';
 const require = createRequire(import.meta.url);
 const readabilitySource = await readFile(require.resolve('@mozilla/readability/Readability.js'), 'utf8');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
+const searchEngines = {
+  google: { url: 'https://www.google.com/', input: 'textarea[name="q"],input[name="q"]', submit: 'input[name="btnK"],button[name="btnK"]', results: '#search a:has(h3),#rso a:has(h3)' },
+  bing: { url: 'https://www.bing.com/', input: 'textarea[name="q"],input[name="q"]', submit: '#search_icon,#sb_form_go', results: 'li.b_algo' },
+  duckduckgo: { url: 'https://html.duckduckgo.com/html/', input: 'input[name="q"]', submit: 'input[type="submit"],button[type="submit"]', results: '.result, [data-testid="result"], article[data-testid]' },
+};
+function verificationRequired({ url = '', title = '', text = '', results = [] }) {
+  return /^https:\/\/(?:www\.)?google\.[^/]+\/sorry\//i.test(url)
+    || /^(?:Just a moment\.\.\.|Attention Required!)/i.test(title)
+    || (!results.length && text.length < 4000 && /unfortunately, bots|unusual traffic|异常流量|confirm.*human|verify.*human|人机验证/i.test(text));
+}
 async function deadline(operation, ms, code) {
   let timer;
   try { return await Promise.race([operation, new Promise((_, reject) => { timer = setTimeout(() => reject(new ToolError(code, 504)), ms); })]); }
@@ -16,7 +26,8 @@ async function deadline(operation, ms, code) {
 }
 
 export class BrowserTools {
-  constructor({ policy = new NetworkPolicy(), executablePath = '/usr/bin/chromium', maxSessions = 4, ttlMs = 600000, timeoutMs = 25000, engine = 'bing' } = {}) {
+  constructor({ policy = new NetworkPolicy(), executablePath = '/usr/bin/chromium', maxSessions = 4, ttlMs = 600000, timeoutMs = 25000, engine = 'google' } = {}) {
+    if (!Object.hasOwn(searchEngines, engine)) throw new ToolError('invalid_search_engine');
     Object.assign(this, { policy, executablePath, maxSessions, ttlMs, timeoutMs, engine });
     this.sandbox = true;
     this.sessions = new Map(); this.starting = null; this.browser = null; this.closed = false;
@@ -123,15 +134,18 @@ export class BrowserTools {
       let navigation = {};
       switch (input.action) {
         case 'search': {
-          const engine = this.engine === 'duckduckgo' ? { url: 'https://html.duckduckgo.com/html/', selector: 'input[name="q"]' } : { url: 'https://www.bing.com/', selector: 'textarea[name="q"],input[name="q"]' };
+          const engine = searchEngines[this.engine];
           await this.policy.resolve(engine.url);
-          await this.navigate(page, engine.url);
-          const box = page.locator(engine.selector).first();
+          navigation = await this.navigate(page, engine.url);
+          if (verificationRequired({ url: page.url(), title: await page.title(), text: await page.locator('body').innerText({ timeout: 2000 }) })) throw new ToolError('search_verification_required', 502);
+          const box = page.locator(engine.input).first();
           await box.fill(input.query);
-          // Register before Enter: waiting for the old document's load state can
-          // otherwise succeed before the results navigation has even started.
-          await Promise.all([page.waitForURL(url => url.pathname.includes('search') || url.searchParams.has('q'), { waitUntil: 'domcontentloaded', timeout: Math.min(10000, this.timeoutMs - 2000) }), box.press('Enter')]);
-          await page.waitForSelector('li.b_algo, [data-testid="result"], article[data-testid]', { state: 'attached', timeout: 3500 }).catch(error => { if (error.name !== 'TimeoutError') throw error; });
+          // Autocomplete can swallow Enter on repeat searches. Click the real
+          // submit control, and register the navigation wait before clicking.
+          await Promise.all([page.waitForURL(url => /\/search|\/sorry\//.test(url.pathname) || url.searchParams.has('q'), { waitUntil: 'commit', timeout: Math.min(10000, this.timeoutMs - 2000) }), page.locator(engine.submit).filter({ visible: true }).first().click()]);
+          navigation = { load_incomplete: false };
+          await page.waitForLoadState('domcontentloaded', { timeout: 4000 }).catch(error => { if (error.name !== 'TimeoutError') throw error; navigation.load_incomplete = true; });
+          await page.waitForSelector(engine.results, { state: 'attached', timeout: 3500 }).catch(error => { if (error.name !== 'TimeoutError') throw error; });
           break;
         }
         case 'navigate': await this.policy.resolve(input.url); navigation = await this.navigate(page, input.url); break;
@@ -145,7 +159,8 @@ export class BrowserTools {
       }
       phase = 'snapshot';
       const snapshot = { ...await this.snapshot(session), ...navigation };
-      if (input.action === 'search' && !snapshot.results.length && /unfortunately, bots|unusual traffic|异常流量|confirm.*human|人机验证/i.test(snapshot.text)) throw new ToolError('search_verification_required', 502);
+      if (verificationRequired(snapshot)) throw new ToolError(input.action === 'search' ? 'search_verification_required' : 'page_verification_required', 502);
+      if (snapshot.http_status >= 400) throw new ToolError(snapshot.http_status === 429 ? 'page_rate_limited' : snapshot.http_status === 403 ? 'page_access_denied' : 'page_http_error', 502);
       if (input.action === 'screenshot') {
         phase = 'screenshot';
         const bytes = await page.screenshot({ type: 'jpeg', quality: 75, fullPage: false, timeout: 8000 });
@@ -191,9 +206,13 @@ export class BrowserTools {
       }
       const text = (article?.textContent || bodyText).replace(/\n{3,}/g, '\n\n').trim().slice(0, 14000);
       const links = [...document.querySelectorAll('a[href]')].map(a => ({ title: (a.innerText || a.getAttribute('aria-label') || '').trim().slice(0, 180), url: a.href })).filter(a => a.title && /^https?:/.test(a.url)).slice(0, 60);
-      const results = [...document.querySelectorAll('li.b_algo, [data-testid="result"], article[data-testid]')].map(block => {
-        const link = block.querySelector('h2 a, h3 a, a[data-testid="result-title-a"]');
-        return link ? { title: (link.innerText || link.textContent || '').trim().slice(0, 180), url: (() => { try { const u = new URL(link.href); const encoded = u.searchParams.get('u'); if (u.hostname.endsWith('bing.com') && u.pathname.startsWith('/ck/') && encoded?.startsWith('a1')) { const decoded = atob(encoded.slice(2).replace(/-/g, '+').replace(/_/g, '/')); if (/^https?:\/\//.test(decoded)) return decoded; } } catch {} return link.href; })(), snippet: (block.innerText || block.textContent || '').trim().slice(0, 700) } : null;
+      const resultSelector = location.hostname === 'www.google.com' ? '#search a:has(h3),#rso a:has(h3)' : /(^|\.)bing\.com$/.test(location.hostname) ? 'li.b_algo' : location.hostname === 'html.duckduckgo.com' ? '.result, [data-testid="result"], article[data-testid]' : '';
+      const results = (resultSelector ? [...document.querySelectorAll(resultSelector)] : []).map(block => {
+        const link = block.matches('a') ? block : block.querySelector('h2 a, h3 a, a[data-testid="result-title-a"], a.result__a');
+        if (!link) return null;
+        const heading = link.querySelector('h3') || link;
+        const snippet = block.matches('a') ? block.closest('.MjjYud,.g') || block.parentElement : block;
+        return { title: (heading.innerText || heading.textContent || '').trim().slice(0, 180), url: (() => { try { const u = new URL(link.href); const encoded = u.searchParams.get('u'); if (/(^|\.)bing\.com$/.test(u.hostname) && u.pathname.startsWith('/ck/') && encoded?.startsWith('a1')) { const decoded = atob(encoded.slice(2).replace(/-/g, '+').replace(/_/g, '/')); if (/^https?:\/\//.test(decoded)) return decoded; } if (/(^|\.)google\.com$/.test(u.hostname) && u.pathname === '/url') { const target = u.searchParams.get('q') || u.searchParams.get('url'); if (/^https?:\/\//.test(target)) return target; } } catch {} return link.href; })(), snippet: (snippet.innerText || snippet.textContent || '').trim().slice(0, 700) };
       }).filter(Boolean).slice(0, 10);
       // One CDP evaluation replaces hundreds of sequential handle operations,
       // and locators do not keep detached DOM nodes alive between snapshots.
