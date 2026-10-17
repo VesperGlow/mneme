@@ -53,9 +53,11 @@ bash scripts/start.sh
 
 GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vesperglow/mneme-api` 与 `ghcr.io/vesperglow/mneme-models`。默认使用 `latest`；固定部署版本时，先 `export MNEME_IMAGE_TAG=sha-完整提交SHA`，再执行同样的拉取和安装命令。私有 GHCR 包需要先用具有 `read:packages` 权限的 GitHub Token 执行 `podman login ghcr.io -u VesperGlow`；也可以在 GitHub 包设置中改为公开。首次发布的包默认私有，详见 [GHCR 说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。从源码构建时，用 `bash scripts/build.sh` 代替拉取步骤，仍仅构建 amd64。
 
-首次启动会下载约 2 GB 模型文件，取决于网络需要几分钟。默认先从 Hugging Face 下载，连接失败、HTTP 错误或校验失败后自动切换魔搭 ModelScope；切换成功后，本次启动优先使用可用源。权重、分词器、配置和 GTE 自定义代码均固定版本并校验 SHA-256，完整文件验证后才启用；下载中断可续传。已有完整缓存直接校验加载，无需联网。进度和源切换会记录在 `podman logs -f mneme-models` 中。
+模型镜像已内置两个模型的权重、分词器、配置和 GTE 自定义代码，模型文件约 1.8 GB。首次拉取镜像较大，启动和重启无需访问 Hugging Face 或魔搭。模型固定版本并校验 SHA-256，验证后在 CPU 上加载；`podman logs -f mneme-models` 会显示校验和加载阶段。
 
-模型文件保存在持久卷中，没有打入镜像。安装脚本保留已有 `~/.config/mneme/config.toml`。需要代理时，可在模型 Quadlet 添加对应的代理环境变量；源顺序可通过 `Environment=MNEME_MODEL_SOURCES=modelscope,huggingface` 调整，默认无需配置。不要改动固定模型 revision。
+内置模型位于只读的 `/opt/mneme-models/hub`，不会被已有 `/models` 持久卷遮挡，也不需要向旧卷复制权重；默认 `HF_HUB_OFFLINE=1`，临时代码缓存写入 `/tmp`。现有 Quadlet 和 `.env` 可直接沿用。安装脚本保留已有 `~/.config/mneme/config.toml`。
+
+模型下载在镜像构建端完成：先 Hugging Face，失败后自动切换魔搭，使用分段请求和有限次数的断流续传重试。自建镜像可通过 `--build-arg MNEME_MODEL_SOURCES=modelscope,huggingface` 调整构建下载源。固定版本及校验清单见 `services/models/artifacts.json`，不要直接替换模型文件或 revision。
 
 所有容器属于 `mneme` Pod，共用网络命名空间：内部地址为 `127.0.0.1:7474` 和 `127.0.0.1:8090`。宿主机只发布本机 `127.0.0.1:8080`（API/Console）和 `127.0.0.1:8081`（仅 QQ 回调）；QQ 未配置时不启动第二个监听。需要远程使用 Console 时可通过 SSH 转发：`ssh -L 8080:127.0.0.1:8080 user@server`。
 
@@ -128,7 +130,8 @@ SSE 事件依次为 `meta`、多次 `delta`、`done`；失败时发送 `error`�
 |---|---|
 | Podman volume `mneme-data` | SQLite、WAL、锁文件，唯一事实源 |
 | Podman volume `mneme-neo4j-data` | 图谱、索引、Neo4j 认证数据库 |
-| Podman volume `mneme-model-cache` | 固定版本的模型与 GTE 代码缓存 |
+| 模型镜像 `/opt/mneme-models/hub` | 固定版本的模型、分词器与 GTE 代码 |
+| Podman volume `mneme-model-cache` | 历史下载缓存与断点，兼容保留 |
 | `~/.config/mneme/` | 人格/检索配置及权限为 0600 的服务密钥 |
 
 正常停止、重启、重建容器和更新镜像不会删除命名卷。不要运行 `podman volume prune` 清理仍需要的数据。SQLite 使用 WAL + `synchronous=FULL`、外键、数据库事务和单实例文件锁；原始消息保存为 UTF-8。数据库与备份不做应用层加密，部署时可使用加密磁盘，备份存到受控位置。
@@ -160,7 +163,7 @@ export MNEME_IMAGE_TAG=sha-完整提交SHA
 bash scripts/install.sh
 ```
 
-归档内使用同一 SHA 标签，无需 GHCR 登录。首次下载模型和拉取 Neo4j 仍需要网络。更新时先拉取目标版本，再安装对应 Quadlet 并执行 `systemctl --user restart mneme.target`；脚本保留配置和持久卷。
+归档内使用同一 SHA 标签，无需 GHCR 登录，模型归档已包含全部模型文件。拉取 Neo4j 和访问外部 LLM 仍需要网络。更新时先拉取目标版本，再安装对应 Quadlet 并执行 `systemctl --user restart mneme.target`；脚本保留配置和持久卷。
 
 ```bash
 cargo fmt --all -- --check
@@ -170,7 +173,7 @@ python3 -m py_compile services/models/*.py scripts/*.py
 python3 -m unittest discover -s tests -p 'test_*.py'
 # 构建模型镜像后，用真实 CPU 模型与临时 Neo4j 运行集成测试：
 bash scripts/smoke-services.sh
-# 完整 Pod 生命周期测试：先预热模型缓存，再验证离线模型、整个 Pod 重启和在线备份。
+# 完整 Pod 生命周期测试：验证内置模型离线加载、整个 Pod 重启和在线备份。
 python3 scripts/smoke-pod.py
 ```
 

@@ -29,6 +29,9 @@ class ModelArtifactsTest(unittest.TestCase):
                      'modelscope_repo': 'fixture/mirror', 'files': {'model.safetensors': self.record}}
         self.modes = {'huggingface': 'good', 'modelscope': 'good'}
         self.requests = []
+        sleeper = patch.object(artifacts.time, 'sleep')
+        sleeper.start()
+        self.addCleanup(sleeper.stop)
         test = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -39,15 +42,19 @@ class ModelArtifactsTest(unittest.TestCase):
                 source = self.path.split('/')[1]
                 test.requests.append((source, dict(self.headers)))
                 mode = test.modes[source]
+                if mode == 'disconnect_once' and sum(s == source for s, _ in test.requests) == 1:
+                    mode = 'truncated'
                 if mode == 'failed':
                     self.send_response(503)
                     self.end_headers()
                     self.wfile.write(b'never-print-private-upstream-body-or-signed-query')
                     return
-                offset = int(self.headers.get('Range', 'bytes=0-')[6:-1])
+                start, stop = self.headers.get('Range', 'bytes=0-')[6:].split('-', 1)
+                offset = int(start)
+                end = min(int(stop), len(test.body) - 1) if stop else len(test.body) - 1
                 if mode == 'ignore_range':
-                    offset = 0
-                body = test.body[offset:]
+                    offset, end = 0, len(test.body) - 1
+                body = test.body[offset:end + 1]
                 if mode == 'corrupt':
                     body = b'x' * len(body)
                 ranged = bool(self.headers.get('Range')) and mode != 'ignore_range'
@@ -55,10 +62,10 @@ class ModelArtifactsTest(unittest.TestCase):
                 self.send_header('Content-Length', str(len(body)))
                 if ranged:
                     start = 0 if mode == 'wrong_range' else offset
-                    self.send_header('Content-Range', f'bytes {start}-{len(test.body) - 1}/{len(test.body)}')
+                    self.send_header('Content-Range', f'bytes {start}-{end}/{len(test.body)}')
                 self.end_headers()
                 if mode == 'truncated':
-                    self.wfile.write(body[:artifacts.CHUNK_SIZE * 2])
+                    self.wfile.write(body[:min(artifacts.CHUNK_SIZE * 2, len(body) - 1)])
                     self.wfile.flush()
                     self.connection.shutdown(socket.SHUT_WR)
                 else:
@@ -142,7 +149,7 @@ class ModelArtifactsTest(unittest.TestCase):
     def test_existing_partial_resumes_at_exact_offset(self):
         self.partial('huggingface').write_bytes(self.body[:10000])
         self.assertEqual(self.ensure().read_bytes(), self.body)
-        self.assertEqual(self.requests[0][1]['Range'], 'bytes=10000-')
+        self.assertTrue(self.requests[0][1]['Range'].startswith('bytes=10000-'))
 
     def test_server_ignoring_range_restarts_without_appending(self):
         self.partial('huggingface').write_bytes(b'broken prefix')
@@ -155,17 +162,51 @@ class ModelArtifactsTest(unittest.TestCase):
         self.modes['huggingface'] = 'wrong_range'
         self.assertEqual(self.ensure().read_bytes(), self.body)
         self.assertEqual(self.partial('huggingface').read_bytes(), self.body[:10000])
-        self.assertNotIn('Range', self.requests[-1][1])
+        self.assertTrue(self.requests[-1][1]['Range'].startswith('bytes=0-'))
 
     def test_interruption_preserves_partial_for_restart_and_never_publishes_it(self):
         self.modes = dict.fromkeys(self.modes, 'truncated')
         with self.assertRaises(RuntimeError):
             self.ensure()
         self.assertFalse(self.target().exists())
-        self.assertEqual(self.partial('huggingface').stat().st_size, artifacts.CHUNK_SIZE * 2)
+        saved = self.partial('huggingface').stat().st_size
+        self.assertGreater(saved, 0)
+        self.assertLess(saved, len(self.body))
         self.modes['huggingface'] = 'good'
         self.assertEqual(self.ensure().read_bytes(), self.body)
-        self.assertEqual(self.requests[-1][1]['Range'], f'bytes={artifacts.CHUNK_SIZE * 2}-')
+        self.assertTrue(self.requests[-1][1]['Range'].startswith(f'bytes={saved}-'))
+
+    def test_transient_disconnect_resumes_same_source_without_restarting_service(self):
+        self.modes['huggingface'] = 'failed'
+        self.modes['modelscope'] = 'disconnect_once'
+        self.assertEqual(self.ensure().read_bytes(), self.body)
+        self.assertEqual([source for source, _ in self.requests], ['huggingface', 'modelscope', 'modelscope'])
+        self.assertTrue(self.requests[-1][1]['Range'].startswith(f'bytes={artifacts.CHUNK_SIZE * 2}-'))
+
+    def test_bounded_ranges_finish_without_requesting_the_whole_large_file(self):
+        with patch.object(artifacts, 'RANGE_SIZE', artifacts.CHUNK_SIZE * 2):
+            self.assertEqual(self.ensure().read_bytes(), self.body)
+        self.assertGreater(len(self.requests), 1)
+        for _, headers in self.requests:
+            start, stop = map(int, headers['Range'][6:].split('-'))
+            self.assertLessEqual(stop - start + 1, artifacts.CHUNK_SIZE * 2)
+
+    def test_restart_prefers_existing_fallback_partial_before_failed_primary(self):
+        self.partial('modelscope').write_bytes(self.body[:10000])
+        self.modes['huggingface'] = 'failed'
+        self.assertEqual(self.ensure().read_bytes(), self.body)
+        self.assertEqual([source for source, _ in self.requests], ['modelscope'])
+        self.assertTrue(self.requests[0][1]['Range'].startswith('bytes=10000-'))
+
+    def test_bundled_models_work_without_writable_cache_or_network_and_reject_corruption(self):
+        path = self.ensure()
+        with patch.dict(os.environ, {'MNEME_BUNDLED_MODEL_CACHE': str(self.cache)}), \
+                patch.object(artifacts, 'MANIFEST', [self.spec]), \
+                patch.object(artifacts, 'Downloader', side_effect=AssertionError('network forbidden')):
+            self.assertEqual(artifacts.prepare_cache(), self.cache)
+            path.resolve().write_bytes(b'x' * len(self.body))
+            with self.assertRaisesRegex(RuntimeError, 'bundled model missing or corrupt'):
+                artifacts.prepare_cache()
 
     def test_offline_missing_or_corrupt_cache_fails_without_network(self):
         with self.assertRaisesRegex(RuntimeError, 'offline mode'):

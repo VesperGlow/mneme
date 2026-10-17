@@ -42,25 +42,25 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 
 若图谱被清空或恢复到较旧的快照，先确保 Neo4j 启动，再 POST `/v1/admin/reindex`。后台会重新创建索引并从 SQLite 向量和实体重建；无需再次调用外部 LLM。
 
-## 模型下载与多源回退
+## 内置模型与构建下载
 
-模型服务默认按 `huggingface,modelscope` 下载。主源连接失败、HTTP 错误、文件大小或 SHA-256 校验失败时尝试下一个源；某个源成功后，本次启动后续文件优先使用该源。每次连接超时为 5 秒、读取超时为 15 秒，不经过 Hugging Face SDK 的 Xet/多轮退避重试。多个 DNS 地址和重定向可能使一次失败的实际耗时超过单次连接超时，日志会输出耗时和固定错误类别。
+发布的模型镜像内置两个模型以及分词器、配置、GTE 自定义代码，文件约 1.8 GB，默认严格离线加载。首次拉取镜像后，服务启动和重启都不访问外部模型下载站。GitHub 构建流程在 `--network none`、只读根文件系统下实际加载两个 CPU 模型，并验证 1024 维归一化向量和中文精排，通过后才发布。
 
-`services/models/artifacts.json` 固定了两个模型、分词器、配置及 GTE 自定义代码共 13 个文件的版本、大小和 SHA-256；魔搭映射也固定到相应提交。不会改用 `main`/`master` 或自动换模型。下载先写源独立的 `.part` 文件，完整校验和刷盘后才原子发布到原有 Hugging Face 缓存。中断文件可续传，校验失败文件丢弃，两个源都失败则启动失败；不会以残缺模型提供推理。
+内置文件在 `/opt/mneme-models/hub`，通过 `MNEME_BUNDLED_MODEL_CACHE` 定位；现有 `/models` 卷不会遮挡它们，旧缓存及断点文件原样保留。默认 `HF_HUB_OFFLINE=1`，启动逐一校验 SHA-256 后从镜像只读路径加载；自定义代码的临时缓存通过 `HF_MODULES_CACHE=/tmp/mneme-modules` 写入已有 `/tmp` tmpfs。缓存缺失或校验错误时明确启动失败，不会悄悄在部署机器重新联网下载。
 
-查看下载进度与 CPU 加载阶段：
+更新旧部署不需要调整 `.env` 或 Quadlet：
 
 ```bash
+podman pull ghcr.io/vesperglow/mneme-models:latest
+systemctl --user restart mneme-models.service
 podman logs -f mneme-models
 ```
 
-旧缓存会在启动时校验后直接复用，不必重新下载；已有部分下载文件会保留。所有文件准备好后，Transformers 仅从本地加载，避免再次绕过下载器访问外部源。若 Hugging Face 长期不可达，可在模型 Quadlet 的 `[Container]` 段添加：
+日志出现 `bundled model files verified` 后开始 CPU 加载，最终出现 `CPU embedding and reranker ready` 和 `Application startup complete`。
 
-```ini
-Environment=MNEME_MODEL_SOURCES=modelscope,huggingface
-```
+模型在镜像构建阶段下载，`services/models/artifacts.json` 固定共 13 个文件的版本、大小、SHA-256 和魔搭提交映射。默认先 Hugging Face，失败后魔搭。每个源使用独立 `.part` 文件，优先续传已有断点的源；按 8 MiB 分段请求，断流时逐步缩小到 1 MiB 并原地续传，单段最多尝试 5 次、退避 1/2/4/8 秒。每次连接超时 5 秒、读取超时 15 秒。认证、范围和校验错误直接换源；日志区分断流、连接、TLS 等固定类别，不打印签名 URL。完整大小和 SHA-256 校验通过后才刷盘并原子发布。
 
-然后运行 `systemctl --user daemon-reload` 和 `systemctl --user restart mneme-models.service`。只填 `modelscope` 可禁用 Hugging Face 尝试；默认不需要设置。不要把 `HF_ENDPOINT` 设置为魔搭地址，两者的下载 URL/API 格式不同。`HF_ENDPOINT` 仅覆盖 Hugging Face 通道；本地缓存齐全后可按下文设置 `HF_HUB_OFFLINE=1`。
+自建镜像可添加 `--build-arg MNEME_MODEL_SOURCES=modelscope,huggingface` 调整构建下载源，或仅填 `modelscope`。不要把 `HF_ENDPOINT` 设置为魔搭地址，两者的下载 URL/API 格式不同。直接在 Python 环境运行时，未设置 `MNEME_BUNDLED_MODEL_CACHE` 才会使用原有的下载及持久卷缓存路径；`HF_HUB_OFFLINE=1` 可要求仅使用已有缓存。
 
 ## 从 SQLite 备份恢复
 
@@ -101,7 +101,7 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 - `app.env` 和 `neo4j.env` 权限为 0600，配置目录为 0700；不要把 `.env` 或备份纳入 Git。具备本机同用户 Podman 权限的主体能够读取容器环境，按操作系统用户边界管理访问。
 - 修改 API Token 或外部 LLM Key 后，重新执行安装脚本并重启 API。修改 `.env` 中的 Neo4j 密码不会修改已有数据卷里的认证信息，需要通过 Neo4j 管理命令先修改数据库密码，再同步环境配置。
 - 预构建镜像仅支持 `linux/amd64`，默认 `latest` 跟随 main。生产部署建议在拉取和安装前设置 `MNEME_IMAGE_TAG=sha-完整提交SHA`，固定 API 与模型镜像到同一提交；Neo4j tag、Rust `Cargo.lock`、Python constraints lock、模型权重及自定义代码 revision 均固定。升级依赖前运行全部常规与真实模型测试，备份 SQLite，再拉取或构建并重启。已发布迁移不可改写，新增编号迁移；数据库结构升级后回退二进制需要匹配备份。
-- 初次成功下载之后模型缓存已经完整，可以给模型 Quadlet 添加 `Environment=HF_HUB_OFFLINE=1`；离线重启仍会从固定缓存加载模型。外部 LLM 仍需要网络。
+- 发布的模型镜像默认已设置 `HF_HUB_OFFLINE=1`，从镜像内置的固定模型离线启动；外部 LLM 仍需要网络。
 - 若替换 Embedding 模型/维度，必须重新计算全部持久化向量并重建 Neo4j 索引，不能仅修改模型服务名称。v1 固定为 Qwen3 1024 维，不暴露不安全的热切换。
 
 CPU 延迟依赖机器、文本长度和队列。默认 512 token、Embedding batch=2、Reranker batch=4 优先控制峰值；大量旧任务时先检查提供商配额和模型队列，再调整并发，避免在 4 核机器上让多个模型进程争抢 CPU。

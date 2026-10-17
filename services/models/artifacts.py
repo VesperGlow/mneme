@@ -19,6 +19,9 @@ CODE_REVISION = MANIFEST[2]["revision"]
 LOG = logging.getLogger("uvicorn.error")
 CHUNK_SIZE = 64 * 1024
 TIMEOUT = (5, 15)  # No library backoff or Xet retry loop before trying the next source.
+RANGE_SIZE = 8 * 1024 * 1024
+MIN_RANGE_SIZE = 1024 * 1024
+STREAM_ATTEMPTS = 5
 
 
 class ArtifactError(Exception):
@@ -50,6 +53,10 @@ def failure_category(error):
         return str(error)
     if isinstance(error, requests.exceptions.SSLError):
         return "tls"
+    if isinstance(error, requests.exceptions.ChunkedEncodingError):
+        return "stream_interrupted"
+    if isinstance(error, requests.exceptions.ContentDecodingError):
+        return "content_decoding"
     if isinstance(error, requests.Timeout):
         return "timeout"
     if isinstance(error, requests.HTTPError):
@@ -83,38 +90,66 @@ class Downloader:
         if offset >= artifact["size"]:
             partial.unlink()
             offset = 0
-        headers = {"Accept-Encoding": "identity", "User-Agent": "mneme-models/0.1"}
-        if offset:
-            headers["Range"] = f"bytes={offset}-"
-        with self.session.get(url, headers=headers, stream=True, timeout=TIMEOUT) as response:
-            response.raise_for_status()
-            if response.status_code == 206:
-                match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", ""))
-                if (not match or int(match[1]) != offset or int(match[2]) < offset
-                        or int(match[2]) >= artifact["size"] or int(match[3]) != artifact["size"]):
-                    raise ArtifactError("invalid_range")
-            elif response.status_code == 200:
-                offset = 0  # Servers ignoring Range must restart, rather than append.
-            else:
-                raise ArtifactError("unexpected_status")
-            LOG.info("model download connected source=%s host=%s resume_bytes=%d total_bytes=%d",
-                     source, urlsplit(response.url).hostname, offset, artifact["size"])
-            last_report = time.monotonic()
-            with partial.open("ab" if offset else "wb") as handle:
-                for chunk in response.iter_content(CHUNK_SIZE):
-                    if offset + len(chunk) > artifact["size"]:
-                        raise ArtifactError("oversized_body")
-                    handle.write(chunk)
-                    offset += len(chunk)
-                    now = time.monotonic()
-                    if now - last_report >= 10:
-                        LOG.info("model download progress source=%s bytes=%d total_bytes=%d percent=%.1f",
-                                 source, offset, artifact["size"], offset * 100 / artifact["size"])
-                        last_report = now
-                handle.flush()
-                os.fsync(handle.fileno())
-        if offset != artifact["size"]:
-            raise ArtifactError("incomplete_body")
+        last_report = time.monotonic()
+        attempts, range_size = 0, RANGE_SIZE
+        while offset < artifact["size"]:
+            before, connected = offset, False
+            end = min(offset + range_size, artifact["size"]) - 1
+            headers = {"Accept-Encoding": "identity", "User-Agent": "mneme-models/0.1",
+                       "Range": f"bytes={offset}-{end}"}
+            try:
+                # Resolve a fresh signed CDN URL for every range/retry.
+                with self.session.get(url, headers=headers, stream=True, timeout=TIMEOUT) as response:
+                    response.raise_for_status()
+                    if response.status_code == 206:
+                        match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", ""))
+                        if (not match or int(match[1]) != offset or int(match[2]) < offset
+                                or int(match[2]) > end or int(match[3]) != artifact["size"]):
+                            raise ArtifactError("invalid_range")
+                        response_end = int(match[2]) + 1
+                    elif response.status_code == 200:
+                        offset, response_end = 0, artifact["size"]
+                    else:
+                        raise ArtifactError("unexpected_status")
+                    connected = True
+                    LOG.info("model download connected source=%s host=%s resume_bytes=%d total_bytes=%d",
+                             source, urlsplit(response.url).hostname, offset, artifact["size"])
+                    with partial.open("ab" if offset else "wb") as handle:
+                        for chunk in response.iter_content(CHUNK_SIZE):
+                            if offset + len(chunk) > response_end:
+                                raise ArtifactError("oversized_body")
+                            handle.write(chunk)
+                            offset += len(chunk)
+                            now = time.monotonic()
+                            if now - last_report >= 10:
+                                LOG.info("model download progress source=%s bytes=%d total_bytes=%d percent=%.1f",
+                                         source, offset, artifact["size"], offset * 100 / artifact["size"])
+                                last_report = now
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                if offset != response_end:
+                    raise ArtifactError("incomplete_body")
+                attempts = 0
+            except (requests.RequestException, ArtifactError) as error:
+                retryable = isinstance(error, (requests.ConnectionError, requests.Timeout,
+                                               requests.exceptions.ChunkedEncodingError))
+                if isinstance(error, requests.exceptions.SSLError):
+                    retryable = False
+                if isinstance(error, requests.HTTPError):
+                    retryable = error.response.status_code == 429 or error.response.status_code >= 500
+                if isinstance(error, ArtifactError):
+                    retryable = str(error) == "incomplete_body"
+                attempts += 1
+                if not retryable or not (connected or before) or attempts >= STREAM_ATTEMPTS:
+                    raise
+                offset = partial.stat().st_size if partial.exists() else 0
+                range_size = max(MIN_RANGE_SIZE, range_size // 2)
+                delay = min(2 ** (attempts - 1), 8)
+                LOG.warning("model download resuming source=%s category=%s error_type=%s bytes=%d "
+                            "retry=%d/%d delay_seconds=%d range_bytes=%d",
+                            source, failure_category(error), type(error).__name__, offset,
+                            attempts, STREAM_ATTEMPTS - 1, delay, range_size)
+                time.sleep(delay)
 
     def publish(self, blob, target):
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +173,13 @@ class Downloader:
         blob.parent.mkdir(parents=True, exist_ok=True)
         # Partials stay separate by source; a broken source cannot poison the
         # next one's prefix. Hugging Face's own .incomplete files are untouched.
-        for source in tuple(self.sources):
+        # A previous process may have already downloaded most of a fallback
+        # file. Resume that source before probing an unreachable primary again.
+        def partial_size(source):
+            path = blob.with_name(blob.name + f".{source}.part")
+            return path.stat().st_size if path.exists() else 0
+
+        for source in sorted(self.sources, key=lambda source: -partial_size(source)):
             partial = blob.with_name(blob.name + f".{source}.part")
             started = time.monotonic()
             LOG.info("model download starting model=%s file=%s source=%s", spec["repo"], name, source)
@@ -163,6 +204,16 @@ class Downloader:
 
 
 def prepare_cache():
+    bundled = os.environ.get("MNEME_BUNDLED_MODEL_CACHE")
+    if bundled:
+        cache = Path(bundled)
+        for spec in MANIFEST:
+            snapshot = cache / ("models--" + spec["repo"].replace("/", "--")) / "snapshots" / spec["revision"]
+            for name, artifact in spec["files"].items():
+                if not verified(snapshot / name, artifact):
+                    raise RuntimeError(f"bundled model missing or corrupt: {spec['repo']}/{name}")
+        LOG.info("bundled model files verified; using local image assets without downloads")
+        return cache
     sources = [source.strip() for source in os.environ.get(
         "MNEME_MODEL_SOURCES", "huggingface,modelscope").split(",")]
     if not sources or len(sources) != len(set(sources)) or any(

@@ -1,4 +1,4 @@
-FROM docker.io/library/python:3.12-slim-trixie
+FROM docker.io/library/python:3.12-slim-trixie AS runtime
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 HF_HOME=/models \
     TOKENIZERS_PARALLELISM=false OMP_NUM_THREADS=3 MKL_NUM_THREADS=3 \
     HF_HUB_DISABLE_TELEMETRY=1 DO_NOT_TRACK=1
@@ -6,6 +6,19 @@ WORKDIR /app
 COPY services/models/requirements.txt services/models/requirements.lock.txt ./
 RUN pip install --no-cache-dir torch==2.8.0+cpu --index-url https://download.pytorch.org/whl/cpu -c requirements.lock.txt \
     && pip install --no-cache-dir -r requirements.txt -c requirements.lock.txt
+
+# Cache the pinned weights independently of the API / inference source code.
+# Downloads and failover happen on the build host, never on first deployment.
+FROM runtime AS model-assets
+ARG MNEME_MODEL_SOURCES=huggingface,modelscope
+COPY services/models/artifacts.py services/models/artifacts.json /asset-loader/
+RUN HF_HOME=/opt/mneme-models HF_HUB_OFFLINE=0 MNEME_MODEL_SOURCES="${MNEME_MODEL_SOURCES}" PYTHONPATH=/asset-loader \
+    python -c 'import logging; logging.basicConfig(level=logging.INFO); from artifacts import prepare_cache; prepare_cache()'
+
+FROM runtime
+ENV MNEME_BUNDLED_MODEL_CACHE=/opt/mneme-models/hub HF_HUB_OFFLINE=1 \
+    HF_MODULES_CACHE=/tmp/mneme-modules
+COPY --from=model-assets /opt/mneme-models/hub /opt/mneme-models/hub
 COPY services/models/engine.py services/models/app.py services/models/artifacts.py services/models/artifacts.json ./
 EXPOSE 8090
 CMD ["uvicorn", "app:app", "--host", "127.0.0.1", "--port", "8090", "--workers", "1", "--no-access-log"]
