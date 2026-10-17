@@ -9,7 +9,7 @@ Console 内置在 Mneme 的 Axum 服务中。启动现有服务后打开 **http:
 - **详情**：原始内容、人工/自动来源、重要性、可信度、时间、实体、索引同步状态、最近 100 条来源消息及最近 100 次相关修订。对话来源可展开查看原始用户消息。旧版本通过相同属性键串联；人工编辑之前的证据仅用于追溯，不自动成为新内容的证明。
 - **检索实验室**：使用与实时对话完全相同的管线，展示 Neo4j 向量、CJK 全文、实体匹配、图谱扩展、近期 SQLite 补充候选、RRF 分数、Reranker 分数、最终得分和筛除原因。各通道原始分数不可直接比较；精排服务异常时显示回退状态。删除的内容不会在调试候选中回显。
 - **系统状态**：LLM、Neo4j、Embedding、Reranker 的连通/加载状态，探测耗时，当前进程已完成请求的平均耗时、次数、失败数，运行时间、SQLite 大小、任务队列。可重新排队失败任务或安排索引重建。
-- **Agent 设置**：编辑名字、性格描述、交流方式和边界，保存后下一轮对话生效；设置、修改或移除独立 WebUI 登录密码；输入 `RESET` 确认重置 Agent，可同时恢复配置文件中的默认性格。
+- **Agent 设置**：编辑名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话生效；设置、修改或移除独立 WebUI 登录密码；输入 `RESET` 确认重置 Agent，可同时恢复配置文件中的默认性格。
 
 桌面端使用侧边导航和详情抽屉，移动端使用底部导航与自适应列表。支持键盘焦点、原生对话框、Escape 关闭以及 `/` 快速进入搜索。
 
@@ -30,6 +30,8 @@ Token 仍是原有单用户管理凭证，授权者可以访问全部对话和�
 ## 性格与重置
 
 WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件的 `[persona]`，HTTP 与 QQ 对话均使用同一份即时设置。各项合计最多 6000 字，名字最多 80 字，且须符合当前上下文容量。点击“填入配置文件默认值”只填充表单，保存后生效。
+
+“输出格式 Prompt”对应 `[persona].output_format`，可以填写回复结构、是否使用 Markdown 或 JSON 等格式要求，例如“先给一句结论，再用纯文本分段说明”。非空时每轮加入系统提示词，留空表示不额外约束输出格式；这是对模型的提示，不做响应格式的强制校验。该字段与其他性格项一起保存、恢复默认值并计算字符预算；旧配置和旧版保存的性格无需补填。
 
 重置会在同一事务中删除所有会话、原始对话、长期记忆、来源、修订记录、遗忘屏障、后台任务和 QQ 收发队列。保留服务连接配置、API Token、WebUI 密码、QQ 账号归属及模型选型缓存；QQ 下一条新消息会重新建立会话。默认保留当前性格，勾选后可恢复文件默认值。界面要求输入 `RESET`，取消不会修改数据。
 
@@ -63,7 +65,7 @@ WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件�
 | POST | `/v1/console/login` | `{"password":"…"}`，返回 token 和 expires_in；不要求 Bearer |
 | POST | `/v1/console/logout` | 撤销当前密码会话 |
 | GET | `/v1/console/settings` | persona、default_persona、password_configured、graph_cleanup_pending；不返回密码哈希或密钥 |
-| PUT | `/v1/console/persona` | `{"name":"…","description":"…","style":"…","boundaries":"…"}` |
+| PUT | `/v1/console/persona` | `{"name":"…","description":"…","style":"…","boundaries":"…","output_format":"…"}`；output_format 可省略，默认为空 |
 | PUT | `/v1/console/password` | `{"current_password":"…","new_password":"…"}`；new_password 为空表示移除，API Token 可免当前密码 |
 | POST | `/v1/admin/reset` | `{"confirmation":"RESET","reset_persona":false}`，返回删除条数和图谱清理排队状态 |
 

@@ -84,3 +84,9 @@ Console 的界面、CRUD 与检索调试都通过现有 Axum API 读取 SQLite �
 宿主机 Chromium 实际通过桌面与 390px 手机完整流程：性格保存及 HTML 转义、密码确认不一致提示、独立密码登录与移除、取消重置保留记忆、确认重置清空记忆且保留性格。原有 CRUD、来源/修订、检索调试、系统状态和闲置锁定继续通过；浏览器没有脚本或 CSP 错误。新增截图为忽略的 `artifacts/console-settings.png`、`console-mobile-settings.png` 和 `console-mobile-reset.png`。
 
 本次使用临时 SQLite 和本地确定性上游替身，没有操作生产数据、构建或部署生产镜像；真实 CPU 模型/Neo4j 集成测试仍为显式跳过。
+
+## 性格输出格式 Prompt（2026-10-17）
+
+30 项 Rust 常规测试、严格 Clippy、格式及 JavaScript 语法检查通过。验证输出格式要求每轮进入系统提示词、保存和重启持久化、清空后移除额外指令、计入性格总长度和上下文预算，以及旧 TOML、旧版 SQLite 性格和省略该字段的旧客户端请求继续兼容。
+
+真实 Chromium 的桌面与 390px 手机流程通过，覆盖多行输出格式 Prompt 保存与重新加载、文本转义、重置时保留和恢复文件默认值。测试使用临时 SQLite 和本地确定性上游，未验证真实 LLM 对格式指令的遵循质量。

@@ -65,6 +65,72 @@ async fn login(router: &Router, password: &str) -> String {
 }
 
 #[tokio::test]
+async fn output_format_is_optional_in_legacy_configuration_and_saved_personas() {
+    let legacy: Config =
+        toml::from_str(&include_str!("../config/default.toml").replace("output_format = \"\"", ""))
+            .unwrap();
+    assert!(legacy.persona.output_format.is_empty());
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let config = config(&temp, &base);
+    let mut saved = serde_json::to_value(&legacy.persona).unwrap();
+    saved.as_object_mut().unwrap().remove("output_format");
+    saved["name"] = json!("旧版保存的性格");
+    let store = mneme::store::Store::open(&config.database).await.unwrap();
+    sqlx::query("INSERT INTO metadata(key,value) VALUES('console.persona',?)")
+        .bind(saved.to_string())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+    drop(store);
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config, rx).await.unwrap();
+    let router = api::router(app.clone());
+    let settings = call(&router, TOKEN, "GET", "/v1/console/settings", json!({}))
+        .await
+        .1;
+    assert_eq!(settings["persona"]["name"], saved["name"]);
+    assert_eq!(settings["persona"]["output_format"], "");
+    let user = Message {
+        id: id(),
+        session_id: id(),
+        turn_id: id(),
+        role: "user".into(),
+        content: "你好".into(),
+        created_at: now(),
+    };
+    assert!(
+        !api::build_context(&app, vec![], &user, &[])[0]
+            .content
+            .contains("输出格式要求：")
+    );
+    let mut formatted = saved.clone();
+    formatted["output_format"] = json!("只使用纯文本回答。");
+    assert_eq!(
+        call(&router, TOKEN, "PUT", "/v1/console/persona", formatted)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert!(
+        api::build_context(&app, vec![], &user, &[])[0]
+            .content
+            .contains("只使用纯文本回答。")
+    );
+    // Older clients can omit the field; clearing it removes the extra system instruction.
+    let (status, cleared) = call(&router, TOKEN, "PUT", "/v1/console/persona", saved).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(cleared["persona"]["output_format"], "");
+    assert!(
+        !api::build_context(&app, vec![], &user, &[])[0]
+            .content
+            .contains("输出格式要求：")
+    );
+    fake.abort();
+}
+
+#[tokio::test]
 async fn persona_applies_to_context_and_survives_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, fake) = common::fake_services().await;
@@ -86,6 +152,7 @@ async fn persona_applies_to_context_and_survives_restart() {
     let mut persona = serde_json::to_value(&config.persona).unwrap();
     persona["name"] = json!("小满 <script>");
     persona["style"] = json!("简洁、俏皮，认真倾听。");
+    persona["output_format"] = json!("先给结论，再用纯文本分段说明。\n不使用 Markdown 表格。");
     assert_eq!(
         call(
             &router,
@@ -109,6 +176,11 @@ async fn persona_applies_to_context_and_survives_restart() {
     let context = api::build_context(&app, vec![], &user, &[]);
     assert!(context[0].content.contains("小满 <script>"));
     assert!(context[0].content.contains("简洁、俏皮"));
+    assert!(
+        context[0]
+            .content
+            .contains("输出格式要求：\n先给结论，再用纯文本分段说明。\n不使用 Markdown 表格。")
+    );
     let mut invalid = persona.clone();
     invalid["name"] = json!(" ");
     assert_eq!(
@@ -117,14 +189,16 @@ async fn persona_applies_to_context_and_survives_restart() {
             .0,
         StatusCode::BAD_REQUEST
     );
-    let mut oversized = persona.clone();
-    oversized["description"] = json!("字".repeat(6001));
-    assert_eq!(
-        call(&router, TOKEN, "PUT", "/v1/console/persona", oversized)
-            .await
-            .0,
-        StatusCode::BAD_REQUEST
-    );
+    for length in [5000, 6000] {
+        let mut oversized = persona.clone();
+        oversized["output_format"] = json!("字".repeat(length));
+        assert_eq!(
+            call(&router, TOKEN, "PUT", "/v1/console/persona", oversized)
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
     assert_eq!(
         call(&router, TOKEN, "GET", "/v1/console/settings", json!({}))
             .await

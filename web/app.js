@@ -205,7 +205,7 @@
   }
   async function settingsPage(epoch) {
     const data = await api('/v1/console/settings'); if (epoch !== state.epoch) return;
-    const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '性格描述', 6000, '身份、个性与陪伴方式'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界']];
+    const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '性格描述', 6000, '身份、个性与陪伴方式'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界'], ['output_format', '输出格式 Prompt', 6000, '例如：使用纯文本，分段回复，不使用 Markdown。留空表示不额外约束输出格式。']];
     $('#page').innerHTML = heading() + `<div class="settings-stack">
       <section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
       <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}

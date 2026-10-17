@@ -99,6 +99,8 @@ pub struct Persona {
     pub description: String,
     pub style: String,
     pub boundaries: String,
+    #[serde(default)]
+    pub output_format: String,
 }
 
 impl Config {
@@ -282,7 +284,8 @@ impl Config {
         let persona_chars = self.persona.name.chars().count()
             + self.persona.description.chars().count()
             + self.persona.style.chars().count()
-            + self.persona.boundaries.chars().count();
+            + self.persona.boundaries.chars().count()
+            + self.persona.output_format.chars().count();
         ensure!(
             persona_chars <= 6000 && !self.persona.name.trim().is_empty(),
             "invalid persona size or name"
