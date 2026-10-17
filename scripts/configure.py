@@ -11,6 +11,7 @@ ALLOWED = {
     'MNEME_API_TOKEN', 'MNEME_LLM_API_KEY', 'MNEME_NEO4J_PASSWORD',
     'MNEME_LLM_BASE_URL', 'MNEME_LLM_MODEL', 'MNEME_QQ_APP_ID',
     'MNEME_QQ_APP_SECRET', 'MNEME_QQ_SANDBOX', 'MNEME_QQ_LISTEN',
+    'MNEME_TOOLS_TOKEN', 'MNEME_TOOLS_ENABLED', 'MNEME_TOOLS_URL',
 }
 
 
@@ -75,12 +76,17 @@ def configure(source, dest):
     os.chmod(dest, 0o700)
     old = read_env(dest / 'app.env') if (dest / 'app.env').exists() else {}
     generated = {}
-    for key in ('MNEME_API_TOKEN', 'MNEME_NEO4J_PASSWORD'):
+    for key in ('MNEME_API_TOKEN', 'MNEME_NEO4J_PASSWORD', 'MNEME_TOOLS_TOKEN'):
         if not values.get(key):
             values[key] = old.get(key) or secrets.token_urlsafe(32)
             generated[key] = values[key]
     if len(values['MNEME_API_TOKEN']) < 32 or len(values['MNEME_NEO4J_PASSWORD']) < 16:
         raise ValueError('API Token 至少 32 字符，Neo4j 密码至少 16 字符。')
+    if len(values['MNEME_TOOLS_TOKEN']) < 32 or values['MNEME_TOOLS_TOKEN'] == values['MNEME_API_TOKEN']:
+        raise ValueError('工具服务需要与 API Token 不同的至少 32 字符凭证。')
+    values['MNEME_TOOLS_ENABLED'] = values.get('MNEME_TOOLS_ENABLED', old.get('MNEME_TOOLS_ENABLED', 'false'))
+    if values['MNEME_TOOLS_ENABLED'] not in ('true', 'false'):
+        raise ValueError('MNEME_TOOLS_ENABLED 必须为 true 或 false。')
     if generated:
         lines = source.read_text().splitlines()
         for key, value in generated.items():
@@ -94,6 +100,7 @@ def configure(source, dest):
         write_private(source, '\n'.join(lines) + '\n')
     values['MNEME_LLM_MODEL'] = values.get('MNEME_LLM_MODEL') or 'auto'
     write_private(dest / 'app.env', ''.join(f'{key}={value}\n' for key, value in values.items() if value))
+    write_private(dest / 'tools.env', f"MNEME_TOOLS_TOKEN={values['MNEME_TOOLS_TOKEN']}\n")
     write_private(dest / 'neo4j.env', f"NEO4J_AUTH=neo4j/{values['MNEME_NEO4J_PASSWORD']}\n")
     write_private(dest / 'console-token', values['MNEME_API_TOKEN'] + '\n')
     config = dest / 'config.toml'

@@ -1,0 +1,27 @@
+[Unit]
+Description=Mneme browser tools (Chromium / CDP, shared Pod network)
+PartOf=mneme.target
+
+[Container]
+Image=ghcr.io/vesperglow/mneme-tools:latest
+ContainerName=mneme-tools
+Pod=mneme.pod
+User=1000:1000
+EnvironmentFile=%h/.config/mneme/tools.env
+Environment=MNEME_TOOLS_PORT=8091
+NoNewPrivileges=true
+DropCapability=ALL
+ReadOnly=true
+Tmpfs=/tmp:rw,noexec,nosuid,size=512m
+PidsLimit=256
+SeccompProfile=%h/.config/containers/systemd/mneme-tools-seccomp.json
+
+[Service]
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+MemoryMax=1536M
+CPUQuota=150%
+CPUWeight=40
+UMask=0077

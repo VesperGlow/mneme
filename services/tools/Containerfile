@@ -1,0 +1,10 @@
+FROM docker.io/library/node:24-trixie-slim
+RUN apt-get update && apt-get install -y --no-install-recommends chromium ca-certificates fonts-noto-cjk tini \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY services/tools/package.json services/tools/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+COPY services/tools/*.mjs services/tools/catalog.json ./
+USER 1000:1000
+ENV NODE_ENV=production HOME=/tmp MNEME_TOOLS_PORT=8091
+ENTRYPOINT ["/usr/bin/tini", "--", "node", "app.mjs"]

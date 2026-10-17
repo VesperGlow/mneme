@@ -330,6 +330,9 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         .map_err(anyhow::Error::from)?;
     // Foreign-key order matters. Keep deployment configuration, credentials and model selection.
     for statement in [
+        "DELETE FROM tool_calls",
+        "DELETE FROM message_assets",
+        "DELETE FROM assets",
         "DELETE FROM jobs",
         "DELETE FROM qq_inbox",
         "DELETE FROM qq_sessions",
@@ -343,6 +346,7 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         "DELETE FROM turns",
         "DELETE FROM sessions",
         "INSERT INTO metadata(key,value) VALUES('agent.graph_reset_pending','1') ON CONFLICT(key) DO UPDATE SET value='1'",
+        "INSERT INTO metadata(key,value) VALUES('tools.reset_pending','1') ON CONFLICT(key) DO UPDATE SET value='1'",
     ] {
         sqlx::query(statement)
             .execute(&mut *tx)

@@ -7,3 +7,4 @@ config/local.toml
 __pycache__
 artifacts
 dist
+**/node_modules

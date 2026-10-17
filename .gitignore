@@ -8,3 +8,4 @@ config/local.toml
 *.sqlite*
 /artifacts/
 /dist/
+node_modules/

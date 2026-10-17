@@ -526,6 +526,9 @@ pub async fn worker(app: App) {
         let activity = app.maintenance.read().await;
         let graph_clean = crate::settings::cleanup_graph(&app).await.is_ok();
         if maintenance_at <= Instant::now() {
+            if sqlx::query("DELETE FROM assets WHERE created_at < ? AND NOT EXISTS(SELECT 1 FROM message_assets WHERE asset_id=assets.id) AND NOT EXISTS(SELECT 1 FROM tool_calls WHERE json_extract(result,'$.asset_id')=assets.id)").bind(now()-86400).execute(&app.store.pool).await.is_err() {
+                tracing::warn!("unattached image cleanup failed");
+            }
             if let Err(_error) = app
                 .store
                 .expire(

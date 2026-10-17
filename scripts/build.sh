@@ -8,3 +8,5 @@ if [[ ! "$mneme_image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
 fi
 podman build --platform linux/amd64 -t "ghcr.io/vesperglow/mneme-api:$mneme_image_tag" -t localhost/mneme:0.1.0 -f Containerfile .
 podman build --platform linux/amd64 -t "ghcr.io/vesperglow/mneme-models:$mneme_image_tag" -t localhost/mneme-models:0.1.0 -f services/models/Containerfile .
+
+podman build --platform linux/amd64 -t "ghcr.io/vesperglow/mneme-tools:$mneme_image_tag" -f services/tools/Containerfile .

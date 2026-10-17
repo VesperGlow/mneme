@@ -1089,6 +1089,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "axum",
+ "base64 0.22.1",
  "chrono",
  "dotenvy",
  "ed25519-dalek",

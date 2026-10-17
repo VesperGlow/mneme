@@ -7,9 +7,9 @@
 检查：
 
 ```bash
-systemctl --user status mneme.target mneme-api mneme-models mneme-neo4j
-journalctl --user -u mneme-api -u mneme-models -u mneme-neo4j --since '15 min ago'
-podman stats --no-stream mneme-api mneme-models mneme-neo4j
+systemctl --user status mneme.target mneme-api mneme-models mneme-neo4j mneme-tools
+journalctl --user -u mneme-api -u mneme-models -u mneme-neo4j -u mneme-tools --since '15 min ago'
+podman stats --no-stream mneme-api mneme-models mneme-neo4j mneme-tools
 curl -sS -H "Authorization: Bearer $MNEME_API_TOKEN" http://127.0.0.1:8080/health/ready
 ```
 
@@ -43,6 +43,8 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 若图谱被清空或恢复到较旧的快照，先确保 Neo4j 启动，再 POST `/v1/admin/reindex`。后台会重新创建索引并从 SQLite 向量和实体重建；无需再次调用外部 LLM。
 
 ## 内置模型与构建下载
+
+浏览器工具镜像为 `ghcr.io/vesperglow/mneme-tools:latest`，加入已有 `mneme.pod`，无需发布新端口。工具状态和错误可在 Console 的“工具”页查看；单独重启可执行 `systemctl --user restart mneme-tools`。该服务使用用户命名空间沙箱，宿主机必须允许非特权用户命名空间；启动失败时检查内核/AppArmor 与 seccomp 日志，不要添加 `--no-sandbox` 或宿主机权限。验证码、目标站限流、页面不可提取会返回明确错误，可能需要更换搜索引擎或稍后重试。安装、接口、资源与共享网络限制见 [tools.md](tools.md)。
 
 发布的模型镜像内置两个模型以及分词器、配置、GTE 自定义代码，文件约 1.8 GB，默认严格离线加载。首次拉取镜像后，服务启动和重启都不访问外部模型下载站。GitHub 构建流程在 `--network none`、只读根文件系统下实际加载两个 CPU 模型，并验证 1024 维归一化向量和中文精排，通过后才发布。
 
@@ -98,10 +100,10 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 
 ## 密钥、升级与离线运行
 
-- `app.env` 和 `neo4j.env` 权限为 0600，配置目录为 0700；不要把 `.env` 或备份纳入 Git。具备本机同用户 Podman 权限的主体能够读取容器环境，按操作系统用户边界管理访问。
+- `app.env`、`tools.env` 和 `neo4j.env` 权限为 0600，配置目录为 0700；不要把 `.env` 或备份纳入 Git。具备本机同用户 Podman 权限的主体能够读取容器环境，按操作系统用户边界管理访问。
 - 修改 API Token 或外部 LLM Key 后，重新执行安装脚本并重启 API。修改 `.env` 中的 Neo4j 密码不会修改已有数据卷里的认证信息，需要通过 Neo4j 管理命令先修改数据库密码，再同步环境配置。
 - WebUI 密码可在 Console 的 Agent 设置中修改；忘记时选择 API Token 登录，再设置新密码或移除密码。无需修改服务环境或重新安装。WebUI 性格覆盖与密码哈希都随 SQLite 备份恢复；API Token 仍来自部署环境。
-- 预构建镜像仅支持 `linux/amd64`，默认 `latest` 跟随 main。生产部署建议在拉取和安装前设置 `MNEME_IMAGE_TAG=sha-完整提交SHA`，固定 API 与模型镜像到同一提交；Neo4j tag、Rust `Cargo.lock`、Python constraints lock、模型权重及自定义代码 revision 均固定。升级依赖前运行全部常规与真实模型测试，备份 SQLite，再拉取或构建并重启。已发布迁移不可改写，新增编号迁移；数据库结构升级后回退二进制需要匹配备份。
+- 预构建镜像仅支持 `linux/amd64`，默认 `latest` 跟随 main。生产部署建议在拉取和安装前设置 `MNEME_IMAGE_TAG=sha-完整提交SHA`，固定 API、模型与工具镜像到同一提交；Neo4j tag、Rust `Cargo.lock`、Python constraints lock、模型权重及自定义代码 revision 均固定。升级依赖前运行全部常规与真实模型测试，备份 SQLite，再拉取或构建并重启。已发布迁移不可改写，新增编号迁移；数据库结构升级后回退二进制需要匹配备份。
 - 发布的模型镜像默认已设置 `HF_HUB_OFFLINE=1`，从镜像内置的固定模型离线启动；外部 LLM 仍需要网络。
 - 若替换 Embedding 模型/维度，必须重新计算全部持久化向量并重建 Neo4j 索引，不能仅修改模型服务名称。v1 固定为 Qwen3 1024 维，不暴露不安全的热切换。
 

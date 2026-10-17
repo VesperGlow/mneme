@@ -4,6 +4,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 COPY migrations ./migrations
 COPY web ./web
+COPY services/tools/catalog.json ./services/tools/catalog.json
 RUN cargo build --release --locked
 
 FROM docker.io/library/debian:13-slim

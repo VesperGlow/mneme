@@ -10,6 +10,8 @@
 flowchart LR
     Client[中文终端 / HTTP 客户端] -->|Bearer + SSE| Rust[Rust / Axum]
     Rust -->|流式生成| LLM[外部兼容 API]
+    Rust -->|localhost HTTP / Tool Calling| Tools[mneme-tools / Chromium CDP]
+    Tools -->|真实浏览器| Web[搜索引擎 / 公开网页]
     Rust --> SQLite[(SQLite / WAL / FULL)]
     SQLite --> Worker[持久化后台任务]
     Worker -->|事实提取| LLM
@@ -25,11 +27,13 @@ flowchart LR
 - 每个会话串行生成，跨会话最多同时 4 路。后台记忆使用单独工作协程。模型服务采用有界优先队列，查询与精排优先于待处理文档；一个进程加载两个模型，使用 3 个 CPU 推理线程。
 - 本地模型使用 FP32、512 token 输入上限、小批量推理和 256 条有界 Embedding 缓存。模型权重、GTE 自定义代码均固定到 Git revision，只允许 safetensors。
 
+`mneme-api` 编排对话和连续工具调用，`mneme-models` 保持本地模型推理职责，`mneme-tools` 执行浏览器操作。搜索通过真实网页输入与点击完成，不使用搜索 API；图片和截图交给现有外部多模态 LLM 理解。部署、限制与安全边界见 [docs/tools.md](docs/tools.md)。
+
 模块和数据设计详见 [docs/architecture.md](docs/architecture.md)。
 
 ## Debian 13 部署
 
-目标为 4C16G、无 GPU、Rootless Podman 5.4+、cgroup v2。建议至少留出 15 GB 磁盘用于镜像、构建缓存、模型及数据；对话和记忆随使用继续增长。Quadlet 的资源上限为 API 2 GB、模型 8 GB、Neo4j 3 GB；这是上限，不是启动时预留。
+目标为 4C16G、无 GPU、Rootless Podman 5.4+、cgroup v2。建议至少留出 15 GB 磁盘用于镜像、构建缓存、模型及数据；对话和记忆随使用继续增长。Quadlet 的资源上限为 API 2 GB、模型 8 GB、Neo4j 3 GB、工具 1.5 GB；这是上限，不是启动时预留。
 
 安装系统依赖（服务本身不需要 root）：
 
@@ -49,9 +53,9 @@ cp .env.example .env
 bash scripts/start.sh
 ```
 
-安装会自动生成 Console/API Token 和 Neo4j 密码，写回权限为 0600 的 `.env` 并保存到 `~/.config/mneme/`；重复安装会保留密钥、人格和数据。LLM 模型名可选：未填时首次从提供商 `/models` 自动选择第一个排除已知 Embedding、Reranker 等专用类型的模型并缓存，重启不会重新选型；目录接口不受支持时须填写 `MNEME_LLM_MODEL`。建议明确指定常用聊天模型。
+安装会自动生成 Console/API Token、独立工具 Token 和 Neo4j 密码，写回权限为 0600 的 `.env` 并保存到 `~/.config/mneme/`；重复安装会保留密钥、人格和数据。LLM 模型名可选：未填时首次从提供商 `/models` 自动选择第一个排除已知 Embedding、Reranker 等专用类型的模型并缓存，重启不会重新选型；目录接口不受支持时须填写 `MNEME_LLM_MODEL`。建议明确指定常用聊天模型。
 
-GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vesperglow/mneme-api` 与 `ghcr.io/vesperglow/mneme-models`。默认使用 `latest`；固定部署版本时，先 `export MNEME_IMAGE_TAG=sha-完整提交SHA`，再执行同样的拉取和安装命令。私有 GHCR 包需要先用具有 `read:packages` 权限的 GitHub Token 执行 `podman login ghcr.io -u VesperGlow`；也可以在 GitHub 包设置中改为公开。首次发布的包默认私有，详见 [GHCR 说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。从源码构建时，用 `bash scripts/build.sh` 代替拉取步骤，仍仅构建 amd64。
+GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vesperglow/mneme-api`、`ghcr.io/vesperglow/mneme-models` 和 `ghcr.io/vesperglow/mneme-tools`。默认使用 `latest`；固定部署版本时，先 `export MNEME_IMAGE_TAG=sha-完整提交SHA`，再执行同样的拉取和安装命令。私有 GHCR 包需要先用具有 `read:packages` 权限的 GitHub Token 执行 `podman login ghcr.io -u VesperGlow`；也可以在 GitHub 包设置中改为公开。首次发布的包默认私有，详见 [GHCR 说明](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)。从源码构建时，用 `bash scripts/build.sh` 代替拉取步骤，仍仅构建 amd64。
 
 模型镜像已内置两个模型的权重、分词器、配置和 GTE 自定义代码，模型文件约 1.8 GB。首次拉取镜像较大，启动和重启无需访问 Hugging Face 或魔搭。模型固定版本并校验 SHA-256，验证后在 CPU 上加载；`podman logs -f mneme-models` 会显示校验和加载阶段。
 
@@ -59,7 +63,7 @@ GitHub Actions 仅构建 `linux/amd64`（x86_64）容器，发布 `ghcr.io/vespe
 
 模型下载在镜像构建端完成：先 Hugging Face，失败后自动切换魔搭，使用分段请求和有限次数的断流续传重试。自建镜像可通过 `--build-arg MNEME_MODEL_SOURCES=modelscope,huggingface` 调整构建下载源。固定版本及校验清单见 `services/models/artifacts.json`，不要直接替换模型文件或 revision。
 
-所有容器属于 `mneme` Pod，共用网络命名空间：内部地址为 `127.0.0.1:7474` 和 `127.0.0.1:8090`。宿主机只发布本机 `127.0.0.1:8080`（API/Console）和 `127.0.0.1:8081`（仅 QQ 回调）；QQ 未配置时不启动第二个监听。需要远程使用 Console 时可通过 SSH 转发：`ssh -L 8080:127.0.0.1:8080 user@server`。
+所有容器属于 `mneme` Pod，共用网络命名空间：内部地址为 Neo4j `127.0.0.1:7474`、模型 `127.0.0.1:8090` 和工具 `127.0.0.1:8091`。新增工具直接加入现有 `mneme.pod`，不增加 Pod 或宿主机端口。浏览器沙箱与出站代理阻止网页访问内部地址，但共享网络命名空间无法提供容器间的网络隔离，详见 [安全边界](docs/tools.md#共享-pod-的边界与防护)。宿主机只发布本机 `127.0.0.1:8080`（API/Console）和 `127.0.0.1:8081`（仅 QQ 回调）；QQ 未配置时不启动第二个监听。需要远程使用 Console 时可通过 SSH 转发：`ssh -L 8080:127.0.0.1:8080 user@server`。
 
 ```bash
 systemctl --user status mneme.target
@@ -72,6 +76,8 @@ systemctl --user start mneme.target
 由 `mneme.target` 统一启动、停止和重启。Quadlet 生成的 service 无需单独 enable。容器故障由各自的 `Restart=on-failure` 恢复。
 
 ## 开始对话
+
+新安装的 `.env.example` 启用工具；升级时，旧 `.env` 没有 `MNEME_TOOLS_ENABLED` 则保留原有聊天行为。使用支持流式 Tool Calling 的模型后，设置 `MNEME_TOOLS_ENABLED=true`，重新安装并重启。图片理解还要求该模型支持 `image_url`，不需要新增视觉推理服务。
 
 QQ 接入遵循官方 BotGo 的 Webhook 协议，由同一 Rust 进程处理验签、Token 刷新和消息投递，不增加 Go 服务或容器。QQ 平台还须配置 **HTTPS 回调 `/qqbot`、`C2C_MESSAGE_CREATE` 事件和出口 IP 白名单**。配置完成后直接私聊即可，第一条消息会自动建立个人会话并生成回复，无需打开 Console 或发送绑定码。之后继续使用同一账号的对话与长期记忆；完整设置和测试边界见 [docs/qq.md](docs/qq.md)。
 
@@ -89,11 +95,11 @@ python3 scripts/chat.py --session '上次输出的会话 UUID'
 
 ## Mneme Console
 
-打开 **http://127.0.0.1:8080/console/**，首次使用 API Token 登录内置管理后台。支持仪表盘、记忆增删改查、来源与历史版本、混合检索调试、系统状态及 **Agent 设置**；适配桌面与移动端。设置页可配置独立 WebUI 密码、修改性格，或经确认清空对话与记忆来重置 Agent。页面和资源由 Axum 直接提供，不增加容器或运行依赖。登录凭证仅保存在当前页面内存，刷新、退出或闲置 30 分钟后重新验证。使用及升级说明见 [docs/console.md](docs/console.md)。
+打开 **http://127.0.0.1:8080/console/**，首次使用 API Token 登录内置管理后台。支持流式聊天、图片上传、浏览器工具状态与调用记录、仪表盘、记忆增删改查、来源与历史版本、混合检索调试、系统状态及 **Agent 设置**；适配桌面与移动端。设置页可配置独立 WebUI 密码、修改性格，或经确认清空对话与记忆来重置 Agent。页面和资源由 Axum 直接提供，不增加容器或运行依赖。登录凭证仅保存在当前页面内存，刷新、退出或闲置 30 分钟后重新验证。使用及升级说明见 [docs/console.md](docs/console.md)。
 
 ## HTTP API
 
-除 `/health/live`、Console 静态登录页面/资源和密码登录接口 `/v1/console/login` 外，所有 API 均要求 `Authorization: Bearer <token>`（API Token 或密码登录返回的临时会话凭证），响应禁止缓存。JSON 请求最大 32 KiB，单次消息最多 4000 字符。没有 Cookie 登录、浏览器跨域放行或多租户功能。
+除 `/health/live`、Console 静态登录页面/资源和密码登录接口 `/v1/console/login` 外，所有 API 均要求 `Authorization: Bearer <token>`（API Token 或密码登录返回的临时会话凭证），响应禁止缓存。JSON 请求最大 32 KiB，图片二进制上传最大 8 MiB，单次消息最多 4000 字符。没有 Cookie 登录、浏览器跨域放行或多租户功能。
 
 | 方法 | 路径 | 用途 |
 |---|---|---|
@@ -154,15 +160,17 @@ SQLite 备份已经包含所有重建记忆和图谱所需的信息。配置/密
 
 ## 开发与验证
 
-GitHub 的 [build 工作流](https://github.com/VesperGlow/mneme/actions/workflows/check.yml) 在推送、Pull Request 或手动触发时执行格式检查、Clippy 和测试，通过后构建两个 `linux/amd64` 容器。Rust Release 二进制和内嵌 Console 均封装在 API 镜像内。只有 `main` 分支的推送或手动构建会发布 GHCR，标签为 `latest` 和 `sha-完整提交SHA`；Pull Request 仅验证构建。
+GitHub 的 [build 工作流](https://github.com/VesperGlow/mneme/actions/workflows/check.yml) 在推送、Pull Request 或手动触发时执行格式检查、Clippy 和测试，通过后构建 API、模型、工具三个 `linux/amd64` 镜像。Rust Release 二进制和内嵌 Console 均封装在 API 镜像内。只有 `main` 分支的推送或手动构建会发布 GHCR，标签为 `latest` 和 `sha-完整提交SHA`；Pull Request 仅验证构建。
 
-每次构建还提供 `mneme-linux-amd64` 和 `mneme-models-linux-amd64` 两份镜像归档及 SHA-256 文件，Artifacts 保留 7 天。下载解压 GitHub Artifact ZIP 后，可离线导入（将 `完整提交SHA` 替换为该次运行的 SHA）：
+每次构建还提供 `mneme-linux-amd64`、`mneme-models-linux-amd64` 和 `mneme-tools-linux-amd64` 三份镜像归档及 SHA-256 文件，Artifacts 保留 7 天。下载解压 GitHub Artifact ZIP 后，可离线导入（将 `完整提交SHA` 替换为该次运行的 SHA）：
 
 ```bash
 sha256sum -c mneme-linux-amd64.tar.gz.sha256
 sha256sum -c mneme-models-linux-amd64.tar.gz.sha256
+sha256sum -c mneme-tools-linux-amd64.tar.gz.sha256
 podman load -i mneme-linux-amd64.tar.gz
 podman load -i mneme-models-linux-amd64.tar.gz
+podman load -i mneme-tools-linux-amd64.tar.gz
 export MNEME_IMAGE_TAG=sha-完整提交SHA
 bash scripts/install.sh
 ```
@@ -175,6 +183,9 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 python3 -m py_compile services/models/*.py scripts/*.py
 python3 -m unittest discover -s tests -p 'test_*.py'
+# Node.js 22+，浏览器容器与多轮真实联网测试见 docs/tools.md
+npm ci --prefix services/tools
+node --test services/tools/test/security.test.mjs
 # 构建模型镜像后，用真实 CPU 模型与临时 Neo4j 运行集成测试：
 bash scripts/smoke-services.sh
 # 完整 Pod 生命周期测试：验证内置模型离线加载、整个 Pod 重启和在线备份。

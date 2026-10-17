@@ -12,6 +12,7 @@ mkdir -p "$HOME/.config/containers/systemd" "$HOME/.config/systemd/user"
 cp deploy/quadlet/* "$HOME/.config/containers/systemd/"
 sed -i "s|^Image=ghcr.io/vesperglow/mneme-api:latest$|Image=ghcr.io/vesperglow/mneme-api:$mneme_image_tag|" "$HOME/.config/containers/systemd/mneme-api.container"
 sed -i "s|^Image=ghcr.io/vesperglow/mneme-models:latest$|Image=ghcr.io/vesperglow/mneme-models:$mneme_image_tag|" "$HOME/.config/containers/systemd/mneme-models.container"
+sed -i "s|^Image=ghcr.io/vesperglow/mneme-tools:latest$|Image=ghcr.io/vesperglow/mneme-tools:$mneme_image_tag|" "$HOME/.config/containers/systemd/mneme-tools.container"
 cp deploy/systemd/mneme.target "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 systemctl --user enable --now mneme.target

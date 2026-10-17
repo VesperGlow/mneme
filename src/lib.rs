@@ -1,4 +1,5 @@
 pub mod api;
+pub mod assets;
 pub mod chat;
 pub mod config;
 pub mod console;
@@ -14,6 +15,7 @@ pub mod qq_store;
 pub mod settings;
 pub mod store;
 pub mod telemetry;
+pub mod tools;
 
 use config::Config;
 use sha2::{Digest, Sha256};
@@ -35,6 +37,7 @@ pub struct App {
     pub console_security: Arc<tokio::sync::Mutex<settings::ConsoleSecurity>>,
     pub maintenance: Arc<tokio::sync::RwLock<()>>,
     pub settings_lock: Arc<tokio::sync::Mutex<()>>,
+    pub tools: Option<tools::Client>,
 }
 
 impl App {
@@ -67,6 +70,11 @@ impl App {
             }
         }
         Ok(Self {
+            tools: if config.tools.enabled {
+                Some(tools::Client::new(&config.tools)?)
+            } else {
+                None
+            },
             llm: llm::Llm::new(&config)?,
             models: models::Models::new(&config)?,
             graph: graph::Graph::new(&config)?,

@@ -10,6 +10,7 @@ description = "中文陪伴 Agent 与可追溯的长期记忆"
 anyhow = "1"
 async-stream = "0.3"
 axum = { version = "0.8", features = ["json"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 ed25519-dalek = "2"

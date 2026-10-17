@@ -7,3 +7,5 @@ if [[ ! "$mneme_image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
 fi
 podman pull --platform linux/amd64 "ghcr.io/vesperglow/mneme-api:$mneme_image_tag"
 podman pull --platform linux/amd64 "ghcr.io/vesperglow/mneme-models:$mneme_image_tag"
+
+podman pull --platform linux/amd64 "ghcr.io/vesperglow/mneme-tools:$mneme_image_tag"

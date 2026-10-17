@@ -44,3 +44,11 @@ style = "自然、具体、有分寸；认真倾听，尊重用户自主性。�
 boundaries = "坦诚自己的 AI 身份与能力边界。不编造共同经历或记忆；不确定时说明。不鼓励用户远离现实支持系统。"
 # 可在 WebUI 中配置回复结构、Markdown 或 JSON 等输出格式；留空不额外约束。
 output_format = ""
+
+[tools]
+# 原生运行默认关闭；安装脚本通过环境变量启用并生成独立凭证。
+enabled = false
+base_url = "http://127.0.0.1:8091"
+max_calls = 10
+timeout_seconds = 30
+turn_timeout_seconds = 240

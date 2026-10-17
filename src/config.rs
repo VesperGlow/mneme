@@ -14,6 +14,8 @@ pub struct Config {
     pub memory: MemoryConfig,
     pub persona: Persona,
     #[serde(default)]
+    pub tools: ToolsConfig,
+    #[serde(default)]
     pub qq: QqConfig,
     #[serde(skip)]
     pub api_token: String,
@@ -21,6 +23,30 @@ pub struct Config {
     pub llm_key: String,
     #[serde(skip)]
     pub neo4j_password: String,
+}
+
+#[derive(Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ToolsConfig {
+    pub enabled: bool,
+    pub base_url: String,
+    pub max_calls: usize,
+    pub timeout_seconds: u64,
+    pub turn_timeout_seconds: u64,
+    #[serde(skip)]
+    pub token: String,
+}
+impl Default for ToolsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: "http://127.0.0.1:8091".into(),
+            max_calls: 10,
+            timeout_seconds: 30,
+            turn_timeout_seconds: 240,
+            token: String::new(),
+        }
+    }
 }
 
 #[derive(Clone, Deserialize)]
@@ -114,6 +140,13 @@ impl Config {
         config.llm_key = env::var("MNEME_LLM_API_KEY").context("MNEME_LLM_API_KEY is required")?;
         config.neo4j_password =
             env::var("MNEME_NEO4J_PASSWORD").context("MNEME_NEO4J_PASSWORD is required")?;
+        if let Ok(value) = env::var("MNEME_TOOLS_ENABLED") {
+            config.tools.enabled = value.parse().context("invalid MNEME_TOOLS_ENABLED")?;
+        }
+        if let Ok(value) = env::var("MNEME_TOOLS_URL") {
+            config.tools.base_url = value;
+        }
+        config.tools.token = env::var("MNEME_TOOLS_TOKEN").unwrap_or_default();
         if let Ok(value) = env::var("MNEME_LISTEN") {
             config.listen = value;
         }
@@ -154,6 +187,40 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if self.tools.enabled {
+            ensure!(
+                (1..=16).contains(&self.tools.max_calls)
+                    && (1..=60).contains(&self.tools.timeout_seconds)
+                    && (10..=600).contains(&self.tools.turn_timeout_seconds),
+                "invalid tool limits"
+            );
+            ensure!(
+                self.tools.token.len() >= 32
+                    && self.tools.token.is_ascii()
+                    && !self
+                        .tools
+                        .token
+                        .bytes()
+                        .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+                    && self.tools.token != self.api_token,
+                "tools require a separate random token of at least 32 characters"
+            );
+            let url = reqwest::Url::parse(&self.tools.base_url)?;
+            ensure!(
+                matches!(url.scheme(), "http" | "https")
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+                    && url.query().is_none()
+                    && url.fragment().is_none(),
+                "invalid tools URL"
+            );
+            ensure!(
+                url.scheme() == "https"
+                    || matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]")),
+                "remote tools require HTTPS"
+            );
+        }
         ensure!(
             self.qq.app_id.is_empty() == self.qq.app_secret.is_empty(),
             "QQ AppID and AppSecret must be configured together"

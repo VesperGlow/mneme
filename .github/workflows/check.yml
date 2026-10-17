@@ -32,7 +32,15 @@ jobs:
       - run: python3 -m py_compile services/models/*.py scripts/*.py tests/fixtures/*.py
       - run: python3 -m pip install -c services/models/requirements.lock.txt requests
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: services/tools/package-lock.json
+      - run: npm ci --prefix services/tools --no-audit --no-fund
       - run: node --check web/app.js && node --check scripts/console-browser-test.cjs
+      - run: node --test services/tools/test/security.test.mjs
+      - run: for file in services/tools/*.mjs scripts/smoke-tools.mjs; do node --check "$file"; done
 
   containers:
     name: Container / ${{ matrix.image }} / amd64
@@ -49,6 +57,9 @@ jobs:
           - image: mneme
             suffix: '-api'
             file: Containerfile
+          - image: mneme-tools
+            suffix: '-tools'
+            file: services/tools/Containerfile
           - image: mneme-models
             suffix: '-models'
             file: services/models/Containerfile
@@ -109,6 +120,8 @@ jobs:
             sudo podman run --rm --network none --read-only --cap-drop all --security-opt no-new-privileges \
               --tmpfs /tmp:rw,noexec,nosuid,size=256m "$IMAGE" \
               python -c 'import torch, engine; assert torch.version.cuda is None; model=engine.Engine(); vectors=model.embed(["我喜欢不加糖的拿铁。"],query=True); scores=model.rerank("我喜欢什么咖啡？",["不加糖的拿铁咖啡。","周末去爬山。"]); assert len(vectors[0])==1024; assert abs(sum(v*v for v in vectors[0])-1)<0.001; assert scores[0]>scores[1]; print("Bundled CPU models: offline loading, 1024 dimensions and Chinese reranking passed")'
+          elif [ "$SERVICE" = mneme-tools ]; then
+            sudo env MNEME_TOOLS_IMAGE="$IMAGE" bash scripts/smoke-tools.sh
           else
             trap 'sudo podman rm -f mneme-ci >/dev/null 2>&1 || true' EXIT
             sudo podman run -d --name mneme-ci --read-only --cap-drop all --security-opt no-new-privileges \

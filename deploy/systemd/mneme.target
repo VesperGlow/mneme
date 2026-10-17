@@ -1,6 +1,7 @@
 [Unit]
-Description=Mneme agent, graph and local CPU models
+Description=Mneme agent, graph, CPU models and browser tools
 Requires=mneme-api.service mneme-models.service mneme-neo4j.service
+Wants=mneme-tools.service
 After=mneme-api.service mneme-models.service mneme-neo4j.service
 
 [Install]

@@ -5,7 +5,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   const kinds = { fact: '事实', preference: '偏好', event: '经历', relationship: '关系', emotion: '情绪' };
   const colors = { fact: '#73906c', preference: '#c7ac7d', event: '#9aaec3', relationship: '#b4a0bb', emotion: '#c49b92' };
-  const pages = { overview: ['概览', 'OVERVIEW', '让记忆，有迹可循。', '留意每一段积累，也看见记忆的变化。'], memories: ['记忆库', 'MEMORY LIBRARY', '整理你的记忆空间', '浏览、追溯与更新，让重要的事始终清晰。'], retrieval: ['检索实验室', 'RETRIEVAL LAB', '看见一次回想的过程', '从候选召回到精排，理解 Mneme 如何找到记忆。'], system: ['系统状态', 'SYSTEM STATUS', '一切运行，尽在眼前', '查看服务状态、调用表现与后台处理进度。'], settings: ['Agent 设置', 'AGENT SETTINGS', '让陪伴，更合你的心意', '调整性格、管理登录密码，或重新开始一段陪伴。'] };
+  const pages = { chat: ['对话', 'CHAT', '把想法，慢慢说给我听', '让 Mneme 自主搜索、阅读网页，或一起看一张图片。'], tools: ['工具记录', 'TOOLS', '每一次行动，都看得见', '查看浏览器会话、工具调用、来源、耗时与错误。'], overview: ['概览', 'OVERVIEW', '让记忆，有迹可循。', '留意每一段积累，也看见记忆的变化。'], memories: ['记忆库', 'MEMORY LIBRARY', '整理你的记忆空间', '浏览、追溯与更新，让重要的事始终清晰。'], retrieval: ['检索实验室', 'RETRIEVAL LAB', '看见一次回想的过程', '从候选召回到精排，理解 Mneme 如何找到记忆。'], system: ['系统状态', 'SYSTEM STATUS', '一切运行，尽在眼前', '查看服务状态、调用表现与后台处理进度。'], settings: ['Agent 设置', 'AGENT SETTINGS', '让陪伴，更合你的心意', '调整性格、管理登录密码，或重新开始一段陪伴。'] };
   const paths = {
     grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
     book: '<path d="M4 4h6a3 3 0 0 1 3 3v14a4 4 0 0 0-4-2H4z"/><path d="M13 7a3 3 0 0 1 3-3h5v15h-4a4 4 0 0 0-4 2"/>',
@@ -28,7 +28,7 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
   };
   const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.book}</svg>`;
-  const state = { token: '', authMethod: 'token', route: 'overview', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, lastActivity: Date.now(), library: null, poll: 0 };
+  const state = { chatSession: '', chatBusy: false, token: '', authMethod: 'token', route: 'overview', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, lastActivity: Date.now(), library: null, poll: 0 };
   const fmt = n => Number(n || 0).toLocaleString('zh-CN');
   const pct = n => `${Math.round(Number(n || 0) * 100)}%`;
   const date = (n, full = false) => n ? new Date(n * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', ...(full ? { year: 'numeric', hour: '2-digit', minute: '2-digit' } : {}) }) : '—';
@@ -97,23 +97,26 @@
   }
   function logout() {
     if (state.token.startsWith('console-')) fetch('/v1/console/logout', { method: 'POST', credentials: 'omit', cache: 'no-store', keepalive: true, headers: { Authorization: `Bearer ${state.token}` } }).catch(() => {});
+    for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
+    state.chatSession = ''; state.chatBusy = false;
     state.token = ''; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null;
     state.filter = { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }; clearTimeout(state.poll);
     for (const modal of $$('dialog')) { if (modal.open) modal.close(); modal.innerHTML = ''; }
     $('#toast').textContent = ''; $('#toast').className = ''; document.body.classList.remove('dialog-open'); login();
   }
   function shell() {
-    $('#app').innerHTML = `<aside class="sidebar" aria-label="主导航"><a class="brand" href="#overview"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="nav-label">WORKSPACE</div><nav class="nav">${Object.entries(pages).map(([key, [name]], i) => `<a href="#${key}" data-nav="${key}" aria-label="${name}">${icon(['grid', 'book', 'search', 'system', 'edit'][i])}<span>${name}</span></a>`).join('')}</nav><div class="sidebar-foot"><div class="flex">${icon('shield')}私有记忆空间</div><p>让每一段陪伴，都有记忆。<br>MNEME · LOCAL CONSOLE</p></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">你的记忆工作台<span>/</span><strong id="breadcrumb-current">概览</strong></div><div class="top-actions"><button class="search-shortcut" id="search-shortcut">${icon('search')}搜索记忆<kbd>/</kbd></button><div class="verified"><i class="dot"></i>身份已验证</div><i class="top-divider"></i><button id="refresh" class="icon-btn" aria-label="刷新当前页面" title="刷新">${icon('refresh')}</button><button id="logout" class="icon-btn" aria-label="退出登录" title="退出登录">${icon('logout')}</button></div></header><main class="page"><div id="page" aria-live="polite"></div><footer class="page-foot"><span>Mneme Console · 让记忆成为陪伴的延续</span><span>PRIVATE WORKSPACE</span></footer></main></div>`;
+    $('#app').innerHTML = `<aside class="sidebar" aria-label="主导航"><a class="brand" href="#overview"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="nav-label">WORKSPACE</div><nav class="nav">${Object.entries(pages).map(([key, [name]], i) => `<a href="#${key}" data-nav="${key}" aria-label="${name}">${icon({ chat: 'spark', tools: 'chip', overview: 'grid', memories: 'book', retrieval: 'search', system: 'system', settings: 'edit' }[key])}<span>${key === 'settings' ? '设置' : key === 'retrieval' ? '检索' : name}</span></a>`).join('')}</nav><div class="sidebar-foot"><div class="flex">${icon('shield')}私有记忆空间</div><p>让每一段陪伴，都有记忆。<br>MNEME · LOCAL CONSOLE</p></div></aside><div class="workspace"><header class="topbar"><div class="breadcrumb">你的记忆工作台<span>/</span><strong id="breadcrumb-current">概览</strong></div><div class="top-actions"><button class="search-shortcut" id="search-shortcut">${icon('search')}搜索记忆<kbd>/</kbd></button><div class="verified"><i class="dot"></i>身份已验证</div><i class="top-divider"></i><button id="refresh" class="icon-btn" aria-label="刷新当前页面" title="刷新">${icon('refresh')}</button><button id="logout" class="icon-btn" aria-label="退出登录" title="退出登录">${icon('logout')}</button></div></header><main class="page"><div id="page" aria-live="polite"></div><footer class="page-foot"><span>Mneme Console · 让记忆成为陪伴的延续</span><span>PRIVATE WORKSPACE</span></footer></main></div>`;
     $('#logout').onclick = logout; $('#refresh').onclick = route; $('#search-shortcut').onclick = focusSearch;
   }
   async function route() {
     if (!state.token) return;
+    for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
     clearTimeout(state.poll); const epoch = ++state.epoch;
     state.route = Object.hasOwn(pages, location.hash.slice(1)) ? location.hash.slice(1) : 'overview';
     $$('[data-nav]').forEach(link => { const active = link.dataset.nav === state.route; link.classList.toggle('active', active); if (active) link.setAttribute('aria-current', 'page'); else link.removeAttribute('aria-current'); });
     $('#breadcrumb-current').textContent = pages[state.route][0]; document.title = `${pages[state.route][0]} · Mneme Console`;
     $('#page').innerHTML = heading(['overview', 'memories'].includes(state.route) ? newButton() : '') + loading(state.route === 'system' ? '正在探测服务状态…' : '正在读取数据…');
-    try { await ({ overview, memories: library, retrieval: retrievalPage, system: systemPage, settings: settingsPage }[state.route])(epoch); }
+    try { await ({ overview, memories: library, retrieval: retrievalPage, system: systemPage, settings: settingsPage, chat: chatPage, tools: toolsPage }[state.route])(epoch); }
     catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#page').innerHTML = heading() + `<section class="panel">${empty('暂时无法读取数据', errorText(error), '<button class="btn" data-reload>重新加载</button>')}</section>`; }
   }
   function focusSearch() { if (!state.token) return; if (state.route === 'memories') $('#memory-search')?.focus(); else { location.hash = 'memories'; setTimeout(() => $('#memory-search')?.focus(), 150); } }
@@ -203,6 +206,84 @@
     $('#page').innerHTML = heading() + `<div class="notice">${icon('info')}<span>LLM 通过模型目录接口探测，不执行生成；接口不受支持时显示“待确认”。CPU 模型状态表示服务已加载。性能统计来自当前进程已完成的真实调用。</span></div><section class="service-grid spaced">${services}</section><section class="panel spaced"><div class="system-facts"><div><small>连续运行</small><strong>${uptime(data.uptime_seconds)}</strong></div><div><small>SQLite 数据文件</small><strong>${bytes(data.database_bytes)}</strong></div><div><small>向量维度</small><strong>${data.dimensions}</strong></div><div><small>服务版本</small><strong>v${esc(data.version)}</strong></div></div></section><section class="panel job-card spaced"><div class="between"><div><h2>后台处理队列</h2><p class="subheading">记忆提取和索引同步持续在后台进行</p></div><div class="flex"><span class="badge">待处理 ${fmt(data.jobs.pending)}</span><span class="badge green">运行中 ${fmt(data.jobs.running)}</span><span class="badge${data.jobs.dead ? ' amber' : ''}">失败 ${fmt(data.jobs.dead)}</span></div></div><div class="between spaced"><small>SQLite 正常 · 检查时间 ${date(data.checked_at, true)}${data.cached ? ' · 10 秒内缓存' : ''}</small><div class="flex"><button class="btn small" data-maintenance="reindex">重建索引</button><button class="btn small" data-maintenance="jobs/retry"${data.jobs.dead ? '' : ' disabled'}>重试失败任务</button></div></div></section>`;
     $('#page').insertAdjacentHTML('beforeend', `<section class="panel job-card spaced"><div class="between"><div><h2>QQ 机器人</h2><p class="subheading">${qq.enabled ? `AppID ${esc(qq.app_id)} · 个人单聊` : '在 .env 填写 QQ AppID 和 AppSecret 后启用'}</p></div><span class="badge ${qq.has_session ? 'green' : 'amber'}">${qq.has_session ? '个人会话已建立' : qq.bound ? '等待新会话' : qq.enabled ? '等待首条私聊' : '未启用'}</span></div>${qq.enabled ? `<p class="hint spaced">直接私聊即可开始，无需绑定码。首次私聊自动建立个人会话，重启后继续使用。</p><div class="spaced"><small>待处理 ${fmt(qq.queue.pending)} · 运行中 ${fmt(qq.queue.running)} · 已发送 ${fmt(qq.queue.sent)} · 失败 ${fmt(qq.queue.dead)}</small></div>` : ''}</section>`);
   }
+  const toolLabels = { search: '搜索网页', navigate: '打开网页', read: '阅读网页', click: '点击', type: '输入关键词', scroll: '滚动', screenshot: '网页截图', back: '返回', wait: '等待渲染', close: '关闭浏览器', view_image: '查看图片' };
+  const objectURLs = new Set();
+  const safeLink = input => { try { const u = new URL(input); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password ? u.href : ''; } catch { return ''; } };
+  function sources(result) {
+    const entries = result?.results?.length ? result.results : result?.url ? [{ title: result.title || result.url, url: result.url }] : [];
+    return entries.slice(0, 8).map(source => { const url = safeLink(source.url); return url ? `<a class="source-link" href="${esc(url)}" target="_blank" rel="noreferrer noopener">${icon('link')}${esc(source.title || url)}</a>` : ''; }).join('');
+  }
+  async function showImage(asset, container) {
+    const epoch = state.epoch;
+    const response = await fetch(`/v1/assets/${encodeURIComponent(asset)}`, { credentials: 'omit', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { Authorization: `Bearer ${state.token}` } });
+    if (!response.ok) throw new ApiFailure(response.status, 'image_not_found');
+    const blob = await response.blob(); if (epoch !== state.epoch) return;
+    const url = URL.createObjectURL(blob); objectURLs.add(url);
+    const img = document.createElement('img'); img.src = url; img.alt = '会话图片'; img.className = 'chat-image'; container.append(img);
+  }
+  function toolMarkup(call) {
+    return `<article class="tool-entry"><div class="between"><strong>${esc(toolLabels[call.action] || call.name)}</strong><span class="badge ${call.status === 'completed' ? 'green' : call.status === 'failed' ? 'red' : 'amber'}">${call.status === 'completed' ? '已完成' : call.status === 'failed' ? '失败' : '执行中'}${call.elapsed_ms != null ? ` · ${ms(call.elapsed_ms)}` : ''}</span></div>${call.error ? `<p class="error-inline">${esc(call.error)}</p>` : ''}<div class="source-list">${sources(call.result)}</div>${call.result?.asset_id ? `<button class="btn small" data-image="${esc(call.result.asset_id)}">查看图片</button>` : ''}</article>`;
+  }
+  async function chatPage(epoch) {
+    const [data, tools] = await Promise.all([api('/v1/sessions'), api('/v1/console/tools')]); if (epoch !== state.epoch) return;
+    if (!state.chatSession || !data.sessions.some(s => s.id === state.chatSession)) state.chatSession = data.sessions[0]?.id || '';
+    if (!state.chatSession) state.chatSession = (await send('/v1/sessions', {})).id;
+    if (epoch !== state.epoch) return;
+    const history = await api(`/v1/sessions/${state.chatSession}/messages`); if (epoch !== state.epoch) return;
+    $('#page').innerHTML = heading() + `<section class="panel chat-panel"><div class="chat-toolbar"><label class="sr-only" for="chat-session">选择会话</label><select id="chat-session" class="filter-select"${state.chatBusy ? ' disabled' : ''}>${data.sessions.length ? data.sessions.map(s => `<option value="${esc(s.id)}"${s.id === state.chatSession ? ' selected' : ''}>${esc(s.preview || `新会话 ${date(s.created_at, true)}`)}</option>`).join('') : `<option value="${esc(state.chatSession)}">新会话</option>`}</select><button class="btn small" id="new-chat"${state.chatBusy ? ' disabled' : ''}>${icon('plus')}新会话</button><span class="badge ${tools.state === 'healthy' ? 'green' : ''}">${tools.enabled ? tools.state === 'healthy' ? '浏览器工具可用' : '浏览器工具暂不可用' : '纯文本对话'}</span></div><div id="chat-messages" class="chat-messages">${history.messages.map(message => `<article class="chat-message ${message.role}"><small>${message.role === 'user' ? '你' : 'Mneme'}</small><div class="prewrap">${esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || empty('开始一段交流', '可以直接聊天，也可以让 Mneme 联网搜索、阅读网页或理解你上传的图片。')}</div><form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" maxlength="4000" placeholder="和 Mneme 聊聊，或请它搜索、阅读网页…"${state.chatBusy ? ' disabled' : ''}></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="between"><label class="btn small image-upload">${icon('plus')}上传图片<input id="chat-files" type="file" accept="image/png,image/jpeg,image/webp" multiple${!tools.enabled || state.chatBusy ? ' disabled' : ''}></label><small>最多 4 张 · PNG / JPEG / WebP · 每张 8 MiB · 需支持图片与工具调用的模型</small><button class="btn primary" id="send-chat"${state.chatBusy ? ' disabled' : ''}>发送${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form></section>`;
+    const uploads = [];
+    const renderUploads = () => { $('#chat-attachments').innerHTML = uploads.map((a, i) => `<span class="tag">图片 ${i + 1}<button type="button" class="icon-btn" data-remove-upload="${i}" aria-label="移除图片 ${i + 1}">${icon('close')}</button></span>`).join(''); $$('[data-remove-upload]').forEach(button => { button.onclick = () => { uploads.splice(Number(button.dataset.removeUpload), 1); renderUploads(); }; }); };
+    $('#chat-session').onchange = event => { state.chatSession = event.target.value; route(); };
+    $('#new-chat').onclick = async () => { try { state.chatSession = (await send('/v1/sessions', {})).id; route(); } catch (error) { toast(errorText(error), true); } };
+    $('#chat-files').onchange = async event => {
+      const files = [...event.target.files]; event.target.value = ''; const errorEl = $('#chat-error'); errorEl.textContent = '';
+      if (files.length + uploads.length > 4 || files.some(file => file.size > 8 * 1024 * 1024)) { errorEl.textContent = '最多上传 4 张图片，每张不超过 8 MiB。'; return; }
+      const sendButton = $('#send-chat'); sendButton.disabled = true;
+      try { for (const file of files) { const asset = await api(`/v1/sessions/${state.chatSession}/images`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }); if (epoch !== state.epoch) return; uploads.push(asset.asset_id); renderUploads(); } }
+      catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = '图片上传未完成，请检查图片格式与工具服务。'; }
+      finally { if (epoch === state.epoch) sendButton.disabled = false; }
+    };
+    $('#chat-form').onsubmit = async event => {
+      event.preventDefault(); if (state.chatBusy) return;
+      const message = $('#chat-message').value.trim() || (uploads.length ? '请查看我上传的图片。' : ''); if (!message) return;
+      const assets = [...uploads]; const session = state.chatSession; const requestId = crypto.randomUUID(); const errorEl = $('#chat-error'); errorEl.textContent = ''; state.chatBusy = true;
+      for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea,#chat-session,#new-chat')) element.disabled = true;
+      const messages = $('#chat-messages'); $('.empty', messages)?.remove();
+      messages.insertAdjacentHTML('beforeend', `<article class="chat-message user"><small>你</small><div class="prewrap">${esc(message)}</div></article><article class="chat-message assistant" id="chat-current"><small>Mneme</small><div class="prewrap" id="chat-answer"></div><div class="chat-tools" id="chat-live-tools"></div><small id="chat-progress">正在思考…</small></article>`);
+      let persisted = false; let failed = false;
+      try {
+        const response = await fetch(`/v1/sessions/${session}/chat`, { method: 'POST', credentials: 'omit', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { Authorization: `Bearer ${state.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: requestId, message, assets }) });
+        if (!response.ok) throw new ApiFailure(response.status, (await response.json()).error);
+        const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read(); buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
+          let split;
+          while ((split = buffer.indexOf('\n\n')) >= 0) {
+            const frame = buffer.slice(0, split); buffer = buffer.slice(split + 2);
+            const name = frame.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim();
+            const raw = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'); if (!raw) continue;
+            const data = JSON.parse(raw); if (name === 'done') persisted = data.persisted; if (name === 'error') failed = true;
+            if (epoch !== state.epoch) continue;
+            if (name === 'delta') { $('#chat-answer').textContent += data.content; $('#chat-progress').textContent = '正在回复…'; }
+            if (name === 'tool') { const id = `tool-${data.id}`; let element = document.getElementById(id); if (!element) { element = document.createElement('div'); element.id = id; $('#chat-live-tools').append(element); } element.innerHTML = toolMarkup(data); $('#chat-progress').textContent = data.status === 'running' ? `正在${toolLabels[data.action] || '执行工具'}…` : '正在继续思考…'; }
+            if (name === 'error') $('#chat-progress').textContent = '本轮失败，临时输出未保存。';
+          }
+          if (done) break;
+        }
+        if (!persisted) throw new Error(failed ? 'generation_failed' : 'stream_interrupted');
+      } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = `本轮未确认完成，可稍后刷新会话检查。${errorText(error)}`; }
+      finally { state.chatBusy = false; if (epoch === state.epoch && state.token) { if (persisted) route(); else { for (const element of $$('#chat-form button,#chat-form input,#chat-form textarea,#chat-session,#new-chat')) element.disabled = false; } } }
+    };
+    const last = $('.chat-message:last-child'); last?.scrollIntoView({ block: 'nearest' });
+  }
+  async function toolsPage(epoch) {
+    const [status, data] = await Promise.all([api('/v1/console/tools'), api('/v1/console/tools/calls')]); if (epoch !== state.epoch) return;
+    const service = status.service || {};
+    $('#page').innerHTML = heading() + `<section class="panel job-card"><div class="between"><div><h2>mneme-tools</h2><p class="subheading">Playwright · Chromium / CDP · 真实浏览器搜索</p></div><span class="badge ${status.state === 'healthy' ? 'green' : 'amber'}">${status.enabled ? status.state === 'healthy' ? '可用' : '暂不可用' : '未启用'}</span></div><div class="system-facts"><div><small>浏览器会话</small><strong>${fmt(service.active_sessions)} / ${fmt(service.max_sessions)}</strong></div><div><small>每轮调用上限</small><strong>${fmt(status.max_calls)}</strong></div><div><small>调用 / 失败</small><strong>${fmt(status.metrics?.requests)} / ${fmt(status.metrics?.failures)}</strong></div><div><small>空闲回收</small><strong>${fmt((service.idle_timeout_seconds || 0) / 60)} 分</strong></div></div><p class="hint">工具服务通过独立凭证与 Pod 内 localhost HTTP 连接。浏览器只允许访问公网 HTTP/HTTPS，图片由现有多模态 LLM 理解。</p></section><section class="panel spaced"><div class="panel-head"><h2>最近工具调用</h2><p class="subheading">状态、耗时、错误与实际读取的来源，最多显示 100 条</p></div><div class="tool-log-list">${data.calls.map(call => `<details class="tool-log"><summary><span>${esc(toolLabels[call.action] || call.name)}</span><span class="badge ${call.status === 'failed' ? 'red' : call.status === 'running' ? 'amber' : 'green'}">${esc(call.status)}</span><small>${ms(call.elapsed_ms)} · ${date(call.created_at, true)}</small></summary><div class="tool-log-body">${toolMarkup(call)}<p class="hint">会话 ${esc(call.session_id)} · 轮次 ${esc(call.turn_id)}</p><button class="btn small" data-close-browser="${esc(call.session_id)}">释放浏览器会话</button><details class="technical"><summary>结构化结果</summary><pre class="prewrap">${esc(JSON.stringify(call.result, null, 2))}</pre></details></div></details>`).join('') || empty('还没有工具调用', '前往对话页，让 Mneme 搜索网页、阅读资料或查看图片。', '<a class="btn" href="#chat">开始对话</a>')}</div></section>`;
+    $$('[data-close-browser]').forEach(button => { button.onclick = async () => { button.disabled = true; try { await send('/v1/console/tools/close', { session_id: button.dataset.closeBrowser }); toast('浏览器会话已释放。'); route(); } catch (error) { toast(errorText(error), true); button.disabled = false; } }; });
+    if (data.calls.some(call => call.status === 'running')) state.poll = setTimeout(() => { if (epoch === state.epoch) route(); }, 3000);
+  }
+
   async function settingsPage(epoch) {
     const data = await api('/v1/console/settings'); if (epoch !== state.epoch) return;
     const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '性格描述', 6000, '身份、个性与陪伴方式'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界'], ['output_format', '输出格式 Prompt', 6000, '例如：使用纯文本，分段回复，不使用 Markdown。留空表示不额外约束输出格式。']];
@@ -254,7 +335,8 @@
   function bytes(n) { return n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(2)} GB` : n >= 1024 ** 2 ? `${(n / 1024 ** 2).toFixed(1)} MB` : `${(n / 1024).toFixed(0)} KB`; }
   document.addEventListener('click', event => {
     const target = event.target.closest('button,[data-detail]'); if (!target || target.disabled) return;
-    if (target.hasAttribute('data-new')) edit();
+    if (target.dataset.image) { target.disabled = true; showImage(target.dataset.image, target.parentElement).catch(error => { toast(errorText(error), true); target.disabled = false; }); }
+    else if (target.hasAttribute('data-new')) edit();
     else if (target.dataset.detail) detail(target.dataset.detail);
     else if (target.dataset.edit) edit(target.dataset.edit);
     else if (target.dataset.delete) remove(target.dataset.delete);

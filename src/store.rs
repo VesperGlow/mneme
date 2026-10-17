@@ -23,6 +23,7 @@ pub enum BeginTurn {
     Busy,
     Missing,
     Conflict,
+    InvalidAssets,
 }
 
 impl Store {
@@ -71,6 +72,7 @@ impl Store {
     /// Single application process per SQLite file. Interrupted generations are explicit failures.
     pub async fn recover(&self) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("UPDATE tool_calls SET status='failed',error='interrupted',completed_at=? WHERE status='running'").bind(now()).execute(&mut *tx).await?;
         sqlx::query("UPDATE turns SET status='failed', error_code='interrupted', completed_at=? WHERE status='generating'")
             .bind(now()).execute(&mut *tx).await?;
         sqlx::query("UPDATE sessions SET active_turn=NULL")
@@ -97,12 +99,46 @@ impl Store {
     }
 
     pub async fn begin_turn(&self, session: &str, request: &str, text: &str) -> Result<BeginTurn> {
+        self.begin_turn_with_assets(session, request, text, &[])
+            .await
+    }
+
+    pub async fn begin_turn_with_assets(
+        &self,
+        session: &str,
+        request: &str,
+        text: &str,
+        assets: &[String],
+    ) -> Result<BeginTurn> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        if assets.len() > 4
+            || assets
+                .iter()
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                != assets.len()
+        {
+            return Ok(BeginTurn::InvalidAssets);
+        }
+        for asset in assets {
+            let valid: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM assets WHERE id=? AND session_id=?)",
+            )
+            .bind(asset)
+            .bind(session)
+            .fetch_one(&mut *tx)
+            .await?;
+            if !valid {
+                return Ok(BeginTurn::InvalidAssets);
+            }
+        }
         let existing = sqlx::query("SELECT t.session_id,t.status,m.content FROM turns t JOIN messages m ON m.turn_id=t.id AND m.role='user' WHERE t.id=?")
             .bind(request).fetch_optional(&mut *tx).await?;
         if let Some(row) = existing {
+            let previous: Vec<String> = sqlx::query_scalar("SELECT ma.asset_id FROM message_assets ma JOIN messages m ON m.id=ma.message_id WHERE m.turn_id=? ORDER BY ma.position").bind(request).fetch_all(&mut *tx).await?;
             if row.get::<String, _>("session_id") != session
                 || row.get::<String, _>("content") != text
+                || previous != assets
             {
                 return Ok(BeginTurn::Conflict);
             }
@@ -145,6 +181,14 @@ impl Store {
         .await?;
         sqlx::query("INSERT INTO messages(id,session_id,turn_id,role,content,created_at) VALUES(?,?,?,'user',?,?)")
             .bind(&message.id).bind(session).bind(request).bind(text).bind(message.created_at).execute(&mut *tx).await?;
+        for (position, asset) in assets.iter().enumerate() {
+            sqlx::query("INSERT INTO message_assets(message_id,asset_id,position) VALUES(?,?,?)")
+                .bind(&message.id)
+                .bind(asset)
+                .bind(position as i64)
+                .execute(&mut *tx)
+                .await?;
+        }
         sqlx::query("UPDATE sessions SET active_turn=? WHERE id=?")
             .bind(request)
             .bind(session)
@@ -186,6 +230,7 @@ impl Store {
 
     pub async fn fail_turn(&self, user: &Message, code: &str) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("UPDATE tool_calls SET status='failed',error='turn_cancelled',completed_at=? WHERE turn_id=? AND status='running'").bind(now()).bind(&user.turn_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE turns SET status='failed',error_code=?,completed_at=? WHERE id=? AND status='generating'")
             .bind(code).bind(now()).bind(&user.turn_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE sessions SET active_turn=NULL WHERE id=? AND active_turn=?")

@@ -57,6 +57,23 @@ pub async fn resolve_model(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone, serde::Serialize, serde::Deserialize, Default)]
+pub struct ToolFunction {
+    pub name: String,
+    pub arguments: String,
+}
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub function: ToolFunction,
+}
+pub struct Completion {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
+}
+
 #[derive(Clone)]
 pub struct Llm {
     client: reqwest::Client,
@@ -164,29 +181,93 @@ impl Llm {
         messages: &[ChatMessage],
         output: &mpsc::Sender<Event>,
     ) -> Result<String> {
-        let response = self.client.post(&self.url).bearer_auth(&self.key)
-            .json(&json!({"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens,"stream":true}))
-            .send().await?.error_for_status()?;
+        let messages = messages.iter().map(|m| json!(m)).collect::<Vec<_>>();
+        Ok(self.round_inner(&messages, None, output).await?.content)
+    }
+    pub async fn round(
+        &self,
+        messages: &[Value],
+        tools: Option<&Value>,
+        output: &mpsc::Sender<Event>,
+    ) -> Result<Completion> {
+        let start = std::time::Instant::now();
+        let result = self.round_inner(messages, tools, output).await;
+        self.metrics.record(start, result.is_ok());
+        if let Err(error) = &result {
+            crate::diagnostics::warn("llm.tools", error);
+        }
+        result
+    }
+    async fn round_inner(
+        &self,
+        messages: &[Value],
+        tools: Option<&Value>,
+        output: &mpsc::Sender<Event>,
+    ) -> Result<Completion> {
+        let mut body = json!({"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens,"stream":true});
+        if let Some(tools) = tools {
+            body["tools"] = tools.clone();
+            body["tool_choice"] = json!("auto");
+            body["parallel_tool_calls"] = json!(false);
+        }
+        let response = self
+            .client
+            .post(&self.url)
+            .bearer_auth(&self.key)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?;
         let mut events = response.bytes_stream().eventsource();
         let mut content = String::new();
-        let mut finished = false;
+        let mut calls = std::collections::BTreeMap::<usize, ToolCall>::new();
+        let mut finish = String::new();
+        let mut total_bytes = 0usize;
         while let Some(event) = events.next().await {
             let event = event?;
+            total_bytes += event.data.len();
+            ensure!(
+                total_bytes <= 2 * 1024 * 1024,
+                "upstream stream exceeds limit"
+            );
             if event.data.trim() == "[DONE]" {
-                ensure!(
-                    finished && !content.trim().is_empty(),
-                    "empty or unfinished completion"
-                );
-                return Ok(content);
+                ensure!(!finish.is_empty(), "unfinished completion");
+                if calls.is_empty() {
+                    ensure!(
+                        !content.trim().is_empty() && matches!(finish.as_str(), "stop" | "length"),
+                        "empty or unfinished completion"
+                    );
+                } else {
+                    ensure!(
+                        finish == "tool_calls" && tools.is_some(),
+                        "unfinished tool calls"
+                    );
+                    let mut ids = std::collections::HashSet::new();
+                    for call in calls.values() {
+                        ensure!(
+                            !call.id.is_empty()
+                                && call.id.len() <= 128
+                                && !call.id.chars().any(char::is_control)
+                                && ids.insert(&call.id)
+                                && !call.function.name.is_empty()
+                                && call.function.name.len() <= 64,
+                            "invalid tool call"
+                        );
+                    }
+                }
+                return Ok(Completion {
+                    content,
+                    tool_calls: calls.into_values().collect(),
+                });
             }
             let chunk: Value = serde_json::from_str(&event.data)?;
             ensure!(chunk.get("error").is_none(), "upstream stream error");
             if let Some(reason) = chunk["choices"][0]["finish_reason"].as_str() {
                 ensure!(
-                    matches!(reason, "stop" | "length"),
+                    matches!(reason, "stop" | "length" | "tool_calls"),
                     "unsupported finish reason"
                 );
-                finished = true;
+                finish = reason.into();
             }
             if let Some(delta) = chunk["choices"][0]["delta"]["content"].as_str() {
                 ensure!(
@@ -195,6 +276,39 @@ impl Llm {
                 );
                 content.push_str(delta);
                 emit(output, "delta", json!({"content":delta}))?;
+            }
+            if let Some(deltas) = chunk["choices"][0]["delta"]["tool_calls"].as_array() {
+                ensure!(tools.is_some(), "unexpected tool call");
+                for delta in deltas {
+                    let index = delta["index"]
+                        .as_u64()
+                        .ok_or_else(|| anyhow::anyhow!("missing tool index"))?
+                        as usize;
+                    ensure!(index < 4, "too many simultaneous tool calls");
+                    let call = calls.entry(index).or_insert_with(|| ToolCall {
+                        id: String::new(),
+                        kind: "function".into(),
+                        function: ToolFunction::default(),
+                    });
+                    if let Some(kind) = delta["type"].as_str() {
+                        ensure!(kind == "function", "unsupported tool type");
+                    }
+                    if let Some(id) = delta["id"].as_str() {
+                        call.id.push_str(id);
+                    }
+                    if let Some(name) = delta["function"]["name"].as_str() {
+                        call.function.name.push_str(name);
+                    }
+                    if let Some(arguments) = delta["function"]["arguments"].as_str() {
+                        call.function.arguments.push_str(arguments);
+                    }
+                    ensure!(
+                        call.id.len() <= 128
+                            && call.function.name.len() <= 64
+                            && call.function.arguments.len() <= 16384,
+                        "tool call exceeds limit"
+                    );
+                }
             }
         }
         bail!("upstream stream ended before DONE")

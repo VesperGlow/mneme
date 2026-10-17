@@ -1,4 +1,16 @@
-# 第一版验证记录
+# 验证记录
+
+## 浏览器工具与多模态接入（2026-10-17）
+
+独立 `mneme-tools` 镜像构建成功，Quadlet 实际生成确认加入现有 `mneme.pod`。原有 API、模型、Neo4j、Pod 和网络 Quadlet 保持原样；只增加工具容器及其 seccomp 配置。工具经独立鉴权的 Pod localhost HTTP 通信，没有发布工具、代理或 CDP 端口。
+
+33 项 Rust 常规测试、23 项 Python 测试、严格 Clippy、格式、JavaScript/Bash/Python 与工作流语法检查通过；原有真实 CPU 模型/Neo4j 测试仍为显式可选项，本次未重跑。新增 Rust 测试覆盖分片工具调用流、多轮编排、错误恢复、调用上限、图片消息与顺序、跨会话拒绝、幂等重放、截断流不执行及重置清理。
+
+Rootless Podman 镜像测试通过，启用只读根文件系统、非 root、移除全部 capabilities、禁止提权及正式资源上限。4 项 Node 测试覆盖真实 CDP 的动态 DOM、输入、点击、滚动、截图、会话复用、容量、超时和过期回收，以及 DNS 重绑定、跳转/子资源、HTTP/CONNECT 回环地址拦截和鉴权。另一个容器通过同一个 QA Pod 的 localhost 访问服务，确认内部 Neo4j 地址被拒绝。Chromium 自身的 `chrome://sandbox` 报告 Namespace 与 Seccomp-BPF 均已启用。
+
+08:07 UTC 的真实联网端到端测试通过：Rust Agent 依次调用 Bing 网页搜索 Debian、打开实际搜索结果、截图、读取官网，耗时分别为 3413 / 997 / 586 / 438 毫秒；下一轮复用同一页面滚动并继续阅读。没有使用搜索 API。验证了上传图片和截图进入现有多模态消息、内部地址拒绝、桌面/390px 手机 Console 的工具记录、流式对话、文件上传与图片预览，浏览器无脚本错误。原有 Console 的 CRUD、修订、检索、性格、密码、重置和退出/刷新/闲置锁定浏览器测试也通过。
+
+联网搜索与 Chromium 为真实实现，LLM 使用本地确定性协议替身；当前环境未配置真实提供商凭证，因此不能将测试结果解释为真实模型自主决策或视觉理解质量已验收。搜索引擎可能出现验证码或限流，此时返回明确错误。共享网络命名空间的隔离限制、启用方式和复现命令见 [tools.md](tools.md)。验证产物保存在忽略的 `artifacts/tools-*`；测试容器、QA Pod 和临时数据库均已清理。
 
 验证日期：2026-10-16。环境：Debian 13 amd64、Rootless Podman 5.4.2、无 GPU。核心在 Rust 1.98 本机及 Rust 1.90 容器构建器中均成功编译；运行镜像为 Debian 13。
 

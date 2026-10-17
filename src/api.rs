@@ -33,7 +33,7 @@ pub(crate) type ApiResult<T> = Result<T, ApiError>;
 pub fn router(app: App) -> Router {
     let protected = Router::new()
         .route("/health/ready", get(ready))
-        .route("/v1/sessions", post(create_session))
+        .route("/v1/sessions", post(create_session).get(list_sessions))
         .route("/v1/sessions/{id}/messages", get(history))
         .route("/v1/sessions/{id}/chat", post(chat))
         .route("/v1/turns/{id}", get(turn))
@@ -49,6 +49,8 @@ pub fn router(app: App) -> Router {
         )
         .merge(crate::console::protected_routes())
         .merge(crate::settings::protected_routes())
+        .merge(crate::tools::routes())
+        .merge(crate::assets::routes())
         .merge(crate::qq::protected_routes())
         .route("/v1/memories/search", post(search))
         .route("/v1/admin/jobs/retry", post(retry_jobs))
@@ -72,7 +74,7 @@ pub fn router(app: App) -> Router {
                 response
                     .headers_mut()
                     .insert("x-content-type-options", "nosniff".parse().unwrap());
-                response.headers_mut().insert("content-security-policy","default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
+                response.headers_mut().insert("content-security-policy","default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' blob:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'".parse().unwrap());
                 response.headers_mut().insert("referrer-policy","no-referrer".parse().unwrap());
                 response.headers_mut().insert("x-frame-options","DENY".parse().unwrap());
                 response
@@ -120,6 +122,12 @@ async fn create_session(State(app): State<App>) -> ApiResult<(StatusCode, Json<V
     let id = app.store.create_session().await?;
     Ok((StatusCode::CREATED, Json(json!({"id":id}))))
 }
+async fn list_sessions(State(app): State<App>) -> ApiResult<Json<Value>> {
+    let sessions: Vec<(String,i64,Option<String>)> = sqlx::query_as("SELECT s.id,s.created_at,(SELECT content FROM messages m WHERE m.session_id=s.id ORDER BY seq DESC LIMIT 1) FROM sessions s ORDER BY COALESCE((SELECT MAX(created_at) FROM messages m WHERE m.session_id=s.id),s.created_at) DESC LIMIT 50").fetch_all(&app.store.pool).await.map_err(anyhow::Error::from)?;
+    Ok(Json(
+        json!({"sessions":sessions.into_iter().map(|(id,created_at,last_message)|json!({"id":id,"created_at":created_at,"preview":last_message.map(|s|crate::domain::truncate(&s,80))})).collect::<Vec<_>>()}),
+    ))
+}
 
 async fn history(State(app): State<App>, Path(session): Path<String>) -> ApiResult<Json<Value>> {
     valid_id(&session)?;
@@ -132,7 +140,9 @@ async fn history(State(app): State<App>, Path(session): Path<String>) -> ApiResu
         return Err(ApiError(StatusCode::NOT_FOUND, "session_not_found"));
     }
     let history = app.store.history(&session, 100).await?;
-    Ok(Json(json!({"messages":history})))
+    Ok(Json(
+        json!({"messages":history,"assets":crate::assets::history_metadata(&app,&session).await?,"tool_calls":crate::tools::logs(&app,Some(&session)).await?}),
+    ))
 }
 
 #[derive(Deserialize)]
@@ -140,6 +150,8 @@ async fn history(State(app): State<App>, Path(session): Path<String>) -> ApiResu
 struct ChatRequest {
     message: String,
     request_id: String,
+    #[serde(default)]
+    assets: Vec<String>,
 }
 async fn chat(
     State(app): State<App>,
@@ -149,6 +161,15 @@ async fn chat(
 ) -> ApiResult<Response> {
     valid_id(&session)?;
     valid_id(&input.request_id)?;
+    if !input.assets.is_empty() && app.tools.is_none() {
+        return Err(ApiError(StatusCode::SERVICE_UNAVAILABLE, "tools_disabled"));
+    }
+    if input.assets.len() > 4 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "too_many_images"));
+    }
+    for asset in &input.assets {
+        valid_id(asset)?;
+    }
     if input.message.trim().is_empty() || input.message.chars().count() > 4000 {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
@@ -166,12 +187,15 @@ async fn chat(
     let (output, receiver) = mpsc::channel(128);
     match app
         .store
-        .begin_turn(&session, &input.request_id, &input.message)
+        .begin_turn_with_assets(&session, &input.request_id, &input.message, &input.assets)
         .await?
     {
         BeginTurn::Missing => return Err(ApiError(StatusCode::NOT_FOUND, "session_not_found")),
         BeginTurn::Busy => return Err(ApiError(StatusCode::CONFLICT, "session_busy")),
         BeginTurn::Conflict => return Err(ApiError(StatusCode::CONFLICT, "request_id_conflict")),
+        BeginTurn::InvalidAssets => {
+            return Err(ApiError(StatusCode::BAD_REQUEST, "invalid_attachments"));
+        }
         BeginTurn::Existing { status, content } => {
             if status != "complete" {
                 return Err(ApiError(
