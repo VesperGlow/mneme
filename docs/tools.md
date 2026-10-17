@@ -104,6 +104,7 @@ SSE 保留 meta/delta/done/error，新增 tool 事件，包含 id、name、actio
 
 - 独立工具凭证、严格 JSON schema、32 KiB 工具参数限制，不允许浏览器 URL 中带账号密码，不把主服务凭证传入 Chromium 环境。
 - 浏览器所有 HTTP/HTTPS 流量经过本地代理。每次连接重新解析 DNS、检查全部地址，只允许公网单播地址的 80/443 端口，并连接已检查的 IP，避免 DNS 重绑定；跳转和子资源同样检查。回环、私网、链路本地、云元数据、IPv4 映射地址及保留网段被拒绝。
+- 页面可使用 GET/HEAD、搜索表单 POST，以及初始化动态页面所需的 JSON POST；后者仅限 fetch/XHR、有效 JSON、请求体不超过 64 KiB、不含 Authorization。其余表单提交、非 JSON POST 及 PUT/PATCH/DELETE 等方法被拒绝。JSON POST 也可能改变公网网站上的状态；这是匿名浏览器页面脚本的有限网络能力，不等于严格只读的网络沙箱，所有目标仍需通过公网地址校验。
 - 禁用隐式 loopback 代理绕过、QUIC、非代理 WebRTC、WebSocket、Service Worker 和下载；页面中的 WebRTC/WebTransport 构造器也禁用。不开放任意 CDP 命令给模型。
 - 非 root 用户运行，Chromium user namespace 沙箱始终启用，启动失败即报错，生产没有 --no-sandbox 降级。定制 seccomp 仅为沙箱允许 clone/clone3/unshare/setns/chroot，保留其余默认过滤；不增加 SYS_ADMIN、privileged、宿主网络或 IPC 权限。
 - 容器只读根目录、全部 capabilities 移除、no-new-privileges；/tmp 512 MiB，PIDs（含线程）512，内存 1536 MiB，CPU 上限 150%。内存及 CPU 通过容器参数限制实际工作负载，不能只限制启动 Podman 的 systemd 服务。浏览器启动后关闭未使用的空白标签页，减少渲染进程占用；工具临时浏览器文件随上下文/进程清理，不挂载主数据卷。

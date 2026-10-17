@@ -76,7 +76,12 @@ export class BrowserTools {
           if (!['GET','HEAD'].includes(route.request().method())) {
             const target = new URL(url);
             const searchForm = (target.hostname === 'html.duckduckgo.com' && target.pathname === '/html/') || (target.hostname.endsWith('.bing.com') && target.pathname === '/search');
-            if (route.request().method() !== 'POST' || !searchForm) return route.abort('blockedbyclient');
+            const request = route.request(), headers = request.headers(), body = request.postDataBuffer();
+            const jsonRequest = ['fetch', 'xhr'].includes(request.resourceType()) && /^application\/(?:[\w.-]+\+)?json(?:\s*;|$)/i.test(headers['content-type'] || '') && !headers.authorization && body?.length <= 65536;
+            if (request.method() !== 'POST' || (!searchForm && !jsonRequest)) return route.abort('blockedbyclient');
+            // Public SPAs often bootstrap through JSON POSTs. This does not
+            // authorize form submissions or authenticated API requests.
+            if (!searchForm) { try { JSON.parse(body.toString('utf8')); } catch { return route.abort('blockedbyclient'); } }
           }
           if (['media', 'font'].includes(route.request().resourceType())) return route.abort();
           await route.continue();

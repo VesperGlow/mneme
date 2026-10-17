@@ -16,10 +16,13 @@ test('session creation is bounded and a late context is disposed', async()=>{
 });
 
 test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expiry and SSRF', {skip:process.env.MNEME_BROWSER_TEST!=='1',timeout:60000}, async()=>{
-  let privateReached=0;
+  let privateReached=0,jsonRequests=0;
   const server=http.createServer((req,res)=>{
     if(req.url==='/slow'){res.writeHead(200,{'content-type':'text/html; charset=utf-8'});res.write(`<html><head><title>Streaming page</title></head><body><article><p>${'正文已经加载，可以读取。'.repeat(20)}</p></article>`);return;}
     if(req.url==='/private'){privateReached++;return res.end('pod-secret');}
+    if(req.url==='/json'){
+      jsonRequests++;res.setHeader('content-type','application/json');return res.end(JSON.stringify({text:'公开 JSON 初始化完成'}));
+    }
     if(req.url==='/redirect'){res.writeHead(302,{location:`http://127.0.0.1:${server.address().port}/private`});return res.end();}
     res.setHeader('content-type','text/html; charset=utf-8');
     res.end(`<html><head><title>CDP fixture</title></head><body><article><h1>动态浏览测试</h1><input name="keyword" aria-label="关键词"><button onclick="document.getElementById('result').textContent='动态结果：'+document.querySelector('input').value">运行查询</button><p id="result">等待输入</p><p>${'正文内容。'.repeat(80)}</p><a href="http://fixture.example/next">下一页</a><img src="http://127.0.0.1:${server.address().port}/private"><div style="height:1800px">可滚动正文</div></article></body></html>`);
@@ -43,6 +46,14 @@ test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expi
     const typed=await browser.execute(session,{action:'type',element:input.ref,text:'浏览器真实输入'});
     const button=typed.elements.find(e=>e.label==='运行查询');assert(button);
     const clicked=await browser.execute(session,{action:'click',element:button.ref});assert.match(clicked.text,/动态结果：浏览器真实输入/);
+    const page=browser.sessions.get(session).page;
+    assert.equal(await page.evaluate(async()=>{const r=await fetch('/json',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'public page'})});return(await r.json()).text;}),'公开 JSON 初始化完成');
+    assert.equal(jsonRequests,1);
+    for(const input of [{method:'POST',headers:{'Content-Type':'text/plain'},body:'text'},{method:'DELETE'},{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer fixture'},body:'{}'},{method:'POST',headers:{'Content-Type':'application/json'},body:'invalid json'},{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({data:'x'.repeat(65536)})}]){
+      assert.equal(await page.evaluate(async input=>{try{await fetch('/json',input);return'allowed';}catch{return'blocked';}},input),'blocked');
+    }
+    assert.equal(jsonRequests,1,'unsupported, authenticated and oversized writes must not reach the server');
+    assert.equal(await page.evaluate(async url=>{try{await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});return'allowed';}catch{return'blocked';}},`http://127.0.0.1:${server.address().port}/private`),'blocked');
     await browser.execute(session,{action:'scroll',delta_y:600});
     const screenshot=await browser.execute(session,{action:'screenshot'});assert.equal(screenshot.image.mime,'image/jpeg');assert(screenshot.image.data.length>1000);
     const live=browser.sessions.get(session);live.page.setDefaultTimeout(50);live.refs.set('e999',live.page.locator('#missing-element'));
