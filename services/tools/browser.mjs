@@ -170,9 +170,34 @@ export class BrowserTools {
   async stopBrowser() {
     await this.reset();
     const browser = this.browser; this.browser = null;
+    // connectOverCDP().close() only disconnects the client. Ask the browser process
+    // to exit before using signals, which container LSM policies can restrict.
+    if (browser?.isConnected()) {
+      await Promise.race([(async () => {
+        const control = await browser.newBrowserCDPSession();
+        await control.send('Browser.close');
+      })().catch(() => {}), delay(3000)]);
+    }
     await browser?.close().catch(() => {});
-    if (this.process && this.process.exitCode === null && this.process.signalCode === null) { this.process.kill('SIGTERM'); await Promise.race([new Promise(resolve => this.process.once('exit', resolve)), delay(1000)]); if (this.process.exitCode === null && this.process.signalCode === null) this.process.kill('SIGKILL'); }
+    const child = this.process;
+    const alive = () => child && child.exitCode === null && child.signalCode === null;
+    const waitExit = async () => {
+      if (!alive()) return;
+      let timer;
+      await new Promise(resolve => {
+        const done = () => { clearTimeout(timer); child.off('exit', done); resolve(); };
+        child.once('exit', done); timer = setTimeout(done, 3000);
+      });
+    };
+    await waitExit();
+    for (const signal of ['SIGTERM', 'SIGKILL']) {
+      if (!alive()) break;
+      try { child.kill(signal); } catch { /* Still clean up sockets before reporting. */ }
+      await waitExit();
+    }
     await this.proxy?.close(); this.proxy = null;
+    if (alive()) throw new ToolError('chromium_stop_failed', 503);
+    this.process = null;
     if (this.profile) await rm(this.profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
   async close() { this.closed = true; clearInterval(this.timer); await this.stopBrowser(); }
