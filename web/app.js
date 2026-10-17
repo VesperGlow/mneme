@@ -28,7 +28,7 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
   };
   const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.book}</svg>`;
-  const state = { chatBusy: false, authenticated: false, route: 'chat', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, library: null, poll: 0 };
+  const state = { chatBusy: false, authenticated: false, route: 'chat', libraryView: 'memories', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, library: null, poll: 0 };
   const fmt = n => Number(n || 0).toLocaleString('zh-CN');
   const pct = n => `${Math.round(Number(n || 0) * 100)}%`;
   const date = (n, full = false) => n ? new Date(n * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', ...(full ? { year: 'numeric', hour: '2-digit', minute: '2-digit' } : {}) }) : '—';
@@ -92,7 +92,7 @@
   function clearLogin() {
     for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
     state.chatBusy = false;
-    state.authenticated = false; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null;
+    state.authenticated = false; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null; state.libraryView = 'memories';
     state.filter = { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }; clearTimeout(state.poll);
     for (const modal of $$('dialog')) { if (modal.open) modal.close(); modal.innerHTML = ''; }
     setNavigation(false); delete document.body.dataset.page;
@@ -123,11 +123,11 @@
     try { await ({ memories: library, agent: agentPage, retrieval: retrievalPage, system: systemPage, settings: settingsPage, chat: chatPage, tools: toolsPage }[state.route])(epoch); }
     catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#page').innerHTML = `<section class="panel">${empty('暂时无法读取数据', errorText(error), '<button class="btn" data-reload>重新加载</button>')}</section>`; }
   }
-  function focusSearch() { if (!state.authenticated) return; if (state.route === 'memories') $('#memory-search')?.focus(); else { location.hash = 'memories'; setTimeout(() => $('#memory-search')?.focus(), 150); } }
+  function focusSearch() { if (!state.authenticated) return; if (state.route === 'memories') { if (state.libraryView === 'queue') selectLibraryView('memories'); $('#memory-search')?.focus(); } else { state.libraryView = 'memories'; location.hash = 'memories'; setTimeout(() => $('#memory-search')?.focus(), 150); } }
   function memorySummary(stats) {
     const pending = Number(stats.jobs.pending || 0) + Number(stats.jobs.running || 0);
     const cards = [['记忆总量', stats.total, '所有未删除的记忆', 'book'], ['有效记忆', stats.active, `${fmt(stats.invalid)} 条已失效`, 'leaf'], ['近 7 天新增', stats.recent_7_days, '持续积累的片段', 'spark'], ['后台任务', pending, stats.jobs.dead ? `${fmt(stats.jobs.dead)} 个任务需要重试` : '提取与索引同步', 'clock']];
-    return `<section class="metrics" aria-label="记忆统计">${cards.map(([label, n, hint, glyph], i) => `<article class="metric${i === 1 ? ' featured' : ''}"><div class="metric-label">${label}${icon(glyph)}</div><div class="metric-number">${fmt(n)}<small>${i === 3 ? '个' : '条'}</small></div><div class="metric-hint">${esc(hint)}</div></article>`).join('')}</section><section class="charts memory-charts"><article class="panel"><div class="panel-head between"><h2>记忆趋势</h2><small>近 7 天 · UTC</small></div><div class="chart-wrap">${activityChart(stats.activity)}</div></article><article class="panel"><div class="panel-head"><h2>类型分布</h2></div>${distribution(stats.kinds, stats.total)}</article></section>`;
+    return `<section class="metrics" aria-label="记忆统计">${cards.map(([label, n, hint, glyph], i) => `<article class="metric${i === 1 ? ' featured' : ''}"><div class="metric-label">${label}${icon(glyph)}</div><div class="metric-number"${i === 3 ? ' id="queue-metric"' : ''}>${fmt(n)}<small>${i === 3 ? '个' : '条'}</small></div><div class="metric-hint"${i === 3 ? ' id="queue-metric-hint"' : ''}>${esc(hint)}</div></article>`).join('')}</section><section class="charts memory-charts"><article class="panel"><div class="panel-head between"><h2>记忆趋势</h2><small>近 7 天 · UTC</small></div><div class="chart-wrap">${activityChart(stats.activity)}</div></article><article class="panel"><div class="panel-head"><h2>类型分布</h2></div>${distribution(stats.kinds, stats.total)}</article></section>`;
   }
   function activityChart(activity) {
     const max = Math.max(1, ...activity.map(a => a.count)); const grid = [0, 1, 2, 3].map(i => `<line class="chart-grid" x1="25" x2="575" y1="${25 + i * 36}" y2="${25 + i * 36}"/>`).join('');
@@ -139,13 +139,45 @@
   }
   async function library(epoch) {
     const stats = await api('/v1/console/stats'); if (epoch !== state.epoch) return;
-    const f = state.filter;
-    $('#page').innerHTML = memorySummary(stats) + `<div class="library-toolbar"><div class="tabs" role="group" aria-label="记忆状态">${[['all', '全部记忆'], ['active', '有效'], ['invalid', '已失效'], ['deleted', '已删除']].map(([key, label]) => `<button class="tab${f.status === key ? ' active' : ''}" data-status="${key}" aria-pressed="${f.status === key}">${label}</button>`).join('')}</div>${newButton()}</div><section class="panel"><form class="filters" id="filter-form"><div class="search-field">${icon('search')}<label class="sr-only" for="memory-search">搜索记忆</label><input id="memory-search" type="search" value="${esc(f.q)}" placeholder="搜索内容、实体或属性键…" maxlength="500" autocomplete="off"></div><label class="sr-only" for="kind-filter">筛选记忆类型</label><select id="kind-filter" class="filter-select"><option value="">所有类型</option>${Object.entries(kinds).map(([key, name]) => `<option value="${key}"${f.kind === key ? ' selected' : ''}>${name}</option>`).join('')}</select><label class="sr-only" for="sort-filter">排序方式</label><select id="sort-filter" class="filter-select">${[['updated', '最近更新'], ['created', '最近创建'], ['oldest', '最早创建'], ['importance', '重要性优先'], ['confidence', '可信度优先']].map(([key, name]) => `<option value="${key}"${f.sort === key ? ' selected' : ''}>${name}</option>`).join('')}</select></form><div id="library-results">${loading()}</div></section>`;
+    const f = state.filter; const queue = state.libraryView === 'queue';
+    $('#page').innerHTML = memorySummary(stats) + `<div class="library-toolbar"><div class="tabs" role="group" aria-label="记忆状态">${[['all', '全部记忆'], ['active', '有效'], ['invalid', '已失效'], ['deleted', '已删除']].map(([key, label]) => `<button class="tab${!queue && f.status === key ? ' active' : ''}" data-status="${key}" aria-pressed="${!queue && f.status === key}">${label}</button>`).join('')}<button class="tab${queue ? ' active' : ''}" id="queue-tab" data-queue-view aria-pressed="${queue}">后台队列<span class="tab-count" id="queue-tab-count">${fmt(Number(stats.jobs.pending) + Number(stats.jobs.running) + Number(stats.jobs.dead))}</span></button></div>${newButton()}</div><section class="panel" id="memory-browser"${queue ? ' hidden' : ''}><form class="filters" id="filter-form"><div class="search-field">${icon('search')}<label class="sr-only" for="memory-search">搜索记忆</label><input id="memory-search" type="search" value="${esc(f.q)}" placeholder="搜索内容、实体或属性键…" maxlength="500" autocomplete="off"></div><label class="sr-only" for="kind-filter">筛选记忆类型</label><select id="kind-filter" class="filter-select"><option value="">所有类型</option>${Object.entries(kinds).map(([key, name]) => `<option value="${key}"${f.kind === key ? ' selected' : ''}>${name}</option>`).join('')}</select><label class="sr-only" for="sort-filter">排序方式</label><select id="sort-filter" class="filter-select">${[['updated', '最近更新'], ['created', '最近创建'], ['oldest', '最早创建'], ['importance', '重要性优先'], ['confidence', '可信度优先']].map(([key, name]) => `<option value="${key}"${f.sort === key ? ' selected' : ''}>${name}</option>`).join('')}</select></form><div id="library-results">${loading()}</div></section>${queueMarkup(stats, queue)}`;
     $('#filter-form').onsubmit = event => { event.preventDefault(); clearTimeout(library.debounce); state.filter.q = $('#memory-search').value; state.filter.offset = 0; loadLibrary(epoch); };
     $('#memory-search').oninput = () => { clearTimeout(library.debounce); library.debounce = setTimeout(() => { if (epoch !== state.epoch) return; state.filter.q = $('#memory-search').value; state.filter.offset = 0; loadLibrary(epoch); }, 280); };
     $('#kind-filter').onchange = event => { state.filter.kind = event.target.value; state.filter.offset = 0; loadLibrary(epoch); };
     $('#sort-filter').onchange = event => { state.filter.sort = event.target.value; state.filter.offset = 0; loadLibrary(epoch); };
-    await loadLibrary(epoch);
+    if (queue) await refreshQueue(epoch); else await loadLibrary(epoch);
+  }
+  function queueMarkup(stats, visible) {
+    return `<section class="panel job-card memory-queue" id="memory-queue"${visible ? '' : ' hidden'} aria-label="后台处理队列"><div class="between"><div><h2>后台处理队列</h2><p class="subheading">记忆提取和索引同步持续在后台进行</p></div><span class="badge green">自动更新</span></div><div class="queue-counts">${[['pending', '待处理'], ['running', '运行中'], ['dead', '失败']].map(([key, label]) => `<div><span>${label}</span><strong id="queue-${key}">${fmt(stats.jobs[key])}</strong></div>`).join('')}</div><div class="queue-footer"><small id="queue-updated">更新于 ${date(stats.as_of, true)}</small><div class="flex"><button class="btn" data-maintenance="reindex">重建索引</button><button class="btn" data-maintenance="jobs/retry"${stats.jobs.dead ? '' : ' disabled'}>重试失败任务</button></div></div><div class="error-inline" id="queue-error" role="status"></div></section>`;
+  }
+  function selectLibraryView(view) {
+    clearTimeout(state.poll); state.libraryView = view;
+    const queue = view === 'queue';
+    $('#memory-browser').hidden = queue; $('#memory-queue').hidden = !queue;
+    $$('[data-status]').forEach(tab => { const active = !queue && tab.dataset.status === state.filter.status; tab.classList.toggle('active', active); tab.setAttribute('aria-pressed', String(active)); });
+    $('#queue-tab').classList.toggle('active', queue); $('#queue-tab').setAttribute('aria-pressed', String(queue));
+    if (queue) refreshQueue(); else loadLibrary();
+  }
+  async function refreshQueue(epoch = state.epoch) {
+    if (epoch !== state.epoch || state.libraryView !== 'queue') return;
+    clearTimeout(state.poll);
+    try {
+      const stats = await api('/v1/console/stats');
+      if (epoch !== state.epoch || state.libraryView !== 'queue') return;
+      for (const key of ['pending', 'running', 'dead']) $(`#queue-${key}`).textContent = fmt(stats.jobs[key]);
+      const pending = Number(stats.jobs.pending) + Number(stats.jobs.running);
+      $('#queue-tab-count').textContent = fmt(pending + Number(stats.jobs.dead));
+      $('#queue-metric').innerHTML = `${fmt(pending)}<small>个</small>`;
+      $('#queue-metric-hint').textContent = stats.jobs.dead ? `${fmt(stats.jobs.dead)} 个任务需要重试` : '提取与索引同步';
+      const retry = $('#memory-queue [data-maintenance="jobs/retry"]');
+      if (!retry.dataset.busy) retry.disabled = !stats.jobs.dead;
+      $('#queue-updated').textContent = `更新于 ${date(stats.as_of, true)}`;
+      $('#queue-error').textContent = '';
+    } catch (error) {
+      if (epoch !== state.epoch || state.libraryView !== 'queue' || error.name === 'AbortError') return;
+      $('#queue-error').textContent = '队列状态暂时无法更新，稍后会自动重试。';
+    }
+    if (epoch === state.epoch && state.libraryView === 'queue') state.poll = setTimeout(() => refreshQueue(epoch), 5000);
   }
   async function loadLibrary(epoch = state.epoch) {
     const sequence = library.sequence = (library.sequence || 0) + 1; const element = $('#library-results'); if (!element) return;
@@ -155,7 +187,7 @@
       if (epoch !== state.epoch || sequence !== library.sequence) return;
       state.library = data; element.removeAttribute('aria-busy');
       element.innerHTML = data.memories.length ? `<div class="table-scroll"><table class="library-table"><thead><tr><th>记忆内容</th><th>类型</th><th>状态</th><th>重要性</th><th>可信度</th><th>更新时间</th><th><span class="sr-only">操作</span></th></tr></thead><tbody>${data.memories.map(m => `<tr><td class="memory-cell"><button class="text-btn memory-title" data-detail="${esc(m.id)}">${esc(m.content)}</button><div class="memory-meta">${esc(entityArray(m).slice(0, 3).map(e => `# ${e}`).join('   ')) || (m.origin === 'manual' ? '手动记录' : '来自对话')}${m.indexed_revision < m.revision ? ' · 索引更新中' : ''}</div></td><td class="cell-kind">${kindBadge(m.kind)}</td><td class="cell-state">${statusBadge(m)}</td><td class="cell-score" data-label="重要性">${signal(m.importance)}</td><td class="cell-score" data-label="可信度">${signal(m.confidence)}</td><td class="cell-time table-time">${date(m.updated_at, true)}</td><td class="cell-actions"><div class="actions"><button class="icon-btn table-action" data-edit="${esc(m.id)}" aria-label="编辑记忆"${m.deleted_at || m.status !== 'active' ? ' disabled' : ''}>${icon('edit')}</button><button class="icon-btn table-action danger" data-delete="${esc(m.id)}" aria-label="删除记忆"${m.deleted_at ? ' disabled' : ''}>${icon('trash')}</button></div></td></tr>`).join('')}</tbody></table></div>${pagination(data)}` : empty(state.filter.q || state.filter.kind || state.filter.status !== 'all' ? '没有找到匹配的记忆' : '这里还没有记忆', state.filter.status === 'deleted' ? '已删除的记忆不会参与召回。' : '试试其他关键词或筛选条件，或者手动新增一条记忆。', state.filter.status === 'all' && !state.filter.q ? newButton() : '') + pagination(data);
-      if (data.memories.some(m => m.indexed_revision < m.revision)) { clearTimeout(state.poll); state.poll = setTimeout(() => { if (epoch === state.epoch && !$('#editor').open && !$('#confirm').open) loadLibrary(epoch); }, 5000); }
+      if (state.libraryView !== 'queue' && data.memories.some(m => m.indexed_revision < m.revision)) { clearTimeout(state.poll); state.poll = setTimeout(() => { if (epoch === state.epoch && state.libraryView !== 'queue' && !$('#editor').open && !$('#confirm').open) loadLibrary(epoch); }, 5000); }
     } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') { element.removeAttribute('aria-busy'); element.innerHTML = empty('无法读取记忆', errorText(error), '<button class="btn" data-reload>重试</button>'); } }
   }
   function pagination(data) { return `<div class="pagination"><span>共 ${fmt(data.total)} 条${data.total ? ` · ${data.offset + 1}–${Math.min(data.offset + data.limit, data.total)}` : ''}</span><div class="flex"><button class="btn small" data-page="${Math.max(0, data.offset - data.limit)}"${data.offset === 0 ? ' disabled' : ''}>${icon('back')}上一页</button><button class="btn small" data-page="${data.offset + data.limit}"${data.offset + data.limit >= data.total ? ' disabled' : ''}>下一页${icon('chevron')}</button></div></div>`; }
@@ -207,7 +239,7 @@
     const data = await api('/v1/console/system'); if (epoch !== state.epoch) return;
     const labels = { llm: ['语言模型', 'spark', '外部兼容 API'], neo4j: ['Neo4j', 'graph', '知识图谱与混合检索'], embedding: ['Embedding', 'chip', '本地 CPU 语义编码'], reranker: ['Reranker', 'system', '本地 CPU 相关性精排'] };
     const services = Object.entries(data.services).map(([key, s]) => { const [label, glyph, desc] = labels[key]; const metric = s.metrics; return `<article class="panel service"><div class="between"><div class="flex"><div class="service-icon">${icon(glyph)}</div><div><div class="service-title">${label}</div><div class="service-model">${desc}</div></div></div><span class="badge ${s.state === 'healthy' ? 'green' : s.state === 'unknown' ? 'amber' : 'red'}"><i class="dot"></i>${s.state === 'healthy' ? '可用' : s.state === 'unknown' ? '待确认' : '不可用'}</span></div><p class="service-model spaced">${esc(s.model || 'Neo4j · Cypher HTTP')}</p><div class="service-metrics"><div><small>探测耗时</small><strong>${s.latency_ms.toFixed(0)}<span>ms</span></strong></div><div><small>平均调用耗时</small><strong>${metric.requests ? ms(metric.average_ms) : '—'}</strong></div><div><small>调用 / 失败</small><strong>${fmt(metric.requests)}<span>/ ${fmt(metric.failures)}</span></strong></div></div></article>`; }).join('');
-    $('#page').innerHTML = `<div class="notice">${icon('info')}<span>LLM 通过模型目录接口探测，不执行生成；接口不受支持时显示“待确认”。CPU 模型状态表示服务已加载。性能统计来自当前进程已完成的真实调用。</span></div><section class="service-grid spaced">${services}</section><section class="panel spaced"><div class="system-facts"><div><small>连续运行</small><strong>${uptime(data.uptime_seconds)}</strong></div><div><small>SQLite 数据文件</small><strong>${bytes(data.database_bytes)}</strong></div><div><small>向量维度</small><strong>${data.dimensions}</strong></div><div><small>服务版本</small><strong>v${esc(data.version)}</strong></div></div></section><section class="panel job-card spaced"><div class="between"><div><h2>后台处理队列</h2><p class="subheading">记忆提取和索引同步持续在后台进行</p></div><div class="flex"><span class="badge">待处理 ${fmt(data.jobs.pending)}</span><span class="badge green">运行中 ${fmt(data.jobs.running)}</span><span class="badge${data.jobs.dead ? ' amber' : ''}">失败 ${fmt(data.jobs.dead)}</span></div></div><div class="between spaced"><small>SQLite 正常 · 检查时间 ${date(data.checked_at, true)}${data.cached ? ' · 10 秒内缓存' : ''}</small><div class="flex"><button class="btn small" data-maintenance="reindex">重建索引</button><button class="btn small" data-maintenance="jobs/retry"${data.jobs.dead ? '' : ' disabled'}>重试失败任务</button></div></div></section>`;
+    $('#page').innerHTML = `<div class="notice">${icon('info')}<span>LLM 通过模型目录接口探测，不执行生成；接口不受支持时显示“待确认”。CPU 模型状态表示服务已加载。性能统计来自当前进程已完成的真实调用。</span></div><section class="service-grid spaced">${services}</section><section class="panel spaced"><div class="system-facts"><div><small>连续运行</small><strong>${uptime(data.uptime_seconds)}</strong></div><div><small>SQLite 数据文件</small><strong>${bytes(data.database_bytes)}</strong></div><div><small>向量维度</small><strong>${data.dimensions}</strong></div><div><small>服务版本</small><strong>v${esc(data.version)}</strong></div></div></section>`;
 
   }
   const toolLabels = { search: '搜索网页', navigate: '打开网页', read: '阅读网页', click: '点击', type: '输入关键词', scroll: '滚动', screenshot: '网页截图', back: '返回', wait: '等待渲染', close: '关闭浏览器', view_image: '查看图片' };
@@ -346,7 +378,7 @@
   async function toolsPage(epoch) {
     const [status, data] = await Promise.all([api('/v1/console/tools'), api('/v1/console/tools/calls')]); if (epoch !== state.epoch) return;
     const service = status.service || {};
-    $('#page').innerHTML = `<section class="panel job-card"><div class="between"><div><h2>mneme-tools</h2><p class="subheading">Tavily 网页搜索 · Chromium 网页浏览</p></div><span class="badge ${status.state === 'healthy' ? 'green' : 'amber'}">${status.enabled ? status.state === 'healthy' ? '可用' : '暂不可用' : '未启用'}</span></div><div class="system-facts"><div><small>浏览器会话</small><strong>${fmt(service.active_sessions)} / ${fmt(service.max_sessions)}</strong></div><div><small>每轮调用上限</small><strong>${fmt(status.max_calls)}</strong></div><div><small>调用 / 失败</small><strong>${fmt(status.metrics?.requests)} / ${fmt(status.metrics?.failures)}</strong></div><div><small>空闲回收</small><strong>${fmt((service.idle_timeout_seconds || 0) / 60)} 分</strong></div><div><small>浏览器沙箱</small><strong>${service.sandbox === true ? '已启用' : '不可用'}</strong></div><div><small>平均调用耗时</small><strong>${ms(status.metrics?.average_ms)}</strong></div></div><p class="hint">工具服务通过独立凭证与 Pod 内 localhost HTTP 连接。浏览器只允许访问公网 HTTP/HTTPS，图片由现有多模态 LLM 理解。</p></section><section class="panel spaced"><div class="panel-head"><h2>最近工具调用</h2><p class="subheading">状态、耗时、错误与实际读取的来源，最多显示 100 条</p></div><div class="tool-log-list">${data.calls.map(call => `<details class="tool-log"><summary><span>${esc(toolLabels[call.action] || call.name)}</span><span class="badge ${call.status === 'failed' ? 'red' : call.status === 'running' ? 'amber' : 'green'}">${esc(call.status)}</span><small>${ms(call.elapsed_ms)} · ${date(call.created_at, true)}</small></summary><div class="tool-log-body">${toolMarkup(call)}<p class="hint">会话 ${esc(call.session_id)} · 轮次 ${esc(call.turn_id)}</p><button class="btn small" data-close-browser="${esc(call.session_id)}">释放浏览器会话</button><details class="technical"><summary>结构化结果</summary><pre class="prewrap">${esc(JSON.stringify(call.result, null, 2))}</pre></details></div></details>`).join('') || empty('还没有工具调用', '前往对话页，让 Mneme 搜索网页、阅读资料或查看图片。', '<a class="btn" href="#chat">开始对话</a>')}</div></section>`;
+    $('#page').innerHTML = `<div class="tools-layout"><section class="panel job-card tools-status"><div class="between"><div><h2>mneme-tools</h2><p class="subheading">Tavily 网页搜索 · Chromium 网页浏览</p></div><span class="badge ${status.state === 'healthy' ? 'green' : 'amber'}">${status.enabled ? status.state === 'healthy' ? '可用' : '暂不可用' : '未启用'}</span></div><div class="system-facts"><div><small>浏览器会话</small><strong>${fmt(service.active_sessions)} / ${fmt(service.max_sessions)}</strong></div><div><small>每轮调用上限</small><strong>${fmt(status.max_calls)}</strong></div><div><small>调用 / 失败</small><strong>${fmt(status.metrics?.requests)} / ${fmt(status.metrics?.failures)}</strong></div><div><small>空闲回收</small><strong>${fmt((service.idle_timeout_seconds || 0) / 60)} 分</strong></div><div><small>浏览器沙箱</small><strong>${service.sandbox === true ? '已启用' : '不可用'}</strong></div><div><small>平均调用耗时</small><strong>${ms(status.metrics?.average_ms)}</strong></div></div><p class="hint">工具服务通过独立凭证与 Pod 内 localhost HTTP 连接。浏览器只允许访问公网 HTTP/HTTPS，图片由现有多模态 LLM 理解。</p></section><section class="panel tools-history"><div class="panel-head"><h2>最近工具调用</h2><p class="subheading">状态、耗时、错误与实际读取的来源，最多显示 100 条</p></div><div class="tool-log-list">${data.calls.map(call => `<details class="tool-log"><summary><span>${esc(toolLabels[call.action] || call.name)}</span><span class="badge ${call.status === 'failed' ? 'red' : call.status === 'running' ? 'amber' : 'green'}">${esc(call.status)}</span><small>${ms(call.elapsed_ms)} · ${date(call.created_at, true)}</small></summary><div class="tool-log-body">${toolMarkup(call)}<p class="hint">会话 ${esc(call.session_id)} · 轮次 ${esc(call.turn_id)}</p><button class="btn small" data-close-browser="${esc(call.session_id)}">释放浏览器会话</button><details class="technical"><summary>结构化结果</summary><pre class="prewrap">${esc(JSON.stringify(call.result, null, 2))}</pre></details></div></details>`).join('') || empty('还没有工具调用', '前往对话页，让 Mneme 搜索网页、阅读资料或查看图片。', '<a class="btn" href="#chat">开始对话</a>')}</div></section></div>`;
     $$('[data-close-browser]').forEach(button => { button.onclick = async () => { button.disabled = true; try { await send('/v1/console/tools/close', { session_id: button.dataset.closeBrowser }); toast('浏览器会话已释放。'); route(); } catch (error) { toast(errorText(error), true); button.disabled = false; } }; });
     if (data.calls.some(call => call.status === 'running')) state.poll = setTimeout(() => { if (epoch === state.epoch) route(); }, 3000);
   }
@@ -413,9 +445,19 @@
     else if (target.dataset.close) closeDialog(target.dataset.close);
     else if (target.hasAttribute('data-reload')) route();
     else if (target.hasAttribute('data-page')) { state.filter.offset = Number(target.dataset.page); loadLibrary(); }
-    else if (target.dataset.status) { state.filter.status = target.dataset.status; state.filter.offset = 0; $$('[data-status]').forEach(t => { t.classList.toggle('active', t === target); t.setAttribute('aria-pressed', String(t === target)); }); loadLibrary(); }
+    else if (target.hasAttribute('data-queue-view')) selectLibraryView('queue');
+    else if (target.dataset.status) { state.filter.status = target.dataset.status; state.filter.offset = 0; selectLibraryView('memories'); }
     else if (target.dataset.example) { $('#retrieval-query').value = target.dataset.example; $('#retrieval-query').focus(); }
-    else if (target.dataset.maintenance) { target.disabled = true; send(`/v1/admin/${target.dataset.maintenance}`, {}).then(data => { toast(data.retried !== undefined ? `已重新排队 ${data.retried} 个任务。` : `已安排 ${data.queued} 条记忆同步索引。`); }).catch(error => { if (error.name !== 'AbortError') toast(errorText(error), true); }).finally(() => { target.disabled = false; }); }
+    else if (target.dataset.maintenance) {
+      const epoch = state.epoch; target.disabled = true; target.dataset.busy = 'true';
+      send(`/v1/admin/${target.dataset.maintenance}`, {}).then(async data => {
+        toast(data.retried !== undefined ? `已重新排队 ${data.retried} 个任务。` : `已安排 ${data.queued} 条记忆同步索引。`);
+        if (epoch === state.epoch && state.route === 'memories') await refreshQueue(epoch);
+      }).catch(error => { if (error.name !== 'AbortError') toast(errorText(error), true); }).finally(() => {
+        delete target.dataset.busy;
+        target.disabled = target.dataset.maintenance === 'jobs/retry' && Number($('#queue-dead')?.textContent.replaceAll(',', '')) === 0;
+      });
+    }
   });
   for (const dialog of $$('dialog')) { dialog.addEventListener('close', () => { if (!$$('dialog[open]').length) document.body.classList.remove('dialog-open'); }); dialog.addEventListener('click', event => { if (event.target === dialog) { const r = dialog.getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) closeDialog(dialog.id); } }); }
   window.addEventListener('hashchange', () => { setNavigation(false); for (const dialog of $$('dialog')) if (dialog.open) closeDialog(dialog.id); state.detail = null; route(); });
