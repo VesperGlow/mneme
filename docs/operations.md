@@ -44,7 +44,7 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 
 ## 内置模型与构建下载
 
-浏览器工具镜像为 `ghcr.io/vesperglow/mneme-tools:latest`，加入已有 `mneme.pod`，无需发布新端口。工具状态和错误可在 Console 的“工具”页查看；单独重启可执行 `systemctl --user restart mneme-tools`。该服务使用用户命名空间沙箱，宿主机必须允许非特权用户命名空间；启动失败时检查内核/AppArmor 与 seccomp 日志，不要添加 `--no-sandbox` 或宿主机权限。验证码、目标站限流、页面不可提取会返回明确错误，可能需要更换搜索引擎或稍后重试。安装、接口、资源与共享网络限制见 [tools.md](tools.md)。
+浏览器工具镜像为 `ghcr.io/vesperglow/mneme-tools:latest`，加入已有 `mneme.pod`，无需发布新端口。工具状态和错误可在 Console 的“工具”页查看；单独重启可执行 `systemctl --user restart mneme-tools`。该服务使用用户命名空间沙箱，宿主机必须允许非特权用户命名空间；启动失败时检查内核/AppArmor 与 seccomp 日志，不要添加 `--no-sandbox` 或宿主机权限。搜索使用 Tavily，在 `.env` 设置 `MNEME_TAVILY_API_KEY`（多个 key 用 `/` 分隔）后重新安装并重启；浏览网址继续使用 Chromium。Tavily 凭证无效、额度耗尽或限流，以及网页验证码、目标站限流、页面不可提取均返回明确错误。安装、接口、资源与共享网络限制见 [tools.md](tools.md)。
 
 发布的模型镜像内置两个模型以及分词器、配置、GTE 自定义代码，文件约 1.8 GB，默认严格离线加载。首次拉取镜像后，服务启动和重启都不访问外部模型下载站。GitHub 构建流程在 `--network none`、只读根文件系统下实际加载两个 CPU 模型，并验证 1024 维归一化向量和中文精排，通过后才发布。
 

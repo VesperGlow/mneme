@@ -9,6 +9,7 @@ async fn main() -> anyhow::Result<()> {
     let mut config: Config = toml::from_str(include_str!("../config/default.toml"))?;
     config.database = temp.path().join("db").to_string_lossy().into();
     config.api_token = "console-test-token-01234567890123456789".into();
+    config.console.password = "console-fixture-password".into();
     config.llm_key = "tools-qa-llm-fixture-only".into();
     config.neo4j_password = "fixture".into();
     config.llm.model = "tools-fixture".into();

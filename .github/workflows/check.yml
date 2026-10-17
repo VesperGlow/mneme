@@ -39,7 +39,7 @@ jobs:
           cache-dependency-path: services/tools/package-lock.json
       - run: npm ci --prefix services/tools --no-audit --no-fund
       - run: node --check web/app.js && node --check scripts/console-browser-test.cjs
-      - run: node --test services/tools/test/security.test.mjs
+      - run: node --test services/tools/test/*.test.mjs
       - run: for file in services/tools/*.mjs scripts/smoke-tools.mjs; do node --check "$file"; done
 
   containers:

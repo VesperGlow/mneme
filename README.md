@@ -10,8 +10,9 @@
 flowchart LR
     Client[中文终端 / HTTP 客户端] -->|Bearer + SSE| Rust[Rust / Axum]
     Rust -->|流式生成| LLM[外部兼容 API]
-    Rust -->|localhost HTTP / Tool Calling| Tools[mneme-tools / Chromium CDP]
-    Tools -->|真实浏览器| Web[搜索引擎 / 公开网页]
+    Rust -->|localhost HTTP / Tool Calling| Tools[mneme-tools / Tavily + Chromium CDP]
+    Tools -->|搜索 API| Tavily[Tavily]
+    Tools -->|真实浏览器| Web[公开网页]
     Rust --> SQLite[(SQLite / WAL / FULL)]
     SQLite --> Worker[持久化后台任务]
     Worker -->|事实提取| LLM
@@ -78,6 +79,8 @@ systemctl --user start mneme.target
 ## 开始对话
 
 新安装的 `.env.example` 启用工具；升级时，旧 `.env` 没有 `MNEME_TOOLS_ENABLED` 则保留原有聊天行为。使用支持流式 Tool Calling 的模型后，设置 `MNEME_TOOLS_ENABLED=true`，重新安装并重启。图片理解还要求该模型支持 `image_url`，不需要新增视觉推理服务。
+
+网页搜索使用 Tavily：在 `.env` 填入 `MNEME_TAVILY_API_KEY=tvly-your-key`；多个 key 用 `/` 分隔，例如 `MNEME_TAVILY_API_KEY=tvly-key1/tvly-key2`，搜索请求会依次轮转使用。运行 `bash scripts/install.sh` 并重启 `mneme.target` 后生效。Chromium 继续负责打开网址、读取、点击和截图；未填 Tavily key 时仍可直接浏览网址。详见 [工具配置](docs/tools.md)。
 
 QQ 接入遵循官方 BotGo 的 Webhook 协议，由同一 Rust 进程处理验签、Token 刷新和消息投递，不增加 Go 服务或容器。QQ 平台还须配置 **HTTPS 回调 `/qqbot`、`C2C_MESSAGE_CREATE` 事件和出口 IP 白名单**。配置完成后直接私聊即可，第一条消息会自动建立个人会话并生成回复，无需打开 Console 或发送绑定码。之后继续使用同一账号的对话与长期记忆；完整设置和测试边界见 [docs/qq.md](docs/qq.md)。
 

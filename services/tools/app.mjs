@@ -34,7 +34,7 @@ export async function createServer({ token, browser = new BrowserTools(), eager 
     const code = error instanceof ToolError ? error.code : error.validation ? 'invalid_arguments' : error.statusCode === 413 ? 'body_too_large' : 'tool_internal_error';
     reply.code(error instanceof ToolError ? error.status : error.validation ? 400 : error.statusCode === 413 ? 413 : 500).send({ error: code });
   });
-  app.get('/health', async () => ({ ready: Boolean(browser.browser?.isConnected()), active_sessions: browser.sessions.size, max_sessions: browser.maxSessions, idle_timeout_seconds: browser.ttlMs / 1000, sandbox: browser.sandbox, engine: browser.engine, active_calls: active, metrics }));
+  app.get('/health', async () => ({ ready: Boolean(browser.browser?.isConnected()), active_sessions: browser.sessions.size, max_sessions: browser.maxSessions, idle_timeout_seconds: browser.ttlMs / 1000, sandbox: browser.sandbox, engine: browser.engine, search_configured: Boolean(browser.search?.configured), active_calls: active, metrics }));
   app.get('/v1/tools', async () => catalog);
   app.post('/v1/execute', { schema: { body: { type: 'object', additionalProperties: false, required: ['session_id', 'arguments'], properties: { session_id: uuid, arguments: browserParameters } } } }, async (request, reply) => {
     const started = performance.now(); metrics.calls++;
@@ -68,7 +68,8 @@ export async function createServer({ token, browser = new BrowserTools(), eager 
 }
 
 if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
-  const browser = new BrowserTools({ executablePath: process.env.MNEME_CHROMIUM_PATH || '/usr/bin/chromium', engine: process.env.MNEME_SEARCH_ENGINE || 'google' });
+  try { process.loadEnvFile('.env'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  const browser = new BrowserTools({ executablePath: process.env.MNEME_CHROMIUM_PATH || '/usr/bin/chromium' });
   const app = await createServer({ token: process.env.MNEME_TOOLS_TOKEN, browser });
   await app.listen({ host: '127.0.0.1', port: Number(process.env.MNEME_TOOLS_PORT || 8091) });
   console.log(JSON.stringify({ event: 'tools_started', transport: 'loopback_http', sandbox: browser.sandbox }));

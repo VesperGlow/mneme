@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import { BrowserTools } from '../browser.mjs';
-import { NetworkPolicy, ToolError } from '../security.mjs';
+import { TavilySearch } from '../search.mjs';
+import { NetworkPolicy } from '../security.mjs';
 
 test('session creation is bounded and a late context is disposed', async()=>{
   const browser=new BrowserTools({timeoutMs:50});let release,closed=0;
@@ -15,58 +16,40 @@ test('session creation is bounded and a late context is disposed', async()=>{
   }finally{browser.browser=null;await browser.close();}
 });
 
-test('real sandboxed CDP: repeat search submissions, Google/Bing/DDG results and verification errors', {skip:process.env.MNEME_BROWSER_TEST!=='1',timeout:60000}, async()=>{
+test('real sandboxed CDP: Tavily search preserves the page, navigation and verification errors', {skip:process.env.MNEME_BROWSER_TEST!=='1',timeout:60000}, async()=>{
   class FixturePolicy extends NetworkPolicy {
     async resolve(input) {
       const url=new URL(input);
-      if(['www.google.com','www.bing.com','html.duckduckgo.com'].includes(url.hostname)) return {url,host:url.hostname,port:443,address:'93.184.216.34',family:4};
+      if(url.hostname==='docs.example') return {url,host:url.hostname,port:443,address:'93.184.216.34',family:4};
       return super.resolve(input);
     }
   }
-  const browser=new BrowserTools({policy:new FixturePolicy()});
+  const search=new TavilySearch({apiKeys:'tvly-fixture',fetchImpl:async()=>Response.json({results:[{title:'Source page',url:'https://docs.example/',content:'A source found by Tavily.'}]})});
+  const browser=new BrowserTools({policy:new FixturePolicy(),search});
   const id='11111111-1111-4111-8111-111111111111';
   try {
-    assert.equal(browser.engine,'google');
+    const found=await browser.execute(id,{action:'search',query:'source'});
+    assert.equal(found.results[0].url,'https://docs.example/');
+    assert.equal(browser.sessions.size,0,'search must not allocate a page');
+    await assert.rejects(browser.execute(id,{action:'read'}),/browser_session_missing_navigate/);
     const session=await browser.session(id);
-    const queries=[];
-    await session.context.route(/^https:\/\/(www\.google\.com|www\.bing\.com|html\.duckduckgo\.com)\//,async route=>{
-      const url=new URL(route.request().url());
-      let body;
-      if(url.pathname==='/sorry/index') body='<title>Verification</title><p>Our systems have detected unusual traffic from your computer network.</p>';
-      else if(url.pathname==='/denied') return route.fulfill({status:403,contentType:'text/html',body:'<title>Access denied</title><p>Access denied</p>'});
-      else if(url.searchParams.has('q')) {
-        const query=url.searchParams.get('q');queries.push(query);
-        if(query==='verification') return route.fulfill({contentType:'text/html',body:'<title>Verification</title><p>Our systems have detected unusual traffic from your computer network.</p>'});
-        body=url.hostname==='www.google.com'
-          ? '<div id="search"><div class="MjjYud"><a href="https://www.debian.org/"><span>www.debian.org</span><h3>Debian official site</h3></a><p>The universal operating system. Documentation about unusual traffic.</p></div><div class="MjjYud"><a href="/url?q=https%3A%2F%2Fwww.rust-lang.org%2F"><h3>Rust official site</h3></a><p>A language for reliable software.</p></div></div>'
-          : url.hostname==='www.bing.com'
-            ? '<li class="b_algo"><h2><a href="https://www.debian.org/">Debian official site</a></h2><p>The universal operating system.</p></li>'
-            : '<div class="result"><a class="result__a" href="https://www.debian.org/">Debian official site</a><p>The universal operating system.</p></div>';
-      } else {
-        // Model the autocomplete handler that swallowed Enter in production.
-        const submit=url.hostname==='www.google.com'?'name="btnK"':url.hostname==='www.bing.com'?'id="sb_form_go"':'';
-        body=`<form action="/search" onkeydown="if(event.key==='Enter')event.preventDefault()"><input name="q"><input type="submit" ${submit} value="Search"></form>`;
-      }
-      await route.fulfill({contentType:'text/html; charset=utf-8',body:`<html><body>${body}</body></html>`});
+    await session.context.route('https://docs.example/**',async route=>{
+      const path=new URL(route.request().url()).pathname;
+      const status=path==='/denied'?403:path==='/rate-limited'?429:200;
+      const body=path==='/verification'?'<title>Verification</title><p>Verify you are human.</p>':'<title>Source page</title><article><p>Readable source content.</p><a href="https://docs.example/next">Next page</a></article>';
+      await route.fulfill({status,contentType:'text/html; charset=utf-8',body});
     });
-    for(const engine of ['google','bing','duckduckgo']) {
-      browser.engine=engine;
-      for(const query of ['Debian official website','Rust programming language']) {
-        const result=await browser.execute(id,{action:'search',query});
-        assert.equal(result.results[0].title,'Debian official site');
-        assert.equal(result.results[0].url,'https://www.debian.org/');
-        assert.match(result.results[0].snippet,/universal operating system/);
-        if(engine==='google') {
-          assert.equal(result.results.length,2);
-          assert.equal(result.results[1].url,'https://www.rust-lang.org/');
-        }
-      }
-    }
-    assert.equal(queries.length,6,'each search must submit exactly once');
-    browser.engine='google';
-    await assert.rejects(browser.execute(id,{action:'search',query:'verification'}),/search_verification_required/);
-    await assert.rejects(browser.execute(id,{action:'read'}),/page_verification_required/);
-    await assert.rejects(browser.execute(id,{action:'navigate',url:'https://www.google.com/denied'}),/page_access_denied/);
+    const opened=await browser.execute(id,{action:'navigate',url:found.results[0].url});
+    const refs=[...session.refs.keys()];
+    assert.equal(opened.title,'Source page');
+    await browser.execute(id,{action:'search',query:'another source'});
+    assert.equal(browser.sessions.get(id),session);
+    assert.equal(session.page.url(),found.results[0].url);
+    assert.deepEqual([...session.refs.keys()],refs,'search must preserve current element references');
+    assert.match((await browser.execute(id,{action:'read'})).text,/Readable source content/);
+    await assert.rejects(browser.execute(id,{action:'navigate',url:'https://docs.example/verification'}),/page_verification_required/);
+    await assert.rejects(browser.execute(id,{action:'navigate',url:'https://docs.example/denied'}),/page_access_denied/);
+    await assert.rejects(browser.execute(id,{action:'navigate',url:'https://docs.example/rate-limited'}),/page_rate_limited/);
     assert.equal(browser.sessions.size,1,'verification and HTTP errors must leave the browser recoverable');
   } finally {await browser.close();}
 });
@@ -96,7 +79,7 @@ test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expi
     assert.match(sandboxStatus,/Layer 1 Sandbox\s+Namespace/);assert.match(sandboxStatus,/Seccomp-BPF sandbox\s+Yes/);
     await diagnostic.close();
     await browser.session(session);
-    await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate_or_search/);
+    await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate/);
     await browser.closeSession(session);
     const opened=await browser.execute(session,{action:'navigate',url:'http://fixture.example/'});
     assert.match(opened.text,/动态浏览测试/);assert.equal(browser.sandbox,true);assert.equal(await browser.sessions.get(session).page.evaluate(()=>typeof RTCPeerConnection),'undefined');
@@ -123,13 +106,13 @@ test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expi
     await assert.rejects(browser.execute(session,{action:'navigate',url:'http://fixture.example/redirect'}));assert.equal(privateReached,0,'redirect must be blocked');
     await browser.execute(session,{action:'navigate',url:'http://fixture.example/'});
     await new Promise(resolve=>setTimeout(resolve,50));await browser.reap();assert.equal(browser.sessions.size,0);
-    await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate_or_search/);
+    await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate/);
     browser.timeoutMs=3000;const partial=await browser.execute(session,{action:'navigate',url:'http://fixture.example/slow'});
     assert.equal(partial.load_incomplete,true);assert.match(partial.text,/正文已经加载/);assert.equal(browser.sessions.size,1);
     assert.match((await browser.execute(session,{action:'read'})).text,/正文已经加载/);
     const snapshot=browser.snapshot;browser.snapshot=()=>new Promise(()=>{});browser.timeoutMs=100;
     await assert.rejects(browser.execute(session,{action:'wait',wait_ms:0}),/tool_timeout/);assert.equal(browser.sessions.size,0);
-    browser.snapshot=snapshot;await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate_or_search/);
+    browser.snapshot=snapshot;await assert.rejects(browser.execute(session,{action:'read'}),/browser_session_missing_navigate/);
     const child=browser.process;
     child.kill=()=>{throw Object.assign(new Error('fixture: signals denied'),{code:'EACCES'});};
     await browser.close();assert(child.exitCode!==null || child.signalCode!==null,'CDP must terminate Chromium without signal privileges');

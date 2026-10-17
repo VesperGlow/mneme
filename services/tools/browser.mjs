@@ -6,18 +6,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium } from 'playwright-core';
 import { ToolError, NetworkPolicy, startEgressProxy } from './security.mjs';
+import { TavilySearch } from './search.mjs';
 const require = createRequire(import.meta.url);
 const readabilitySource = await readFile(require.resolve('@mozilla/readability/Readability.js'), 'utf8');
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
-const searchEngines = {
-  google: { url: 'https://www.google.com/', input: 'textarea[name="q"],input[name="q"]', submit: 'input[name="btnK"],button[name="btnK"]', results: '#search a:has(h3),#rso a:has(h3)' },
-  bing: { url: 'https://www.bing.com/', input: 'textarea[name="q"],input[name="q"]', submit: '#search_icon,#sb_form_go', results: 'li.b_algo' },
-  duckduckgo: { url: 'https://html.duckduckgo.com/html/', input: 'input[name="q"]', submit: 'input[type="submit"],button[type="submit"]', results: '.result, [data-testid="result"], article[data-testid]' },
-};
-function verificationRequired({ url = '', title = '', text = '', results = [] }) {
+function verificationRequired({ url = '', title = '', text = '' }) {
   return /^https:\/\/(?:www\.)?google\.[^/]+\/sorry\//i.test(url)
     || /^(?:Just a moment\.\.\.|Attention Required!)/i.test(title)
-    || (!results.length && text.length < 4000 && /unfortunately, bots|unusual traffic|异常流量|confirm.*human|verify.*human|人机验证/i.test(text));
+    || (text.length < 4000 && /unfortunately, bots|unusual traffic|异常流量|confirm.*human|verify.*human|人机验证/i.test(text));
 }
 async function deadline(operation, ms, code) {
   let timer;
@@ -26,9 +22,9 @@ async function deadline(operation, ms, code) {
 }
 
 export class BrowserTools {
-  constructor({ policy = new NetworkPolicy(), executablePath = '/usr/bin/chromium', maxSessions = 4, ttlMs = 600000, timeoutMs = 25000, engine = 'google' } = {}) {
-    if (!Object.hasOwn(searchEngines, engine)) throw new ToolError('invalid_search_engine');
-    Object.assign(this, { policy, executablePath, maxSessions, ttlMs, timeoutMs, engine });
+  constructor({ policy = new NetworkPolicy(), executablePath = '/usr/bin/chromium', maxSessions = 4, ttlMs = 600000, timeoutMs = 25000, search = new TavilySearch({ timeoutMs }) } = {}) {
+    Object.assign(this, { policy, executablePath, maxSessions, ttlMs, timeoutMs, search });
+    this.engine = 'tavily';
     this.sandbox = true;
     this.sessions = new Map(); this.starting = null; this.browser = null; this.closed = false;
     this.timer = setInterval(() => this.reap().catch(() => {}), 15000); this.timer.unref();
@@ -85,14 +81,12 @@ export class BrowserTools {
           if (url.startsWith('data:') && !route.request().isNavigationRequest()) return route.continue();
           await this.policy.resolve(url);
           if (!['GET','HEAD'].includes(route.request().method())) {
-            const target = new URL(url);
-            const searchForm = (target.hostname === 'html.duckduckgo.com' && target.pathname === '/html/') || (target.hostname.endsWith('.bing.com') && target.pathname === '/search');
             const request = route.request(), headers = request.headers(), body = request.postDataBuffer();
             const jsonRequest = ['fetch', 'xhr'].includes(request.resourceType()) && /^application\/(?:[\w.-]+\+)?json(?:\s*;|$)/i.test(headers['content-type'] || '') && !headers.authorization && body?.length <= 65536;
-            if (request.method() !== 'POST' || (!searchForm && !jsonRequest)) return route.abort('blockedbyclient');
+            if (request.method() !== 'POST' || !jsonRequest) return route.abort('blockedbyclient');
             // Public SPAs often bootstrap through JSON POSTs. This does not
             // authorize form submissions or authenticated API requests.
-            if (!searchForm) { try { JSON.parse(body.toString('utf8')); } catch { return route.abort('blockedbyclient'); } }
+            try { JSON.parse(body.toString('utf8')); } catch { return route.abort('blockedbyclient'); }
           }
           if (['media', 'font'].includes(route.request().resourceType())) return route.abort();
           await route.continue();
@@ -121,9 +115,11 @@ export class BrowserTools {
     for (const [id, session] of this.sessions) if (!session.busy && Date.now() - session.lastUsed > this.ttlMs) await this.closeSession(id);
   }
   async execute(id, input) {
+    if (this.closed) throw new ToolError('service_stopping', 503);
+    if (input.action === 'search') return this.search.execute(input.query);
     const started = Date.now();
     if (input.action === 'close') { await this.closeSession(id); return { closed: true }; }
-    if (!this.sessions.has(id) && !['search', 'navigate'].includes(input.action)) throw new ToolError('browser_session_missing_navigate_or_search', 409);
+    if (!this.sessions.has(id) && input.action !== 'navigate') throw new ToolError('browser_session_missing_navigate', 409);
     const session = await this.session(id);
     if (session.busy) throw new ToolError('browser_session_busy', 409);
     session.busy = true; session.lastUsed = Date.now();
@@ -133,21 +129,6 @@ export class BrowserTools {
       const element = () => { const handle = session.refs.get(input.element); if (!handle) throw new ToolError('element_not_found_read_again'); return handle; };
       let navigation = {};
       switch (input.action) {
-        case 'search': {
-          const engine = searchEngines[this.engine];
-          await this.policy.resolve(engine.url);
-          navigation = await this.navigate(page, engine.url);
-          if (verificationRequired({ url: page.url(), title: await page.title(), text: await page.locator('body').innerText({ timeout: 2000 }) })) throw new ToolError('search_verification_required', 502);
-          const box = page.locator(engine.input).first();
-          await box.fill(input.query);
-          // Autocomplete can swallow Enter on repeat searches. Click the real
-          // submit control, and register the navigation wait before clicking.
-          await Promise.all([page.waitForURL(url => /\/search|\/sorry\//.test(url.pathname) || url.searchParams.has('q'), { waitUntil: 'commit', timeout: Math.min(10000, this.timeoutMs - 2000) }), page.locator(engine.submit).filter({ visible: true }).first().click()]);
-          navigation = { load_incomplete: false };
-          await page.waitForLoadState('domcontentloaded', { timeout: 4000 }).catch(error => { if (error.name !== 'TimeoutError') throw error; navigation.load_incomplete = true; });
-          await page.waitForSelector(engine.results, { state: 'attached', timeout: 3500 }).catch(error => { if (error.name !== 'TimeoutError') throw error; });
-          break;
-        }
         case 'navigate': await this.policy.resolve(input.url); navigation = await this.navigate(page, input.url); break;
         case 'click': await element().evaluate(el => { if (el.tagName === 'A') el.removeAttribute('target'); }); await element().click(); await delay(500); break;
         case 'type': if (await element().evaluate(el => el.tagName === 'INPUT' && ['password','file'].includes(el.type))) throw new ToolError('sensitive_input_blocked'); await element().fill(input.text); if (input.press_enter) { await element().press('Enter'); await delay(500); } break;
@@ -159,7 +140,7 @@ export class BrowserTools {
       }
       phase = 'snapshot';
       const snapshot = { ...await this.snapshot(session), ...navigation };
-      if (verificationRequired(snapshot)) throw new ToolError(input.action === 'search' ? 'search_verification_required' : 'page_verification_required', 502);
+      if (verificationRequired(snapshot)) throw new ToolError('page_verification_required', 502);
       if (snapshot.http_status >= 400) throw new ToolError(snapshot.http_status === 429 ? 'page_rate_limited' : snapshot.http_status === 403 ? 'page_access_denied' : 'page_http_error', 502);
       if (input.action === 'screenshot') {
         phase = 'screenshot';
@@ -193,7 +174,7 @@ export class BrowserTools {
   async snapshot(session) {
     const page = session.page;
     const url = page.url();
-    if (url === 'about:blank') throw new ToolError('browser_session_missing_navigate_or_search', 409);
+    if (url === 'about:blank') throw new ToolError('browser_session_missing_navigate', 409);
     // Validate the final URL too, including error documents after blocked redirects.
     await this.policy.resolve(url);
     const document = await page.evaluate(({ source, refAttribute }) => {
@@ -206,14 +187,6 @@ export class BrowserTools {
       }
       const text = (article?.textContent || bodyText).replace(/\n{3,}/g, '\n\n').trim().slice(0, 14000);
       const links = [...document.querySelectorAll('a[href]')].map(a => ({ title: (a.innerText || a.getAttribute('aria-label') || '').trim().slice(0, 180), url: a.href })).filter(a => a.title && /^https?:/.test(a.url)).slice(0, 60);
-      const resultSelector = location.hostname === 'www.google.com' ? '#search a:has(h3),#rso a:has(h3)' : /(^|\.)bing\.com$/.test(location.hostname) ? 'li.b_algo' : location.hostname === 'html.duckduckgo.com' ? '.result, [data-testid="result"], article[data-testid]' : '';
-      const results = (resultSelector ? [...document.querySelectorAll(resultSelector)] : []).map(block => {
-        const link = block.matches('a') ? block : block.querySelector('h2 a, h3 a, a[data-testid="result-title-a"], a.result__a');
-        if (!link) return null;
-        const heading = link.querySelector('h3') || link;
-        const snippet = block.matches('a') ? block.closest('.MjjYud,.g') || block.parentElement : block;
-        return { title: (heading.innerText || heading.textContent || '').trim().slice(0, 180), url: (() => { try { const u = new URL(link.href); const encoded = u.searchParams.get('u'); if (/(^|\.)bing\.com$/.test(u.hostname) && u.pathname.startsWith('/ck/') && encoded?.startsWith('a1')) { const decoded = atob(encoded.slice(2).replace(/-/g, '+').replace(/_/g, '/')); if (/^https?:\/\//.test(decoded)) return decoded; } if (/(^|\.)google\.com$/.test(u.hostname) && u.pathname === '/url') { const target = u.searchParams.get('q') || u.searchParams.get('url'); if (/^https?:\/\//.test(target)) return target; } } catch {} return link.href; })(), snippet: (snippet.innerText || snippet.textContent || '').trim().slice(0, 700) };
-      }).filter(Boolean).slice(0, 10);
       // One CDP evaluation replaces hundreds of sequential handle operations,
       // and locators do not keep detached DOM nodes alive between snapshots.
       for (const old of document.querySelectorAll(`[${refAttribute}]`)) old.removeAttribute(refAttribute);
@@ -225,7 +198,7 @@ export class BrowserTools {
         const ref = `e${elements.length + 1}`; el.setAttribute(refAttribute, ref);
         elements.push({ ref, tag: el.tagName.toLowerCase(), label: (el.getAttribute('aria-label') || el.innerText || el.getAttribute('placeholder') || el.getAttribute('name') || '').trim().slice(0, 120), type: el.getAttribute('type') || '', url: el.tagName === 'A' ? el.href : undefined });
       }
-      return { title: (article?.title || document.title).slice(0, 300), text, links, results, elements, rendering_pending: text.length < 80 && elements.length === 0, rendering_limited: results.length > 0 && results.every(result => !bodyText.includes(result.title)) };
+      return { title: (article?.title || document.title).slice(0, 300), text, links, elements, rendering_pending: text.length < 80 && elements.length === 0 };
     }, { source: readabilitySource, refAttribute: session.refAttribute });
     session.refs.clear();
     for (const { ref } of document.elements) session.refs.set(ref, page.locator(`[${session.refAttribute}="${ref}"]`));

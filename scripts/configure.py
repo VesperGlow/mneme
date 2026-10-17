@@ -15,6 +15,7 @@ ALLOWED = {
     'MNEME_QQ_APP_SECRET', 'MNEME_QQ_SANDBOX', 'MNEME_QQ_LISTEN',
     'MNEME_TOOLS_TOKEN', 'MNEME_TOOLS_ENABLED', 'MNEME_TOOLS_URL',
     'MNEME_TOOLS_MAX_CALLS', 'MNEME_TOOLS_TURN_TIMEOUT_SECONDS',
+    'MNEME_TAVILY_API_KEY',
 }
 
 
@@ -78,6 +79,8 @@ def configure(source, dest):
     dest.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(dest, 0o700)
     old = read_env(dest / 'app.env') if (dest / 'app.env').exists() else {}
+    old_tools = read_env(dest / 'tools.env') if (dest / 'tools.env').exists() else {}
+    values['MNEME_TAVILY_API_KEY'] = values.get('MNEME_TAVILY_API_KEY', old_tools.get('MNEME_TAVILY_API_KEY', old.get('MNEME_TAVILY_API_KEY', '')))
     generated = {}
     for key in ('MNEME_API_TOKEN', 'MNEME_NEO4J_PASSWORD', 'MNEME_TOOLS_TOKEN', 'MNEME_CONSOLE_PASSWORD'):
         if not values.get(key):
@@ -126,8 +129,8 @@ def configure(source, dest):
                 lines.append(f'{key}={value}')
         write_private(source, '\n'.join(lines) + '\n')
     values['MNEME_LLM_MODEL'] = values.get('MNEME_LLM_MODEL') or 'auto'
-    write_private(dest / 'app.env', ''.join(f'{key}={value}\n' for key, value in values.items() if value))
-    write_private(dest / 'tools.env', f"MNEME_TOOLS_TOKEN={values['MNEME_TOOLS_TOKEN']}\n")
+    write_private(dest / 'app.env', ''.join(f'{key}={value}\n' for key, value in values.items() if value and key != 'MNEME_TAVILY_API_KEY'))
+    write_private(dest / 'tools.env', ''.join(f'{key}={values[key]}\n' for key in ('MNEME_TOOLS_TOKEN', 'MNEME_TAVILY_API_KEY') if values[key]))
     write_private(dest / 'neo4j.env', f"NEO4J_AUTH=neo4j/{values['MNEME_NEO4J_PASSWORD']}\n")
     write_private(dest / 'console-password', values['MNEME_CONSOLE_PASSWORD'] + '\n')
     write_private(dest / 'console-token', values['MNEME_API_TOKEN'] + '\n')

@@ -10,6 +10,24 @@ spec.loader.exec_module(configure)
 
 
 class ConfigureTest(unittest.TestCase):
+    def test_tavily_keys_reach_tools_container_and_survive_reinstall(self):
+        with tempfile.TemporaryDirectory() as temp:
+            source, dest = Path(temp) / '.env', Path(temp) / 'config'
+            original = 'MNEME_LLM_API_KEY=fixture\nMNEME_LLM_BASE_URL=https://provider.invalid/v1\n'
+            for keys in ['tvly-first', 'tvly-first/tvly-second/tvly-third']:
+                source.write_text(original + f'MNEME_TAVILY_API_KEY={keys}\n')
+                values = configure.configure(source, dest)
+                tools_env = configure.read_env(dest / 'tools.env')
+                self.assertEqual(tools_env, {'MNEME_TOOLS_TOKEN': values['MNEME_TOOLS_TOKEN'], 'MNEME_TAVILY_API_KEY': keys})
+                self.assertNotIn('MNEME_TAVILY_API_KEY', (dest / 'app.env').read_text())
+                self.assertIn(f'MNEME_TAVILY_API_KEY={keys}\n', source.read_text())
+                self.assertEqual((dest / 'tools.env').stat().st_mode & 0o777, 0o600)
+                source.write_text(original)
+                self.assertEqual(configure.configure(source, dest)['MNEME_TAVILY_API_KEY'], keys)
+            source.write_text(original + 'MNEME_TAVILY_API_KEY=\n')
+            configure.configure(source, dest)
+            self.assertNotIn('MNEME_TAVILY_API_KEY', (dest / 'tools.env').read_text())
+
     def test_four_inputs_generate_and_preserve_private_credentials(self):
         with tempfile.TemporaryDirectory() as temp:
             source, dest = Path(temp) / '.env', Path(temp) / 'config'
