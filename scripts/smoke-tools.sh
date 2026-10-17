@@ -34,4 +34,4 @@ podman run --rm --network none --read-only --user 1000:1000 --cap-drop all \
     --security-opt no-new-privileges --security-opt "seccomp=$PWD/deploy/quadlet/mneme-tools-seccomp.json" \
     --tmpfs /tmp:rw,noexec,nosuid,size=512m --pids-limit 256 --memory 1536m --cpus 1.5 \
     -v "$PWD/services/tools/test:/app/test:ro" -e MNEME_BROWSER_TEST=1 \
-    --entrypoint node "$mneme_tools_image" --test /app/test/security.test.mjs /app/test/browser.test.mjs
+    --entrypoint node "$mneme_tools_image" --test --test-reporter=tap --test-timeout=60000 /app/test/security.test.mjs /app/test/browser.test.mjs

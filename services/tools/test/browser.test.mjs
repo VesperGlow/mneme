@@ -39,5 +39,6 @@ test('real sandboxed CDP: dynamic DOM, type/click/scroll/screenshot, reuse, expi
     await browser.execute(session,{action:'navigate',url:'http://fixture.example/'});
     await new Promise(resolve=>setTimeout(resolve,50));await browser.reap();assert.equal(browser.sessions.size,0);
     browser.timeoutMs=3000;await assert.rejects(browser.execute(session,{action:'navigate',url:'http://fixture.example/slow'}),/timeout/);assert.equal(browser.sessions.size,0);
-  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
+  }catch(error){console.error(error.stack);throw error;}
+  finally{server.closeAllConnections();await browser.close();await new Promise(resolve=>server.close(resolve));}
 });

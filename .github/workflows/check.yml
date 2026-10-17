@@ -121,7 +121,7 @@ jobs:
               --tmpfs /tmp:rw,noexec,nosuid,size=256m "$IMAGE" \
               python -c 'import torch, engine; assert torch.version.cuda is None; model=engine.Engine(); vectors=model.embed(["我喜欢不加糖的拿铁。"],query=True); scores=model.rerank("我喜欢什么咖啡？",["不加糖的拿铁咖啡。","周末去爬山。"]); assert len(vectors[0])==1024; assert abs(sum(v*v for v in vectors[0])-1)<0.001; assert scores[0]>scores[1]; print("Bundled CPU models: offline loading, 1024 dimensions and Chinese reranking passed")'
           elif [ "$SERVICE" = mneme-tools ]; then
-            sudo env MNEME_TOOLS_IMAGE="$IMAGE" bash scripts/smoke-tools.sh
+            sudo timeout --kill-after=15s 180s env MNEME_TOOLS_IMAGE="$IMAGE" bash scripts/smoke-tools.sh
           else
             trap 'sudo podman rm -f mneme-ci >/dev/null 2>&1 || true' EXIT
             sudo podman run -d --name mneme-ci --read-only --cap-drop all --security-opt no-new-privileges \
