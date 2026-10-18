@@ -1,0 +1,458 @@
+{
+  "version": 1,
+  "notes": "Novel topic validation defined before inference with the relevance/equivalence repair. Not used to tune extraction or retrieval. Main e2e.json and archived baseline binary remain unchanged.",
+  "profiles": [
+    {
+      "id": "unseen-books",
+      "split": "unseen",
+      "turns": [
+        {
+          "day": 0,
+          "category": "occupation",
+          "say": "我在松林出版社做图书编辑，这份工作已经做了几年。",
+          "facts": [
+            {
+              "label": "occupation_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "松林出版社"
+                ],
+                [
+                  "编辑",
+                  "编书"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 4,
+          "category": "diet",
+          "say": "我吃素已经五年了，平时不吃肉。",
+          "facts": [
+            {
+              "label": "diet",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "素食",
+                  "吃素",
+                  "不吃肉"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 9,
+          "category": "relationship",
+          "say": "我妈妈叫陈素，她已经退休了。",
+          "facts": [
+            {
+              "label": "mother_name",
+              "all": [
+                [
+                  "妈妈",
+                  "母亲"
+                ],
+                [
+                  "陈素"
+                ]
+              ]
+            },
+            {
+              "label": "mother_retired",
+              "all": [
+                [
+                  "妈妈",
+                  "母亲",
+                  "陈素"
+                ],
+                [
+                  "退休"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 15,
+          "category": "hypothetical",
+          "say": "如果以后报名马拉松，我也许会专门练跑步，不过目前完全没决定。",
+          "facts": []
+        },
+        {
+          "day": 22,
+          "category": "quotation",
+          "say": "今天采访对象说“我养了三只鸟”，那是他的生活，跟我自己无关。",
+          "facts": []
+        },
+        {
+          "day": 30,
+          "category": "occupation_update",
+          "say": "我的职业更新成云桥书店的图书采购了，现在不再是出版社编辑。",
+          "facts": [
+            {
+              "label": "occupation",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "云桥书店"
+                ],
+                [
+                  "采购",
+                  "选书"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 37,
+          "category": "budget",
+          "say": "我长期把每月买书预算定在300元。",
+          "facts": [
+            {
+              "label": "budget_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "买书",
+                  "购书",
+                  "书籍"
+                ],
+                [
+                  "300",
+                  "三百"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 48,
+          "category": "numeric_update",
+          "say": "买书的月预算以后改为450元，300元是之前的标准。",
+          "facts": [
+            {
+              "label": "budget",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "买书",
+                  "购书",
+                  "书籍"
+                ],
+                [
+                  "450",
+                  "四百五十"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 55,
+          "category": "stable_emotion",
+          "say": "每次公开发言前我都会紧张，提前排练会缓解。",
+          "facts": [
+            {
+              "label": "speech",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "公开",
+                  "发言",
+                  "演讲"
+                ],
+                [
+                  "紧张"
+                ],
+                [
+                  "排练",
+                  "练习"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 63,
+          "category": "no_save",
+          "say": "这句私事别记录：临时取件提示词是紫藤白鹭。",
+          "facts": []
+        },
+        {
+          "day": 71,
+          "category": "chitchat",
+          "say": "谢谢你认真听我说这些。",
+          "facts": []
+        },
+        {
+          "day": 78,
+          "category": "numeric_paraphrase",
+          "say": "每个月用于买书的钱还是四百五十元。",
+          "facts": [
+            {
+              "label": "budget",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "买书",
+                  "购书",
+                  "书籍"
+                ],
+                [
+                  "450",
+                  "四百五十"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 84,
+          "category": "repeat_occupation",
+          "say": "我仍在云桥书店做图书采购。",
+          "facts": [
+            {
+              "label": "occupation",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "云桥书店"
+                ],
+                [
+                  "采购",
+                  "选书"
+                ]
+              ]
+            }
+          ]
+        }
+      ],
+      "final": [
+        {
+          "label": "occupation",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "云桥书店"
+            ],
+            [
+              "采购",
+              "选书"
+            ]
+          ]
+        },
+        {
+          "label": "diet",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "素食",
+              "吃素",
+              "不吃肉"
+            ]
+          ]
+        },
+        {
+          "label": "mother_name",
+          "all": [
+            [
+              "妈妈",
+              "母亲"
+            ],
+            [
+              "陈素"
+            ]
+          ]
+        },
+        {
+          "label": "mother_retired",
+          "all": [
+            [
+              "妈妈",
+              "母亲",
+              "陈素"
+            ],
+            [
+              "退休"
+            ]
+          ]
+        },
+        {
+          "label": "budget",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "买书",
+              "购书",
+              "书籍"
+            ],
+            [
+              "450",
+              "四百五十"
+            ]
+          ]
+        },
+        {
+          "label": "speech",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "公开",
+              "发言",
+              "演讲"
+            ],
+            [
+              "紧张"
+            ],
+            [
+              "排练",
+              "练习"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我现在在哪里工作，具体做什么？",
+          "relevant": [
+            "occupation"
+          ],
+          "answer_all": [
+            [
+              "云桥书店"
+            ],
+            [
+              "采购",
+              "选书"
+            ]
+          ],
+          "answer_forbidden": [
+            "松林出版社"
+          ]
+        },
+        {
+          "say": "按我一直以来的饮食习惯，聚餐选菜要注意什么？",
+          "relevant": [
+            "diet"
+          ],
+          "answer_all": [
+            [
+              "素",
+              "不吃肉"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妈妈叫什么名字，她还在工作吗？",
+          "relevant": [
+            "mother_name",
+            "mother_retired"
+          ],
+          "answer_all": [
+            [
+              "陈素"
+            ],
+            [
+              "退休"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "现在每个月给买书留多少钱合适？",
+          "relevant": [
+            "budget"
+          ],
+          "answer_all": [
+            [
+              "450",
+              "四百五十"
+            ]
+          ],
+          "answer_forbidden": [
+            "300",
+            "三百"
+          ]
+        },
+        {
+          "say": "又要公开发言了，有什么适合我的准备方法？",
+          "relevant": [
+            "speech"
+          ],
+          "answer_all": [
+            [
+              "排练",
+              "练习"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我养了几只鸟，你还记得吗？",
+          "relevant": [],
+          "answer_all": [
+            [
+              "没",
+              "不",
+              "未",
+              "无法"
+            ]
+          ],
+          "answer_forbidden": [
+            "你养了三只",
+            "你养三只"
+          ]
+        },
+        {
+          "say": "之前的取件提示词是什么？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "紫藤白鹭"
+          ]
+        },
+        {
+          "say": "谢谢，先这样。",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "云桥",
+            "预算",
+            "素食",
+            "陈素"
+          ]
+        }
+      ]
+    }
+  ]
+}

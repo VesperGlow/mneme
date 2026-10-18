@@ -30,7 +30,7 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked
       - run: python3 -m py_compile services/models/*.py scripts/*.py tests/fixtures/*.py
-      - run: python3 -m pip install -c services/models/requirements.lock.txt requests
+      - run: python3 -m pip install -c services/models/requirements.lock.txt requests fastapi uvicorn
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - uses: actions/setup-node@v4
         with:

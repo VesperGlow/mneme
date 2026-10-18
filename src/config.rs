@@ -87,6 +87,9 @@ pub struct LlmConfig {
     pub temperature: f32,
     pub max_tokens: u32,
     pub timeout_seconds: u64,
+    /// Enable only for providers supporting response_format json_schema.
+    #[serde(default)]
+    pub json_schema: bool,
     #[serde(default = "default_context_tokens")]
     pub context_tokens: usize,
     /// Accepted for old TOML files; generation is now bounded by context_tokens.
@@ -150,10 +153,29 @@ pub struct MemoryConfig {
     pub poll_seconds: u64,
     pub retrieval_timeout_seconds: u64,
     pub rerank_min_score: f64,
+    /// Discard the weak tail relative to the strongest reranker match. Set 0 to disable.
+    #[serde(default = "default_rerank_relative_min")]
+    pub rerank_relative_min: f64,
+    /// Independent cosine evidence prevents a generic reranker score from
+    /// turning unrelated ANN neighbours into personal context.
+    #[serde(default = "default_vector_min_score")]
+    pub vector_min_score: f64,
+    /// Reject semantically unrelated source quotes before persisting candidates.
+    #[serde(default = "default_evidence_min_score")]
+    pub evidence_min_score: f64,
     pub allow_sensitive: bool,
 }
 fn default_extract_chars() -> usize {
     10_000
+}
+fn default_evidence_min_score() -> f64 {
+    0.5
+}
+fn default_rerank_relative_min() -> f64 {
+    0.8
+}
+fn default_vector_min_score() -> f64 {
+    0.4
 }
 #[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -420,6 +442,9 @@ impl Config {
             self.memory.minimum_confidence,
             self.memory.forget_below,
             self.memory.rerank_min_score,
+            self.memory.vector_min_score,
+            self.memory.evidence_min_score,
+            self.memory.rerank_relative_min,
         ] {
             ensure!(
                 (0.0..=1.0).contains(&value),

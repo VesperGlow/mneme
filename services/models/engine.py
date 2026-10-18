@@ -17,19 +17,29 @@ class Engine:
     def __init__(self):
         torch.set_num_threads(int(os.getenv("MNEME_CPU_THREADS", "3")))
         torch.set_num_interop_threads(1)
+        self.dtype_name = os.getenv("MNEME_CPU_DTYPE", "float32")
+        if self.dtype_name not in ("float32", "bfloat16"):
+            raise ValueError("MNEME_CPU_DTYPE must be float32 or bfloat16")
+        dtype = getattr(torch, self.dtype_name)
+        # Reduced-precision reranker logits can flip a marginal relevance score.
+        # Keep the smaller reranker in FP32 unless explicitly evaluated otherwise.
+        self.rerank_dtype_name = os.getenv("MNEME_CPU_RERANK_DTYPE", "float32")
+        if self.rerank_dtype_name not in ("float32", "bfloat16"):
+            raise ValueError("MNEME_CPU_RERANK_DTYPE must be float32 or bfloat16")
+        rerank_dtype = getattr(torch, self.rerank_dtype_name)
         cache = prepare_cache()
         # All remote I/O and source retries finish before Transformers runs.
         # This also prevents custom-code imports from bypassing failover.
         common = {"local_files_only": True, "cache_dir": str(cache)}
-        LOG.info("loading CPU embedding model=%s dtype=float32", EMBED_MODEL)
+        LOG.info("loading CPU embedding model=%s dtype=%s", EMBED_MODEL, self.dtype_name)
         self.embed_tokenizer = AutoTokenizer.from_pretrained(
             EMBED_MODEL, revision=EMBED_REVISION, padding_side="left", **common
         )
         self.embed_model = AutoModel.from_pretrained(
-            EMBED_MODEL, revision=EMBED_REVISION, torch_dtype=torch.float32,
+            EMBED_MODEL, revision=EMBED_REVISION, torch_dtype=dtype,
             attn_implementation="sdpa", low_cpu_mem_usage=True, use_safetensors=True, **common
         ).cpu().eval()
-        LOG.info("CPU embedding ready; loading reranker model=%s dtype=float32", RERANK_MODEL)
+        LOG.info("CPU embedding ready; loading reranker model=%s dtype=%s", RERANK_MODEL, self.rerank_dtype_name)
         self.rerank_tokenizer = AutoTokenizer.from_pretrained(
             RERANK_MODEL, revision=RERANK_REVISION, **common
         )
@@ -42,7 +52,7 @@ class Engine:
         config.unpad_inputs = False
         self.rerank_model = AutoModelForSequenceClassification.from_pretrained(
             RERANK_MODEL, revision=RERANK_REVISION, code_revision=CODE_REVISION,
-            config=config, trust_remote_code=True, torch_dtype=torch.float32,
+            config=config, trust_remote_code=True, torch_dtype=rerank_dtype,
             low_cpu_mem_usage=True, use_safetensors=True, **common
         ).cpu().eval()
         self.cache = OrderedDict()
@@ -52,15 +62,15 @@ class Engine:
     def embed(self, texts, query=False):
         result = []
         # Two small documents at a time keep peak CPU attention memory bounded.
-        missing = [(i, text) for i, text in enumerate(texts) if (query, text) not in self.cache]
+        missing = [text for text in dict.fromkeys(texts) if (query, text) not in self.cache]
         for start in range(0, len(missing), 2):
             items = missing[start:start + 2]
-            inputs = [f"Instruct: {INSTRUCTION}\nQuery: {text}" if query else text for _, text in items]
+            inputs = [f"Instruct: {INSTRUCTION}\nQuery: {text}" if query else text for text in items]
             batch = self.embed_tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors="pt")
             hidden = self.embed_model(**batch).last_hidden_state
             # Left padding guarantees that the final position is the last real token.
-            vectors = F.normalize(hidden[:, -1, :], p=2, dim=1).float().tolist()
-            for (_, text), vector in zip(items, vectors):
+            vectors = F.normalize(hidden[:, -1, :].float(), p=2, dim=1).tolist()
+            for text, vector in zip(items, vectors):
                 self.cache[(query, text)] = vector
         for text in texts:
             key = (query, text)

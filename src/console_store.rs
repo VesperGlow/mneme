@@ -267,8 +267,12 @@ impl Store {
     }
 
     pub async fn save_embedding(&self, id: &str, revision: i64, embedding: &[f32]) -> Result<bool> {
-        Ok(sqlx::query("UPDATE memories SET embedding=? WHERE id=? AND revision=? AND status='active' AND deleted_at IS NULL AND (valid_until IS NULL OR valid_until>?)")
-            .bind(serde_json::to_string(embedding)?).bind(id).bind(revision).bind(now()).execute(&self.pool).await?.rows_affected()==1)
+        let saved=sqlx::query("UPDATE memories SET embedding=? WHERE id=? AND revision=? AND status='active' AND deleted_at IS NULL AND (valid_until IS NULL OR valid_until>?)")
+            .bind(serde_json::to_string(embedding)?).bind(id).bind(revision).bind(now()).execute(&self.pool).await?.rows_affected()==1;
+        if saved {
+            self.invalidate_embedding(id);
+        }
+        Ok(saved)
     }
     pub async fn mark_indexed(&self, id: &str, revision: i64) -> Result<()> {
         sqlx::query("UPDATE memories SET indexed_revision=? WHERE id=? AND revision=?")
@@ -324,9 +328,25 @@ fn filter<'a>(q: &mut QueryBuilder<'a, Sqlite>, f: &'a MemoryFilter) {
     }
 }
 
-async fn protect(tx: &mut sqlx::Transaction<'_, Sqlite>, memory: &Memory, seq: i64) -> Result<()> {
-    sqlx::query("INSERT INTO forget_barriers(slot,through_seq,through_qq) VALUES(?,?,(SELECT COALESCE(MAX(seq),0) FROM qq_inbox)) ON CONFLICT(slot) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
-        .bind(&memory.slot).bind(seq).execute(&mut **tx).await?;
+pub(crate) async fn protect(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    memory: &Memory,
+    seq: i64,
+) -> Result<()> {
+    let qq = sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM qq_inbox")
+        .fetch_one(&mut **tx)
+        .await?;
+    protect_through(tx, memory, seq, qq).await
+}
+
+pub(crate) async fn protect_through(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    memory: &Memory,
+    seq: i64,
+    qq: i64,
+) -> Result<()> {
+    sqlx::query("INSERT INTO forget_barriers(slot,through_seq,through_qq) VALUES(?,?,?) ON CONFLICT(slot) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
+        .bind(&memory.slot).bind(seq).bind(qq).execute(&mut **tx).await?;
     sqlx::query("INSERT OR IGNORE INTO suppressed_sources(message_id) SELECT s.message_id FROM memory_sources s JOIN memories m ON m.id=s.memory_id WHERE m.slot=?")
         .bind(&memory.slot).execute(&mut **tx).await?;
     // All historic wordings are protected, not only the currently visible content.
@@ -340,8 +360,8 @@ async fn protect(tx: &mut sqlx::Transaction<'_, Sqlite>, memory: &Memory, seq: i
         .into_iter()
         .chain(std::iter::once(memory.content.clone()))
     {
-        sqlx::query("INSERT INTO content_barriers(content_hash,through_seq,through_qq) VALUES(?,?,(SELECT COALESCE(MAX(seq),0) FROM qq_inbox)) ON CONFLICT(content_hash) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
-            .bind(content_hash(&text)).bind(seq).execute(&mut **tx).await?;
+        sqlx::query("INSERT INTO content_barriers(content_hash,through_seq,through_qq) VALUES(?,?,?) ON CONFLICT(content_hash) DO UPDATE SET through_seq=MAX(through_seq,excluded.through_seq),through_qq=MAX(through_qq,excluded.through_qq)")
+            .bind(content_hash(&text)).bind(seq).bind(qq).execute(&mut **tx).await?;
     }
     Ok(())
 }

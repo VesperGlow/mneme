@@ -10,6 +10,8 @@ temperature = 0.7
 max_tokens = 1200
 timeout_seconds = 120
 context_tokens = 100000
+# 仅在服务支持 response_format json_schema 时启用；默认兼容原有提供商。
+json_schema = false
 # 持续对话触及任一上限时压缩旧轮次，保留摘要与近期原文。
 history_turns = 1000
 summary_chars = 2000
@@ -46,6 +48,12 @@ max_attempts = 8
 poll_seconds = 2
 retrieval_timeout_seconds = 8
 rerank_min_score = 0.1
+# 精排同时保留最高相关分数的 80% 以上；0 可关闭相对门槛。
+rerank_relative_min = 0.8
+# 注入前同时验证查询与记忆的 cosine；保留精排门槛，避免通用问题召回私人事实。
+vector_min_score = 0.4
+# 引用存在还不足以证明事实；拒绝事实与原话完全不相关的候选。不能替代否定/假设判定。
+evidence_min_score = 0.5
 allow_sensitive = false
 
 [persona]

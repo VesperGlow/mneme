@@ -152,3 +152,18 @@ Console 的界面、CRUD 与检索调试都通过现有 Axum API 读取 SQLite �
 系统状态页的后台处理队列移入记忆库，在“全部记忆、有效、已失效、已删除”旁增加“后台队列”，显示待处理、运行中、失败数量及重试/重建索引操作。切换保留搜索与筛选条件，队列每 5 秒更新，并同步页内后台任务统计。工具记录页采用桌面左右双栏：左侧状态与统计，右侧调用详情；窄屏自动上下排列。全站字号改为 rem，正文约 16–17px、辅助文字约 13–15px，放大按钮和输入区域，辅助文字加深颜色。
 
 7 项 Console Rust 集成测试、JavaScript 语法检查和 git diff 检查通过。真实 Chromium 的桌面/390px 手机全流程通过，覆盖队列切换与搜索保留、真实重建索引请求、系统状态入口移除、工具记录左右/上下布局和来源内容转义，并回归登录、改密、记忆 CRUD/修订、检索、聊天流式恢复、QQ 记录、性格和重置。额外检查 320/768/1024/1440px 下各页均无页面横向溢出，并确认队列实际自动轮询保留键盘焦点、480px 高度下可滚动到侧栏账号操作。工具记录的展示数据来自浏览器测试替身，其余数据与操作使用本地临时 Axum/SQLite；未访问生产数据或执行外部浏览器/搜索任务。截图保存在忽略的 artifacts/。
+
+## 长期记忆评估
+
+隔离测试、测量边界、基线和修复结果见 [2026-10-17 记忆评估报告](reports/memory-2026-10-17.md)。可运行 `python3 scripts/memory-eval.py --help` 查看渐进式压测入口；默认仅使用确定性模型协议替身和独立 Neo4j，实际 CPU 模型需要显式选择 semantic/all 模式。所有模式均不调用外部聊天 LLM。
+## 真实生成模型与记忆链验证（2026-10-18）
+
+本轮接续已完成的记忆审查与压力测试，保留之前的代码修复，另行使用真实生成模型、现有离线 Embedding/Reranker、临时 SQLite 和带运行标记的 Neo4j。完整样本数、逐轮金标、优化前后数据、失败记录与未验证范围见 [本轮完整报告](reports/memory-e2e-2026-10-18.md)；上一轮 100/1000/10000 × 1/5/20/50 的协议负载结果仍保留在 [上一轮报告](reports/memory-2026-10-17.md)。
+
+离线复现使用 `scripts/memory-e2e.py`，权重准备须显式指定 `--download-free-model`，普通运行不下载。付费复现必须另行授权并启动 `scripts/memory-deepseek-relay.py --budget-cny 5 --ledger artifacts/new-budget.json`，在终端隐藏输入临时密钥，再运行 `scripts/memory-e2e.py --deepseek-relay --output artifacts/new-e2e`。Relay 仅允许官方固定 DeepSeek 主机、文本测试及受限 token，不读取 `.env`，每次请求发送前预留并发预算，未知用量保留全部预留。测试结束应停止 Relay 并撤销临时密钥。
+
+同一运行器支持 `--split unseen`、`--test real_local_batch` 和 `--test real_local_load`。语义、阶段延迟及真实 CPU 排队负载使用 `scripts/memory-eval.py --mode semantic --model-cache-volume mneme-model-cache --real-model-load`。精度可分别用 `--cpu-dtype`、`--rerank-dtype` 选择；跨精度向量兼容性通过 `MNEME_EVAL_EXPORT_VECTORS` / `MNEME_EVAL_IMPORT_VECTORS` 导出/导入独立合成语料的向量，完全不接触生产数据库。
+
+额外确认集使用 `--split confirm`。同一次授权中若 Relay 意外退出，恢复必须使用原账本与 `--resume`，不另开预算；脚本拒绝仍有旧进程、变更预算上限或账本身份不符的恢复，并将未完成请求的全部预留计为已用。密钥仍在隐藏输入中提供，不写入配置或账本。
+
+`scripts/memory-e2e-report.py RUN_DIRECTORY --output summary.json` 统一重评分，支持声明式复合事实由多条原子记忆共同满足。最低字面答案检查与逐条语义复核分开报告；语义审计必须匹配原始结果文件 SHA256。HTTP 200、基准进程正常退出、未写入事实的失败任务都不能替代质量通过。

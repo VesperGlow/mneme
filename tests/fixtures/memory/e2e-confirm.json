@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "notes": "Defined before inference, after diagnosing the earlier novel-topic failures. New people, occupation, commute updates and meal preference; no answers enter the production runtime.",
+  "profiles": [
+    {
+      "id": "confirm-museum",
+      "split": "confirm",
+      "turns": [
+        {
+          "day": 0,
+          "category": "occupation",
+          "say": "我在星野博物馆做展陈策划，平时主要筹划展览。",
+          "facts": [
+            {
+              "label": "occupation_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "星野博物馆"
+                ],
+                [
+                  "展陈",
+                  "策划"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 5,
+          "category": "commute",
+          "say": "我每天上下班骑自行车，这个习惯已经好多年。",
+          "facts": [
+            {
+              "label": "commute_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "通勤",
+                  "上下班",
+                  "上班"
+                ],
+                [
+                  "自行车",
+                  "骑车"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 9,
+          "category": "relationship",
+          "say": "我的表哥叫孟川，他住在洛阳，是个园林工程师。",
+          "facts": [
+            {
+              "label": "cousin",
+              "all": [
+                [
+                  "孟川"
+                ],
+                [
+                  "表哥"
+                ]
+              ]
+            },
+            {
+              "label": "cousin_job",
+              "all": [
+                [
+                  "孟川"
+                ],
+                [
+                  "洛阳"
+                ],
+                [
+                  "园林",
+                  "工程师"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 16,
+          "category": "hypothetical",
+          "say": "要是以后住到月球上，我一定天天赏地球，纯粹乱想而已。",
+          "facts": []
+        },
+        {
+          "day": 25,
+          "category": "occupation_update",
+          "say": "最近换到栖岸美术馆做公共教育课程设计，展陈策划是之前的工作。",
+          "facts": [
+            {
+              "label": "occupation",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "栖岸美术馆"
+                ],
+                [
+                  "公共教育",
+                  "课程设计"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 40,
+          "category": "preference",
+          "say": "早餐我一直更喜欢咸味，甜口的我平时不选。",
+          "facts": [
+            {
+              "label": "breakfast",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "早餐"
+                ],
+                [
+                  "咸"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 55,
+          "category": "commute_update",
+          "say": "现在通勤改成地铁了，已经不骑车上班。",
+          "facts": [
+            {
+              "label": "commute",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "通勤",
+                  "上下班",
+                  "上班"
+                ],
+                [
+                  "地铁"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 62,
+          "category": "quotation",
+          "say": "同事说“我不再喝咖啡”，那是她说的，不代表我。",
+          "facts": []
+        },
+        {
+          "day": 76,
+          "category": "repeat_commute",
+          "say": "前面提的通勤方式没变，我现在还是坐地铁上班。",
+          "facts": [
+            {
+              "label": "commute",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "通勤",
+                  "上下班",
+                  "上班"
+                ],
+                [
+                  "地铁"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 83,
+          "category": "no_save",
+          "say": "这句别保存：临时访客口令是落叶水杯。",
+          "facts": []
+        }
+      ],
+      "final": [
+        {
+          "label": "occupation",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "栖岸美术馆"
+            ],
+            [
+              "公共教育",
+              "课程设计"
+            ]
+          ]
+        },
+        {
+          "label": "commute",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "通勤",
+              "上下班",
+              "上班"
+            ],
+            [
+              "地铁"
+            ]
+          ]
+        },
+        {
+          "label": "cousin",
+          "all": [
+            [
+              "孟川"
+            ],
+            [
+              "表哥"
+            ]
+          ]
+        },
+        {
+          "label": "cousin_job",
+          "all": [
+            [
+              "孟川"
+            ],
+            [
+              "洛阳"
+            ],
+            [
+              "园林",
+              "工程师"
+            ]
+          ]
+        },
+        {
+          "label": "breakfast",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "早餐"
+            ],
+            [
+              "咸"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我现在的工作地点和岗位是什么？",
+          "relevant": [
+            "occupation"
+          ],
+          "answer_all": [
+            [
+              "栖岸美术馆"
+            ],
+            [
+              "公共教育",
+              "课程设计"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我每天上下班通常怎么走？",
+          "relevant": [
+            "commute"
+          ],
+          "answer_all": [
+            [
+              "地铁"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "表哥叫什么名字？",
+          "relevant": [
+            "cousin"
+          ],
+          "answer_all": [
+            [
+              "孟川"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "孟川住哪里，做什么工作？",
+          "relevant": [
+            "cousin_job"
+          ],
+          "answer_all": [
+            [
+              "洛阳"
+            ],
+            [
+              "园林",
+              "工程师"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "帮我按平时偏好挑个早餐。",
+          "relevant": [
+            "breakfast"
+          ],
+          "answer_all": [
+            [
+              "咸"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我什么时候搬去月球的？",
+          "relevant": [],
+          "answer_all": [
+            [
+              "没",
+              "不",
+              "无法",
+              "未"
+            ]
+          ],
+          "answer_forbidden": [
+            "你已经搬去月球"
+          ]
+        },
+        {
+          "say": "访客的临时口令是什么？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "落叶水杯"
+          ]
+        },
+        {
+          "say": "先这样，改天聊。",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "孟川",
+            "地铁",
+            "栖岸美术馆",
+            "早餐"
+          ]
+        }
+      ]
+    }
+  ]
+}

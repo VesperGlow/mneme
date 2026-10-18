@@ -131,7 +131,9 @@ impl Graph {
         if seeds.is_empty() {
             return Ok(Vec::new());
         }
-        ids(self.query("MATCH (m:ActiveMemory)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(n:ActiveMemory) WHERE m.id IN $seeds AND NOT n.id IN $seeds WITH n,count(DISTINCT e) AS weight RETURN n.id ORDER BY weight DESC,n.updated_at DESC LIMIT $limit",json!({"seeds":seeds,"limit":limit})).await?)
+        // The uniqueness constraint is on Memory.id. Include that label and
+        // seek each seed instead of scanning the whole ActiveMemory label.
+        ids(self.query("UNWIND $seeds AS seed MATCH (m:Memory:ActiveMemory {id:seed})-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(n:ActiveMemory) WHERE NOT n.id IN $seeds WITH n,count(DISTINCT e) AS weight RETURN n.id ORDER BY weight DESC,n.updated_at DESC LIMIT $limit",json!({"seeds":seeds,"limit":limit})).await?)
     }
 }
 

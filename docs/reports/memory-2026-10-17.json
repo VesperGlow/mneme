@@ -1,0 +1,4396 @@
+{
+  "schema": 1,
+  "generated_at": "2026-10-17T16:23:07.246407+00:00",
+  "metadata": {
+    "run": "eval-5f55262790cf",
+    "mode": "all",
+    "git": "8747e72498d81c699709fea79daaf841ab33b915",
+    "rustc": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "cpus": 4,
+    "memory_available_kib": 6159960,
+    "real_model_load": true,
+    "models": "offline local",
+    "llm": "never called",
+    "sqlite": "TempDir per scale; real user data never opened",
+    "source_sha256": "22d3442a426d7a0442248fd139b5584f35f62a85ef1a44281b2c280e22551d9e",
+    "model_health": {
+      "ready": true,
+      "device": "cpu",
+      "dimensions": 1024,
+      "embedding": "Qwen/Qwen3-Embedding-0.6B",
+      "embedding_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "reranker": "Alibaba-NLP/gte-multilingual-reranker-base",
+      "reranker_revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+      "code_revision": "40ced75c3017eb27626c9d4ea981bde21a2662f4",
+      "queued": 0,
+      "inference": {
+        "running": 0,
+        "started": 0,
+        "completed": 0,
+        "failed": 0,
+        "cancelled_queued": 0,
+        "abandoned_running": 0,
+        "queue_full": 0,
+        "queue_wait_ms": 0.0,
+        "inference_ms": 0.0
+      }
+    },
+    "model_health_after": {
+      "ready": true,
+      "device": "cpu",
+      "dimensions": 1024,
+      "embedding": "Qwen/Qwen3-Embedding-0.6B",
+      "embedding_revision": "97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3",
+      "reranker": "Alibaba-NLP/gte-multilingual-reranker-base",
+      "reranker_revision": "8215cf04918ba6f7b6a62bb44238ce2953d8831c",
+      "code_revision": "40ced75c3017eb27626c9d4ea981bde21a2662f4",
+      "queued": 0,
+      "inference": {
+        "running": 0,
+        "started": 291,
+        "completed": 291,
+        "failed": 0,
+        "cancelled_queued": 8,
+        "abandoned_running": 1,
+        "queue_full": 103,
+        "queue_wait_ms": 34901.9257655018,
+        "inference_ms": 87633.83485749364
+      }
+    }
+  },
+  "measurement_profile": "unoptimized Rust test profile; disposable Neo4j; local CPU FP32; no external LLM",
+  "baseline_retrieval": {
+    "cells": [
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 7.812795000000001,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.326264,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.306144,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 14.758035,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.591073,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.0994969999999995,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 1,
+        "context_ms": 1.586514391666667,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 1.2349398,
+        "errors": 0,
+        "p50_ms": 53.456952,
+        "p95_ms": 64.94550000000001,
+        "p99_ms": 65.647213,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t   86768 kB",
+          "VmRSS:\t   86768 kB",
+          "Threads:\t11"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 1.0751664749999998,
+        "seed_ms": 347.90164200000004,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 18.379781998781134
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 6.03703,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.091038,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.868468,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 16.577517999999998,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.5082520000000001,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.709077,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 5,
+        "context_ms": 1.605662075000001,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 3.431346200000001,
+        "errors": 0,
+        "p50_ms": 194.774581,
+        "p95_ms": 253.198053,
+        "p99_ms": 275.4128,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t   90200 kB",
+          "VmRSS:\t   90200 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 2.466698099999998,
+        "seed_ms": 347.90164200000004,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 24.972241672956745
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 3.230985,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 2.603605,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 2.522564,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 15.618627,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.710343,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 2.852536,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 20,
+        "context_ms": 1.4438569583333327,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 13.414978699999997,
+        "errors": 0,
+        "p50_ms": 770.163853,
+        "p95_ms": 917.262323,
+        "p99_ms": 991.497571,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t   98976 kB",
+          "VmRSS:\t   98976 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 1.2745210249999996,
+        "seed_ms": 347.90164200000004,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 28.01425005059461
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 5.085559,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.059687,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.9765369999999995,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 17.46134,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.8690639999999998,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.430475,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 50,
+        "context_ms": 1.1988077666666657,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 25.744873183333336,
+        "errors": 0,
+        "p50_ms": 1950.846647,
+        "p95_ms": 2154.154585,
+        "p99_ms": 2283.946025,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  117896 kB",
+          "VmRSS:\t  117896 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 1.2250442999999998,
+        "seed_ms": 347.90164200000004,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 28.306872794401894
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 4.338788,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.8160469999999997,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.761787,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 42.577933,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.915117,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.233467,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 1,
+        "context_ms": 1.678300916666667,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 1.44095135,
+        "errors": 0,
+        "p50_ms": 86.376197,
+        "p95_ms": 100.508992,
+        "p99_ms": 113.584393,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  122028 kB",
+          "VmRSS:\t  122028 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 1.226803758333334,
+        "seed_ms": 1045.765404,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 11.287252045601129
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 13.043422000000001,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 6.1297,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.387716,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 43.470816,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.1243479999999995,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.9432570000000005,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 5,
+        "context_ms": 1.6956913833333338,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 9.535702316666663,
+        "errors": 0,
+        "p50_ms": 377.57912500000003,
+        "p95_ms": 456.993419,
+        "p99_ms": 501.442626,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  122948 kB",
+          "VmRSS:\t  122948 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 4.497769750000002,
+        "seed_ms": 1045.765404,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 13.475270123294132
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 55.696655,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 55.089755,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 55.026564,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 57.068258,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 5.95603,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.056877,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 20,
+        "context_ms": 1.5006026916666668,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 31.07305052500002,
+        "errors": 0,
+        "p50_ms": 1674.667509,
+        "p95_ms": 1898.00001,
+        "p99_ms": 2205.645835,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  124568 kB",
+          "VmRSS:\t  124568 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 5.932297191666667,
+        "seed_ms": 1045.765404,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 13.22773434734805
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 5.51286,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.549966,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.887818,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 46.936730000000004,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.838728,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.110687,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 50,
+        "context_ms": 1.28773375,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 86.02649544166663,
+        "errors": 0,
+        "p50_ms": 4134.621671,
+        "p95_ms": 4751.867785,
+        "p99_ms": 4878.27157,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  162676 kB",
+          "VmRSS:\t  162676 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 3.4130015083333354,
+        "seed_ms": 1045.765404,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 13.342940782932125
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 6.289991,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.404013,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 6.16751,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 44.871077,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.560448,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.879207,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 1,
+        "context_ms": 1.7988482333333335,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 1.6256657083333337,
+        "errors": 0,
+        "p50_ms": 97.204787,
+        "p95_ms": 129.237001,
+        "p99_ms": 151.09952900000002,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  163032 kB",
+          "VmRSS:\t  163032 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 1.4723332666666664,
+        "seed_ms": 8339.746106999999,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 9.745303911937604
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 5.9488199999999996,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.2269630000000005,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.009533,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 49.061003,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.5933090000000005,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.7144280000000003,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 5,
+        "context_ms": 1.7361337916666657,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 6.961095683333331,
+        "errors": 0,
+        "p50_ms": 387.905224,
+        "p95_ms": 648.95035,
+        "p99_ms": 798.782836,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  162492 kB",
+          "VmRSS:\t  121628 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 3.023321175,
+        "seed_ms": 8339.746106999999,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 12.354150403255561
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 8.704825,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.607157,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 5.537709,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 49.925526999999995,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.850147,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.775246,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 20,
+        "context_ms": 1.570405658333333,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 36.263923383333335,
+        "errors": 0,
+        "p50_ms": 1653.343978,
+        "p95_ms": 2051.4377480000003,
+        "p99_ms": 2302.077267,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  162492 kB",
+          "VmRSS:\t  122460 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 3.406095575,
+        "seed_ms": 8339.746106999999,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 13.15405569684037
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 9.900356,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 2.753986,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 9.134366,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 54.562413,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.190367999999999,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.0022759999999997,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 50,
+        "context_ms": 1.3261959000000005,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 68.45071881666668,
+        "errors": 0,
+        "p50_ms": 4108.69956,
+        "p95_ms": 4248.806829,
+        "p99_ms": 4918.747016,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  162492 kB",
+          "VmRSS:\t  123772 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 3.334574516666666,
+        "seed_ms": 8339.746106999999,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 14.039051010720337
+      }
+    ],
+    "mode": "real_neo4j_fixture_models",
+    "run": "baseline-20261017"
+  },
+  "final_retrieval": {
+    "cells": [
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 4.1631089999999995,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 5.141361,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.2834389999999996,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.384134,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.432093,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 2.894776,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 1,
+        "context_ms": 1.6852639,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.065774375,
+        "errors": 0,
+        "p50_ms": 32.029939999999996,
+        "p95_ms": 43.847587,
+        "p99_ms": 50.301739999999995,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t   85792 kB",
+          "VmRSS:\t   85792 kB",
+          "Threads:\t9"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.07817404166666668,
+        "seed_ms": 471.211755,
+        "size": 100,
+        "sqlite_pool": 2,
+        "throughput_rps": 29.175180265889786
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 7.465567,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 9.74189,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 9.613522,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.430254,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.529493,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.356948,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 5,
+        "context_ms": 1.4890722583333345,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.04640365000000002,
+        "errors": 0,
+        "p50_ms": 61.238954,
+        "p95_ms": 86.2155,
+        "p99_ms": 94.131697,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t   90504 kB",
+          "VmRSS:\t   90504 kB",
+          "Threads:\t11"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.04608804999999998,
+        "seed_ms": 471.211755,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 72.3025019696964
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 6.075114,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 11.069493999999999,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 10.914174000000001,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.485773,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.690505,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 13.166687999999999,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 20,
+        "context_ms": 1.549981,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.043482525,
+        "errors": 0,
+        "p50_ms": 268.03717900000004,
+        "p95_ms": 313.58258900000004,
+        "p99_ms": 334.929905,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t   98876 kB",
+          "VmRSS:\t   98876 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.044883691666666684,
+        "seed_ms": 471.211755,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 71.35874821018658
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 7.2826059999999995,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 16.533475999999997,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 16.424866,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.367613,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.592314,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 12.655667000000001,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 50,
+        "context_ms": 1.4278620666666662,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.045150275,
+        "errors": 0,
+        "p50_ms": 670.1933310000001,
+        "p95_ms": 807.841263,
+        "p99_ms": 812.005811,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  112068 kB",
+          "VmRSS:\t  112068 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.03622025833333332,
+        "seed_ms": 471.211755,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 68.23677445158391
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 3.0235760000000003,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.305669,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 2.010974,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.5990089999999997,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.7358569999999998,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.9541250000000001,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 1,
+        "context_ms": 1.7496692916666658,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.06781565000000002,
+        "errors": 0,
+        "p50_ms": 29.982335999999997,
+        "p95_ms": 39.590756999999996,
+        "p99_ms": 44.787978,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  114612 kB",
+          "VmRSS:\t  114612 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.050353800000000004,
+        "seed_ms": 1052.828028,
+        "size": 1000,
+        "sqlite_pool": 3,
+        "throughput_rps": 30.21908098635966
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 12.549127,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.355246,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.2049449999999995,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.644168,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.788761,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.331469,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 5,
+        "context_ms": 1.661390633333333,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.06118298333333334,
+        "errors": 0,
+        "p50_ms": 105.51758,
+        "p95_ms": 141.64231999999998,
+        "p99_ms": 148.662125,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  117468 kB",
+          "VmRSS:\t  117468 kB",
+          "Threads:\t11"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.04162405000000002,
+        "seed_ms": 1052.828028,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 42.25230936325869
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 9.641251,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 6.255153,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 6.209553,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.723198,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.524681,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 8.297847,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 20,
+        "context_ms": 1.5126152916666666,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.045524233333333344,
+        "errors": 0,
+        "p50_ms": 479.86865,
+        "p95_ms": 572.431993,
+        "p99_ms": 640.343732,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  119212 kB",
+          "VmRSS:\t  119212 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.034825766666666653,
+        "seed_ms": 1052.828028,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 41.78195648966603
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 4.23917,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 5.480322,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 5.093979999999999,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.791518,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.210559,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 8.889159000000001,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 50,
+        "context_ms": 1.4123311999999992,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.04028834166666666,
+        "errors": 0,
+        "p50_ms": 1173.4614370000002,
+        "p95_ms": 1375.69299,
+        "p99_ms": 1387.367525,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  154884 kB",
+          "VmRSS:\t  154884 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.031013316666666662,
+        "seed_ms": 1052.828028,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 41.61335493072003
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 4.011059,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 5.06647,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.981031000000001,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.749198,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.8692480000000002,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 1.910384,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 1,
+        "context_ms": 1.7923086666666672,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.07109220833333335,
+        "errors": 0,
+        "p50_ms": 32.917351999999994,
+        "p95_ms": 41.946962,
+        "p99_ms": 47.658344,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  154980 kB",
+          "VmRSS:\t  154980 kB",
+          "Threads:\t8"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.05289000000000001,
+        "seed_ms": 8455.262352,
+        "size": 10000,
+        "sqlite_pool": 2,
+        "throughput_rps": 28.507455641821746
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 8.81706,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 18.337861,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 18.256559,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.847678,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 5.192592,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 6.577244,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 5,
+        "context_ms": 1.836895725,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.056540625000000004,
+        "errors": 0,
+        "p50_ms": 119.742501,
+        "p95_ms": 162.820565,
+        "p99_ms": 179.497621,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  155012 kB",
+          "VmRSS:\t  155012 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.046341266666666665,
+        "seed_ms": 8455.262352,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 37.75384648143338
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 17.989279,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 11.034314,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 10.991023,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.739797,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.609271,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 15.400603,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 20,
+        "context_ms": 1.5667843916666662,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.04796059166666668,
+        "errors": 0,
+        "p50_ms": 477.50461,
+        "p95_ms": 587.9217100000001,
+        "p99_ms": 623.268148,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  155068 kB",
+          "VmRSS:\t  155068 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.03463567499999999,
+        "seed_ms": 8455.262352,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 41.27518394384614
+      },
+      {
+        "channel_ms": [
+          {
+            "duration_ms": 11.556976,
+            "name": "vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.880017,
+            "name": "keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 7.762387,
+            "name": "graph_entity",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 3.805758,
+            "name": "sqlite_vector",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 4.897590999999999,
+            "name": "sqlite_keyword",
+            "state": "healthy"
+          },
+          {
+            "duration_ms": 10.280643000000001,
+            "name": "graph_neighbor",
+            "state": "healthy"
+          }
+        ],
+        "concurrency": 50,
+        "context_ms": 1.4179348833333338,
+        "correct": 120,
+        "degraded": 0,
+        "embedding_ms": 0.0397624,
+        "errors": 0,
+        "p50_ms": 1140.4791329999998,
+        "p95_ms": 1339.669247,
+        "p99_ms": 1360.763334,
+        "precision": 1.0,
+        "process_memory": [
+          "VmHWM:\t  157316 kB",
+          "VmRSS:\t  157316 kB",
+          "Threads:\t10"
+        ],
+        "recall": 1.0,
+        "requests": 120,
+        "rerank_ms": 0.031135283333333333,
+        "seed_ms": 8455.262352,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 42.56007324191378
+      }
+    ],
+    "mode": "real_neo4j_fixture_models",
+    "run": "eval-5f55262790cf"
+  },
+  "baseline_writes": {
+    "cells": [
+      {
+        "active_slots": 20,
+        "concurrency": 1,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 0.709422,
+        "p95_ms": 2.87456,
+        "p99_ms": 5.009878,
+        "preparation_ms": 290.303951,
+        "process_memory": [
+          "VmHWM:\t   69340 kB",
+          "VmRSS:\t   69340 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 120,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 1035.3317395724125
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 5,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 2.024568,
+        "p95_ms": 28.596019000000002,
+        "p99_ms": 107.896984,
+        "preparation_ms": 1780.041421,
+        "process_memory": [
+          "VmHWM:\t   70252 kB",
+          "VmRSS:\t   70252 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 240,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 630.0859041006681
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 20,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 15.553654,
+        "p95_ms": 63.90199200000001,
+        "p99_ms": 161.509919,
+        "preparation_ms": 3232.5377460000004,
+        "process_memory": [
+          "VmHWM:\t   71220 kB",
+          "VmRSS:\t   71220 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 360,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 658.1813145434708
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 50,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 64.375061,
+        "p95_ms": 133.01220899999998,
+        "p99_ms": 227.201032,
+        "preparation_ms": 6113.20113,
+        "process_memory": [
+          "VmHWM:\t   71832 kB",
+          "VmRSS:\t   71832 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 480,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 697.6099991882726
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 1,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 0.568492,
+        "p95_ms": 1.519236,
+        "p99_ms": 2.756701,
+        "preparation_ms": 386.43581,
+        "process_memory": [
+          "VmHWM:\t   73008 kB",
+          "VmRSS:\t   73008 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 120,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 3,
+        "throughput_rps": 1575.48570501098
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 5,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 1.712207,
+        "p95_ms": 5.789739,
+        "p99_ms": 106.534376,
+        "preparation_ms": 1371.339139,
+        "process_memory": [
+          "VmHWM:\t   73896 kB",
+          "VmRSS:\t   73896 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 240,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 1107.9997094270761
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 20,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 13.891627,
+        "p95_ms": 36.366614999999996,
+        "p99_ms": 131.22101899999998,
+        "preparation_ms": 3093.4383940000002,
+        "process_memory": [
+          "VmHWM:\t   74576 kB",
+          "VmRSS:\t   74576 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 360,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 928.6469618409212
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 50,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 38.403501,
+        "p95_ms": 70.607691,
+        "p99_ms": 173.501633,
+        "preparation_ms": 5295.995760000001,
+        "process_memory": [
+          "VmHWM:\t   75064 kB",
+          "VmRSS:\t   75064 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 480,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 1018.633424062871
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 1,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 0.658022,
+        "p95_ms": 2.001736,
+        "p99_ms": 2.92674,
+        "preparation_ms": 283.793237,
+        "process_memory": [
+          "VmHWM:\t   76616 kB",
+          "VmRSS:\t   76616 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 120,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 3,
+        "throughput_rps": 1371.5245311220517
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 5,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 1.543196,
+        "p95_ms": 4.260363,
+        "p99_ms": 80.81606400000001,
+        "preparation_ms": 1131.698447,
+        "process_memory": [
+          "VmHWM:\t   77944 kB",
+          "VmRSS:\t   77944 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 240,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 1328.8225345047456
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 20,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 15.254403,
+        "p95_ms": 29.465609999999998,
+        "p99_ms": 186.902655,
+        "preparation_ms": 2742.2493870000003,
+        "process_memory": [
+          "VmHWM:\t   78028 kB",
+          "VmRSS:\t   78028 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 360,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 954.9534035858333
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 50,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 55.237916,
+        "p95_ms": 91.91583200000001,
+        "p99_ms": 155.005884,
+        "preparation_ms": 4786.081615,
+        "process_memory": [
+          "VmHWM:\t   78256 kB",
+          "VmRSS:\t   78256 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 480,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 886.2386872831684
+      }
+    ],
+    "mode": "sqlite_actual_transactions"
+  },
+  "final_writes": {
+    "cells": [
+      {
+        "active_slots": 20,
+        "concurrency": 1,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 0.7285619999999999,
+        "p95_ms": 2.177365,
+        "p99_ms": 2.6903460000000003,
+        "preparation_ms": 484.77815400000003,
+        "process_memory": [
+          "VmHWM:\t   68640 kB",
+          "VmRSS:\t   68352 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 120,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 3,
+        "throughput_rps": 1211.798806316576
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 5,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 1.564064,
+        "p95_ms": 5.384163,
+        "p99_ms": 80.18589700000001,
+        "preparation_ms": 1327.3195389999998,
+        "process_memory": [
+          "VmHWM:\t   70676 kB",
+          "VmRSS:\t   70676 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 240,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 1409.4503221263476
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 20,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 14.658084,
+        "p95_ms": 27.427239999999998,
+        "p99_ms": 179.506717,
+        "preparation_ms": 2531.107842,
+        "process_memory": [
+          "VmHWM:\t   71896 kB",
+          "VmRSS:\t   71896 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 360,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 725.7511108958855
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 50,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 46.307190999999996,
+        "p95_ms": 85.339878,
+        "p99_ms": 157.97604900000002,
+        "preparation_ms": 4738.556128,
+        "process_memory": [
+          "VmHWM:\t   72800 kB",
+          "VmRSS:\t   72800 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 480,
+        "requests": 240,
+        "size": 100,
+        "sqlite_pool": 4,
+        "throughput_rps": 864.0276329861472
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 1,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 0.675182,
+        "p95_ms": 1.787965,
+        "p99_ms": 2.4812060000000002,
+        "preparation_ms": 351.451627,
+        "process_memory": [
+          "VmHWM:\t   74336 kB",
+          "VmRSS:\t   74336 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 120,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 1281.9081356428019
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 5,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 2.069104,
+        "p95_ms": 5.452982,
+        "p99_ms": 131.167509,
+        "preparation_ms": 1341.325763,
+        "process_memory": [
+          "VmHWM:\t   74728 kB",
+          "VmRSS:\t   74728 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 240,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 1015.9024587688261
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 20,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 18.777331,
+        "p95_ms": 38.655836,
+        "p99_ms": 105.58082300000001,
+        "preparation_ms": 3482.894691,
+        "process_memory": [
+          "VmHWM:\t   75136 kB",
+          "VmRSS:\t   75136 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 360,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 909.0702725070336
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 50,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 64.629182,
+        "p95_ms": 108.123848,
+        "p99_ms": 166.372006,
+        "preparation_ms": 5015.510313,
+        "process_memory": [
+          "VmHWM:\t   75172 kB",
+          "VmRSS:\t   75172 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 480,
+        "requests": 240,
+        "size": 1000,
+        "sqlite_pool": 4,
+        "throughput_rps": 797.2515179120791
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 1,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 0.915303,
+        "p95_ms": 2.747087,
+        "p99_ms": 4.02263,
+        "preparation_ms": 331.620611,
+        "process_memory": [
+          "VmHWM:\t   76832 kB",
+          "VmRSS:\t   76832 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 120,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 3,
+        "throughput_rps": 980.6609973837191
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 5,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 1.708665,
+        "p95_ms": 5.3820120000000005,
+        "p99_ms": 106.04631400000001,
+        "preparation_ms": 1402.1919990000001,
+        "process_memory": [
+          "VmHWM:\t   76928 kB",
+          "VmRSS:\t   76928 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 240,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 1187.9531747466992
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 20,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 18.587151,
+        "p95_ms": 29.757425,
+        "p99_ms": 80.391237,
+        "preparation_ms": 2835.548975,
+        "process_memory": [
+          "VmHWM:\t   77004 kB",
+          "VmRSS:\t   77004 kB",
+          "Threads:\t11"
+        ],
+        "processed_sources": 360,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 988.1853587863255
+      },
+      {
+        "active_slots": 20,
+        "concurrency": 50,
+        "errors": 0,
+        "latest_values_correct": true,
+        "p50_ms": 28.374931,
+        "p95_ms": 51.461263,
+        "p99_ms": 105.679491,
+        "preparation_ms": 5078.388524,
+        "process_memory": [
+          "VmHWM:\t   77020 kB",
+          "VmRSS:\t   77020 kB",
+          "Threads:\t10"
+        ],
+        "processed_sources": 480,
+        "requests": 240,
+        "size": 10000,
+        "sqlite_pool": 4,
+        "throughput_rps": 1335.5493361496212
+      }
+    ],
+    "mode": "sqlite_actual_transactions"
+  },
+  "semantics_baseline": {
+    "document_embedding_ms": 8417.230112000001,
+    "exact": 5,
+    "expected": 24,
+    "fp": 55,
+    "mode": "real_cpu_models_real_neo4j",
+    "precision": 0.3037974683544304,
+    "recall": 1.0,
+    "run": "baseline-20261017",
+    "threshold": 0.1,
+    "tp": 24,
+    "queries": [
+      {
+        "query": "我现在住在哪座城市？",
+        "kind": "direct",
+        "expected": [
+          "residence"
+        ],
+        "selected": [
+          "sister",
+          "residence",
+          "travel",
+          "exercise"
+        ],
+        "exact": false,
+        "ms": 1564.648823,
+        "degraded": false,
+        "embedding_ms": 402.91074199999997,
+        "rerank_ms": 1129.678647,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我搬家之后落脚的地方是哪里来着？",
+        "kind": "paraphrase",
+        "expected": [
+          "residence"
+        ],
+        "selected": [
+          "sister",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1502.664769,
+        "degraded": false,
+        "embedding_ms": 366.798833,
+        "rerank_ms": 1036.441641,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我喝哪种咖啡？",
+        "kind": "direct",
+        "expected": [
+          "coffee"
+        ],
+        "selected": [
+          "communication",
+          "coffee",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1153.536946,
+        "degraded": false,
+        "embedding_ms": 235.73360300000002,
+        "rerank_ms": 885.9683689999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "帮我回想一下平时那杯的口味，甜不甜？",
+        "kind": "vague",
+        "expected": [
+          "coffee"
+        ],
+        "selected": [
+          "communication",
+          "residence",
+          "coffee"
+        ],
+        "exact": false,
+        "ms": 1591.347128,
+        "degraded": false,
+        "embedding_ms": 422.057645,
+        "rerank_ms": 1128.858585,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "点菜时有什么要帮我去掉的？",
+        "kind": "negation",
+        "expected": [
+          "food"
+        ],
+        "selected": [
+          "communication",
+          "food"
+        ],
+        "exact": false,
+        "ms": 1417.634488,
+        "degraded": false,
+        "embedding_ms": 357.595827,
+        "rerank_ms": 1031.003711,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我是不是不吃香菜？",
+        "kind": "negation",
+        "expected": [
+          "food"
+        ],
+        "selected": [
+          "food",
+          "communication",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1183.1883750000002,
+        "degraded": false,
+        "embedding_ms": 361.938804,
+        "rerank_ms": 787.3420570000001,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的职业和常用编程语言是什么？",
+        "kind": "direct",
+        "expected": [
+          "work"
+        ],
+        "selected": [
+          "communication",
+          "work"
+        ],
+        "exact": false,
+        "ms": 1488.6405570000002,
+        "degraded": false,
+        "embedding_ms": 274.59861800000004,
+        "rerank_ms": 1180.154771,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我敲代码的时候一般放什么背景音乐？",
+        "kind": "association",
+        "expected": [
+          "music"
+        ],
+        "selected": [
+          "music",
+          "communication"
+        ],
+        "exact": false,
+        "ms": 1368.449646,
+        "degraded": false,
+        "embedding_ms": 347.58224,
+        "rerank_ms": 986.613337,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我妹妹叫什么，她在哪工作？",
+        "kind": "relationship",
+        "expected": [
+          "sister"
+        ],
+        "selected": [
+          "cat",
+          "sister",
+          "residence",
+          "friend"
+        ],
+        "exact": false,
+        "ms": 1426.980065,
+        "degraded": false,
+        "embedding_ms": 360.504501,
+        "rerank_ms": 1036.246611,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "妹妹最近喜欢拍什么题材？",
+        "kind": "multi_hop",
+        "expected": [
+          "sister_interest",
+          "sister"
+        ],
+        "selected": [
+          "residence",
+          "sister",
+          "travel",
+          "sister_interest"
+        ],
+        "exact": false,
+        "ms": 1374.360977,
+        "degraded": false,
+        "embedding_ms": 361.714094,
+        "rerank_ms": 980.180056,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "林悦正在学什么？",
+        "kind": "direct",
+        "expected": [
+          "sister_interest"
+        ],
+        "selected": [
+          "sister",
+          "communication",
+          "reading",
+          "work",
+          "language",
+          "sister_interest"
+        ],
+        "exact": false,
+        "ms": 1104.403464,
+        "degraded": false,
+        "embedding_ms": 258.520451,
+        "rerank_ms": 816.779125,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "周六早上我通常有什么运动安排？",
+        "kind": "time",
+        "expected": [
+          "exercise"
+        ],
+        "selected": [
+          "exercise"
+        ],
+        "exact": true,
+        "ms": 1424.0550999999998,
+        "degraded": false,
+        "embedding_ms": 352.8661,
+        "rerank_ms": 1039.143917,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "家里那只毛孩子叫什么名字？",
+        "kind": "paraphrase",
+        "expected": [
+          "cat"
+        ],
+        "selected": [
+          "sister",
+          "cat"
+        ],
+        "exact": false,
+        "ms": 1436.1955209999999,
+        "degraded": false,
+        "embedding_ms": 369.31521699999996,
+        "rerank_ms": 1037.445414,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "下个月的出游目的地是哪里？",
+        "kind": "time",
+        "expected": [
+          "travel"
+        ],
+        "selected": [
+          "residence",
+          "exercise",
+          "travel"
+        ],
+        "exact": false,
+        "ms": 1409.499906,
+        "degraded": false,
+        "embedding_ms": 342.19433100000003,
+        "rerank_ms": 1036.571294,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "这周五的演示几点开始？",
+        "kind": "time",
+        "expected": [
+          "meeting"
+        ],
+        "selected": [
+          "meeting",
+          "sleep",
+          "bookstore",
+          "emotion"
+        ],
+        "exact": false,
+        "ms": 1380.298448,
+        "degraded": false,
+        "embedding_ms": 352.199519,
+        "rerank_ms": 986.6675299999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "上次那本书我看到哪儿了？",
+        "kind": "continuity",
+        "expected": [
+          "reading"
+        ],
+        "selected": [
+          "reading",
+          "friend",
+          "communication"
+        ],
+        "exact": false,
+        "ms": 1429.23934,
+        "degraded": false,
+        "embedding_ms": 374.078034,
+        "rerank_ms": 1025.723295,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "陈明工作的地方什么时候有读书会？",
+        "kind": "multi_hop",
+        "expected": [
+          "friend",
+          "bookstore"
+        ],
+        "selected": [
+          "residence",
+          "sister",
+          "birthday",
+          "meeting",
+          "friend",
+          "bookstore"
+        ],
+        "exact": false,
+        "ms": 1225.174169,
+        "degraded": false,
+        "embedding_ms": 344.668097,
+        "rerank_ms": 844.0289909999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "给我讲解技术问题时怎么安排内容更合我意？",
+        "kind": "association",
+        "expected": [
+          "communication"
+        ],
+        "selected": [
+          "music",
+          "travel",
+          "work",
+          "communication",
+          "meeting"
+        ],
+        "exact": false,
+        "ms": 1415.181326,
+        "degraded": false,
+        "embedding_ms": 395.34636,
+        "rerank_ms": 992.3304400000001,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的生日是哪天？",
+        "kind": "direct",
+        "expected": [
+          "birthday"
+        ],
+        "selected": [
+          "sister",
+          "birthday",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1079.379665,
+        "degraded": false,
+        "embedding_ms": 253.68056300000003,
+        "rerank_ms": 802.100731,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "晚上什么时间以后就别给我发提醒了？",
+        "kind": "association",
+        "expected": [
+          "sleep"
+        ],
+        "selected": [
+          "sleep",
+          "meeting"
+        ],
+        "exact": false,
+        "ms": 1450.2111260000001,
+        "degraded": false,
+        "embedding_ms": 368.647326,
+        "rerank_ms": 1050.9949789999998,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我每次上台前都担心，什么办法比较适合我？",
+        "kind": "emotion",
+        "expected": [
+          "emotion"
+        ],
+        "selected": [
+          "emotion"
+        ],
+        "exact": true,
+        "ms": 1386.50524,
+        "degraded": false,
+        "embedding_ms": 419.893903,
+        "rerank_ms": 940.6045240000001,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我每天练多久日语？",
+        "kind": "direct",
+        "expected": [
+          "language"
+        ],
+        "selected": [
+          "language"
+        ],
+        "exact": true,
+        "ms": 1252.566165,
+        "degraded": false,
+        "embedding_ms": 289.085264,
+        "rerank_ms": 936.734977,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "量子纠缠是什么？",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "communication"
+        ],
+        "exact": false,
+        "ms": 1279.032009,
+        "degraded": false,
+        "embedding_ms": 336.770552,
+        "rerank_ms": 908.81369,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "帮我写一个快速排序。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "work",
+          "communication",
+          "travel"
+        ],
+        "exact": false,
+        "ms": 1207.83556,
+        "degraded": false,
+        "embedding_ms": 410.95430700000003,
+        "rerank_ms": 770.31103,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "谢谢你，晚安。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "language",
+          "exercise",
+          "birthday",
+          "sleep",
+          "residence",
+          "travel"
+        ],
+        "exact": false,
+        "ms": 1520.271215,
+        "degraded": false,
+        "embedding_ms": 395.634432,
+        "rerank_ms": 1097.463627,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "今天的国际新闻有哪些？",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 3314.738818,
+        "degraded": true,
+        "embedding_ms": 555.53424,
+        "rerank_ms": 333.93303000000003,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的门禁密码是什么？",
+        "kind": "deletion",
+        "expected": [],
+        "selected": [
+          "cat",
+          "sister",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 2980.68222,
+        "degraded": true,
+        "embedding_ms": 283.25552500000003,
+        "rerank_ms": 279.94908899999996,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "今天我还需要去取快递吗？",
+        "kind": "expired",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 1468.635079,
+        "degraded": false,
+        "embedding_ms": 293.142091,
+        "rerank_ms": 952.807266,
+        "reranker_state": "healthy"
+      }
+    ],
+    "failures": [
+      {
+        "query": "我现在住在哪座城市？",
+        "kind": "direct",
+        "expected": [
+          "residence"
+        ],
+        "selected": [
+          "sister",
+          "residence",
+          "travel",
+          "exercise"
+        ],
+        "exact": false,
+        "ms": 1564.648823,
+        "degraded": false,
+        "embedding_ms": 402.91074199999997,
+        "rerank_ms": 1129.678647,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我搬家之后落脚的地方是哪里来着？",
+        "kind": "paraphrase",
+        "expected": [
+          "residence"
+        ],
+        "selected": [
+          "sister",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1502.664769,
+        "degraded": false,
+        "embedding_ms": 366.798833,
+        "rerank_ms": 1036.441641,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我喝哪种咖啡？",
+        "kind": "direct",
+        "expected": [
+          "coffee"
+        ],
+        "selected": [
+          "communication",
+          "coffee",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1153.536946,
+        "degraded": false,
+        "embedding_ms": 235.73360300000002,
+        "rerank_ms": 885.9683689999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "帮我回想一下平时那杯的口味，甜不甜？",
+        "kind": "vague",
+        "expected": [
+          "coffee"
+        ],
+        "selected": [
+          "communication",
+          "residence",
+          "coffee"
+        ],
+        "exact": false,
+        "ms": 1591.347128,
+        "degraded": false,
+        "embedding_ms": 422.057645,
+        "rerank_ms": 1128.858585,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "点菜时有什么要帮我去掉的？",
+        "kind": "negation",
+        "expected": [
+          "food"
+        ],
+        "selected": [
+          "communication",
+          "food"
+        ],
+        "exact": false,
+        "ms": 1417.634488,
+        "degraded": false,
+        "embedding_ms": 357.595827,
+        "rerank_ms": 1031.003711,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我是不是不吃香菜？",
+        "kind": "negation",
+        "expected": [
+          "food"
+        ],
+        "selected": [
+          "food",
+          "communication",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1183.1883750000002,
+        "degraded": false,
+        "embedding_ms": 361.938804,
+        "rerank_ms": 787.3420570000001,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的职业和常用编程语言是什么？",
+        "kind": "direct",
+        "expected": [
+          "work"
+        ],
+        "selected": [
+          "communication",
+          "work"
+        ],
+        "exact": false,
+        "ms": 1488.6405570000002,
+        "degraded": false,
+        "embedding_ms": 274.59861800000004,
+        "rerank_ms": 1180.154771,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我敲代码的时候一般放什么背景音乐？",
+        "kind": "association",
+        "expected": [
+          "music"
+        ],
+        "selected": [
+          "music",
+          "communication"
+        ],
+        "exact": false,
+        "ms": 1368.449646,
+        "degraded": false,
+        "embedding_ms": 347.58224,
+        "rerank_ms": 986.613337,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我妹妹叫什么，她在哪工作？",
+        "kind": "relationship",
+        "expected": [
+          "sister"
+        ],
+        "selected": [
+          "cat",
+          "sister",
+          "residence",
+          "friend"
+        ],
+        "exact": false,
+        "ms": 1426.980065,
+        "degraded": false,
+        "embedding_ms": 360.504501,
+        "rerank_ms": 1036.246611,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "妹妹最近喜欢拍什么题材？",
+        "kind": "multi_hop",
+        "expected": [
+          "sister_interest",
+          "sister"
+        ],
+        "selected": [
+          "residence",
+          "sister",
+          "travel",
+          "sister_interest"
+        ],
+        "exact": false,
+        "ms": 1374.360977,
+        "degraded": false,
+        "embedding_ms": 361.714094,
+        "rerank_ms": 980.180056,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "林悦正在学什么？",
+        "kind": "direct",
+        "expected": [
+          "sister_interest"
+        ],
+        "selected": [
+          "sister",
+          "communication",
+          "reading",
+          "work",
+          "language",
+          "sister_interest"
+        ],
+        "exact": false,
+        "ms": 1104.403464,
+        "degraded": false,
+        "embedding_ms": 258.520451,
+        "rerank_ms": 816.779125,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "家里那只毛孩子叫什么名字？",
+        "kind": "paraphrase",
+        "expected": [
+          "cat"
+        ],
+        "selected": [
+          "sister",
+          "cat"
+        ],
+        "exact": false,
+        "ms": 1436.1955209999999,
+        "degraded": false,
+        "embedding_ms": 369.31521699999996,
+        "rerank_ms": 1037.445414,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "下个月的出游目的地是哪里？",
+        "kind": "time",
+        "expected": [
+          "travel"
+        ],
+        "selected": [
+          "residence",
+          "exercise",
+          "travel"
+        ],
+        "exact": false,
+        "ms": 1409.499906,
+        "degraded": false,
+        "embedding_ms": 342.19433100000003,
+        "rerank_ms": 1036.571294,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "这周五的演示几点开始？",
+        "kind": "time",
+        "expected": [
+          "meeting"
+        ],
+        "selected": [
+          "meeting",
+          "sleep",
+          "bookstore",
+          "emotion"
+        ],
+        "exact": false,
+        "ms": 1380.298448,
+        "degraded": false,
+        "embedding_ms": 352.199519,
+        "rerank_ms": 986.6675299999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "上次那本书我看到哪儿了？",
+        "kind": "continuity",
+        "expected": [
+          "reading"
+        ],
+        "selected": [
+          "reading",
+          "friend",
+          "communication"
+        ],
+        "exact": false,
+        "ms": 1429.23934,
+        "degraded": false,
+        "embedding_ms": 374.078034,
+        "rerank_ms": 1025.723295,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "陈明工作的地方什么时候有读书会？",
+        "kind": "multi_hop",
+        "expected": [
+          "friend",
+          "bookstore"
+        ],
+        "selected": [
+          "residence",
+          "sister",
+          "birthday",
+          "meeting",
+          "friend",
+          "bookstore"
+        ],
+        "exact": false,
+        "ms": 1225.174169,
+        "degraded": false,
+        "embedding_ms": 344.668097,
+        "rerank_ms": 844.0289909999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "给我讲解技术问题时怎么安排内容更合我意？",
+        "kind": "association",
+        "expected": [
+          "communication"
+        ],
+        "selected": [
+          "music",
+          "travel",
+          "work",
+          "communication",
+          "meeting"
+        ],
+        "exact": false,
+        "ms": 1415.181326,
+        "degraded": false,
+        "embedding_ms": 395.34636,
+        "rerank_ms": 992.3304400000001,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的生日是哪天？",
+        "kind": "direct",
+        "expected": [
+          "birthday"
+        ],
+        "selected": [
+          "sister",
+          "birthday",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 1079.379665,
+        "degraded": false,
+        "embedding_ms": 253.68056300000003,
+        "rerank_ms": 802.100731,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "晚上什么时间以后就别给我发提醒了？",
+        "kind": "association",
+        "expected": [
+          "sleep"
+        ],
+        "selected": [
+          "sleep",
+          "meeting"
+        ],
+        "exact": false,
+        "ms": 1450.2111260000001,
+        "degraded": false,
+        "embedding_ms": 368.647326,
+        "rerank_ms": 1050.9949789999998,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "量子纠缠是什么？",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "communication"
+        ],
+        "exact": false,
+        "ms": 1279.032009,
+        "degraded": false,
+        "embedding_ms": 336.770552,
+        "rerank_ms": 908.81369,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "帮我写一个快速排序。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "work",
+          "communication",
+          "travel"
+        ],
+        "exact": false,
+        "ms": 1207.83556,
+        "degraded": false,
+        "embedding_ms": 410.95430700000003,
+        "rerank_ms": 770.31103,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "谢谢你，晚安。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "language",
+          "exercise",
+          "birthday",
+          "sleep",
+          "residence",
+          "travel"
+        ],
+        "exact": false,
+        "ms": 1520.271215,
+        "degraded": false,
+        "embedding_ms": 395.634432,
+        "rerank_ms": 1097.463627,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的门禁密码是什么？",
+        "kind": "deletion",
+        "expected": [],
+        "selected": [
+          "cat",
+          "sister",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 2980.68222,
+        "degraded": true,
+        "embedding_ms": 283.25552500000003,
+        "rerank_ms": 279.94908899999996,
+        "reranker_state": "healthy"
+      }
+    ]
+  },
+  "semantics_final": {
+    "document_embedding_ms": 12317.132887,
+    "exact": 24,
+    "expected": 24,
+    "fp": 3,
+    "mode": "real_cpu_models_real_neo4j",
+    "precision": 0.8846153846153846,
+    "recall": 0.9583333333333334,
+    "run": "eval-5f55262790cf",
+    "threshold": 0.1,
+    "tp": 23,
+    "queries": [
+      {
+        "query": "我现在住在哪座城市？",
+        "kind": "direct",
+        "expected": [
+          "residence"
+        ],
+        "selected": [
+          "sister",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 695.5033139999999,
+        "degraded": false,
+        "embedding_ms": 360.548051,
+        "rerank_ms": 243.339456,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我搬家之后落脚的地方是哪里来着？",
+        "kind": "paraphrase",
+        "expected": [
+          "residence"
+        ],
+        "selected": [
+          "residence"
+        ],
+        "exact": true,
+        "ms": 479.077627,
+        "degraded": false,
+        "embedding_ms": 380.794213,
+        "rerank_ms": 80.283793,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我喝哪种咖啡？",
+        "kind": "direct",
+        "expected": [
+          "coffee"
+        ],
+        "selected": [],
+        "exact": false,
+        "ms": 4071.387054,
+        "degraded": true,
+        "embedding_ms": 4001.244913,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "帮我回想一下平时那杯的口味，甜不甜？",
+        "kind": "vague",
+        "expected": [
+          "coffee"
+        ],
+        "selected": [
+          "coffee"
+        ],
+        "exact": true,
+        "ms": 494.344869,
+        "degraded": false,
+        "embedding_ms": 384.73051200000003,
+        "rerank_ms": 96.166728,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "点菜时有什么要帮我去掉的？",
+        "kind": "negation",
+        "expected": [
+          "food"
+        ],
+        "selected": [
+          "food"
+        ],
+        "exact": true,
+        "ms": 433.135275,
+        "degraded": false,
+        "embedding_ms": 334.749484,
+        "rerank_ms": 85.58157499999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我是不是不吃香菜？",
+        "kind": "negation",
+        "expected": [
+          "food"
+        ],
+        "selected": [
+          "food"
+        ],
+        "exact": true,
+        "ms": 425.208529,
+        "degraded": false,
+        "embedding_ms": 327.076727,
+        "rerank_ms": 85.685575,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的职业和常用编程语言是什么？",
+        "kind": "direct",
+        "expected": [
+          "work"
+        ],
+        "selected": [
+          "work"
+        ],
+        "exact": true,
+        "ms": 341.418228,
+        "degraded": false,
+        "embedding_ms": 260.475142,
+        "rerank_ms": 69.28412,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我敲代码的时候一般放什么背景音乐？",
+        "kind": "association",
+        "expected": [
+          "music"
+        ],
+        "selected": [
+          "music"
+        ],
+        "exact": true,
+        "ms": 422.23760300000004,
+        "degraded": false,
+        "embedding_ms": 327.476327,
+        "rerank_ms": 82.052356,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我妹妹叫什么，她在哪工作？",
+        "kind": "relationship",
+        "expected": [
+          "sister"
+        ],
+        "selected": [
+          "sister"
+        ],
+        "exact": true,
+        "ms": 421.255291,
+        "degraded": false,
+        "embedding_ms": 335.33641400000005,
+        "rerank_ms": 75.69187400000001,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "妹妹最近喜欢拍什么题材？",
+        "kind": "multi_hop",
+        "expected": [
+          "sister",
+          "sister_interest"
+        ],
+        "selected": [
+          "sister",
+          "sister_interest"
+        ],
+        "exact": true,
+        "ms": 462.45556,
+        "degraded": false,
+        "embedding_ms": 337.043358,
+        "rerank_ms": 114.27585599999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "林悦正在学什么？",
+        "kind": "direct",
+        "expected": [
+          "sister_interest"
+        ],
+        "selected": [
+          "sister_interest",
+          "sister"
+        ],
+        "exact": false,
+        "ms": 420.741159,
+        "degraded": false,
+        "embedding_ms": 318.374688,
+        "rerank_ms": 91.954217,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "周六早上我通常有什么运动安排？",
+        "kind": "time",
+        "expected": [
+          "exercise"
+        ],
+        "selected": [
+          "exercise"
+        ],
+        "exact": true,
+        "ms": 358.97783599999997,
+        "degraded": false,
+        "embedding_ms": 259.950132,
+        "rerank_ms": 86.044316,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "家里那只毛孩子叫什么名字？",
+        "kind": "paraphrase",
+        "expected": [
+          "cat"
+        ],
+        "selected": [
+          "cat"
+        ],
+        "exact": true,
+        "ms": 361.10406900000004,
+        "degraded": false,
+        "embedding_ms": 274.333222,
+        "rerank_ms": 67.693356,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "下个月的出游目的地是哪里？",
+        "kind": "time",
+        "expected": [
+          "travel"
+        ],
+        "selected": [
+          "travel"
+        ],
+        "exact": true,
+        "ms": 431.997124,
+        "degraded": false,
+        "embedding_ms": 338.77345199999996,
+        "rerank_ms": 81.716176,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "这周五的演示几点开始？",
+        "kind": "time",
+        "expected": [
+          "meeting"
+        ],
+        "selected": [
+          "meeting"
+        ],
+        "exact": true,
+        "ms": 355.907229,
+        "degraded": false,
+        "embedding_ms": 280.043925,
+        "rerank_ms": 67.092114,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "上次那本书我看到哪儿了？",
+        "kind": "continuity",
+        "expected": [
+          "reading"
+        ],
+        "selected": [
+          "reading"
+        ],
+        "exact": true,
+        "ms": 368.925977,
+        "degraded": false,
+        "embedding_ms": 262.07326600000005,
+        "rerank_ms": 95.35743500000001,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "陈明工作的地方什么时候有读书会？",
+        "kind": "multi_hop",
+        "expected": [
+          "bookstore",
+          "friend"
+        ],
+        "selected": [
+          "bookstore",
+          "friend"
+        ],
+        "exact": true,
+        "ms": 512.6878780000001,
+        "degraded": false,
+        "embedding_ms": 355.214709,
+        "rerank_ms": 144.82146300000002,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "给我讲解技术问题时怎么安排内容更合我意？",
+        "kind": "association",
+        "expected": [
+          "communication"
+        ],
+        "selected": [
+          "communication"
+        ],
+        "exact": true,
+        "ms": 491.02020000000005,
+        "degraded": false,
+        "embedding_ms": 392.15198699999996,
+        "rerank_ms": 88.105651,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的生日是哪天？",
+        "kind": "direct",
+        "expected": [
+          "birthday"
+        ],
+        "selected": [
+          "birthday"
+        ],
+        "exact": true,
+        "ms": 411.412038,
+        "degraded": false,
+        "embedding_ms": 331.20921500000003,
+        "rerank_ms": 67.622376,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "晚上什么时间以后就别给我发提醒了？",
+        "kind": "association",
+        "expected": [
+          "sleep"
+        ],
+        "selected": [
+          "sleep"
+        ],
+        "exact": true,
+        "ms": 348.332231,
+        "degraded": false,
+        "embedding_ms": 263.392429,
+        "rerank_ms": 73.80361,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我每次上台前都担心，什么办法比较适合我？",
+        "kind": "emotion",
+        "expected": [
+          "emotion"
+        ],
+        "selected": [
+          "emotion"
+        ],
+        "exact": true,
+        "ms": 351.174728,
+        "degraded": false,
+        "embedding_ms": 267.43109799999996,
+        "rerank_ms": 72.980188,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我每天练多久日语？",
+        "kind": "direct",
+        "expected": [
+          "language"
+        ],
+        "selected": [
+          "language"
+        ],
+        "exact": true,
+        "ms": 336.48629600000004,
+        "degraded": false,
+        "embedding_ms": 244.407457,
+        "rerank_ms": 80.389752,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "量子纠缠是什么？",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 321.062073,
+        "degraded": false,
+        "embedding_ms": 310.76599100000004,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "帮我写一个快速排序。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 261.622826,
+        "degraded": false,
+        "embedding_ms": 250.788542,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "谢谢你，晚安。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "sleep"
+        ],
+        "exact": false,
+        "ms": 321.798615,
+        "degraded": false,
+        "embedding_ms": 247.096613,
+        "rerank_ms": 65.798783,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "今天的国际新闻有哪些？",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 236.475199,
+        "degraded": false,
+        "embedding_ms": 227.37136999999998,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "我的门禁密码是什么？",
+        "kind": "deletion",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 249.00664799999998,
+        "degraded": false,
+        "embedding_ms": 236.923491,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "今天我还需要去取快递吗？",
+        "kind": "expired",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 370.334339,
+        "degraded": false,
+        "embedding_ms": 360.617428,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      }
+    ],
+    "failures": [
+      {
+        "query": "我现在住在哪座城市？",
+        "kind": "direct",
+        "expected": [
+          "residence"
+        ],
+        "selected": [
+          "sister",
+          "residence"
+        ],
+        "exact": false,
+        "ms": 695.5033139999999,
+        "degraded": false,
+        "embedding_ms": 360.548051,
+        "rerank_ms": 243.339456,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我喝哪种咖啡？",
+        "kind": "direct",
+        "expected": [
+          "coffee"
+        ],
+        "selected": [],
+        "exact": false,
+        "ms": 4071.387054,
+        "degraded": true,
+        "embedding_ms": 4001.244913,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "林悦正在学什么？",
+        "kind": "direct",
+        "expected": [
+          "sister_interest"
+        ],
+        "selected": [
+          "sister_interest",
+          "sister"
+        ],
+        "exact": false,
+        "ms": 420.741159,
+        "degraded": false,
+        "embedding_ms": 318.374688,
+        "rerank_ms": 91.954217,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "谢谢你，晚安。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [
+          "sleep"
+        ],
+        "exact": false,
+        "ms": 321.798615,
+        "degraded": false,
+        "embedding_ms": 247.096613,
+        "rerank_ms": 65.798783,
+        "reranker_state": "healthy"
+      }
+    ]
+  },
+  "heldout_final": {
+    "document_embedding_ms": 2389.505874,
+    "exact": 21,
+    "expected": 19,
+    "fp": 2,
+    "mode": "real_cpu_models_real_neo4j",
+    "precision": 0.9,
+    "recall": 0.9473684210526315,
+    "run": "eval-5f55262790cf",
+    "threshold": 0.1,
+    "tp": 18,
+    "queries": [
+      {
+        "query": "我在哪所大学读什么专业？",
+        "kind": "direct",
+        "expected": [
+          "study"
+        ],
+        "selected": [
+          "study"
+        ],
+        "exact": true,
+        "ms": 502.245849,
+        "degraded": false,
+        "embedding_ms": 357.02207000000004,
+        "rerank_ms": 80.876612,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "每天通勤要在轨道交通上花多久？",
+        "kind": "paraphrase",
+        "expected": [
+          "commute"
+        ],
+        "selected": [
+          "commute"
+        ],
+        "exact": true,
+        "ms": 436.493719,
+        "degraded": false,
+        "embedding_ms": 348.335351,
+        "rerank_ms": 78.537257,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "过年一般回哪里？",
+        "kind": "time",
+        "expected": [
+          "holiday"
+        ],
+        "selected": [
+          "holiday"
+        ],
+        "exact": true,
+        "ms": 444.389435,
+        "degraded": false,
+        "embedding_ms": 309.653209,
+        "rerank_ms": 124.421006,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "阳台上种的是什么，要多久浇一次水？",
+        "kind": "direct",
+        "expected": [
+          "gardening"
+        ],
+        "selected": [
+          "gardening"
+        ],
+        "exact": true,
+        "ms": 452.541743,
+        "degraded": false,
+        "embedding_ms": 344.070572,
+        "rerank_ms": 98.31205899999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "招待朋友有什么我拿手的家常菜？",
+        "kind": "association",
+        "expected": [
+          "cooking"
+        ],
+        "selected": [
+          "cooking"
+        ],
+        "exact": true,
+        "ms": 379.307766,
+        "degraded": false,
+        "embedding_ms": 296.14668900000004,
+        "rerank_ms": 72.941335,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "那部我刷过很多遍的动画片是什么？",
+        "kind": "paraphrase",
+        "expected": [
+          "film"
+        ],
+        "selected": [
+          "film"
+        ],
+        "exact": true,
+        "ms": 457.369512,
+        "degraded": false,
+        "embedding_ms": 347.064557,
+        "rerank_ms": 100.760615,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我现在能一口气游多远？",
+        "kind": "direct",
+        "expected": [
+          "sport"
+        ],
+        "selected": [
+          "sport"
+        ],
+        "exact": true,
+        "ms": 424.558843,
+        "degraded": false,
+        "embedding_ms": 350.501726,
+        "rerank_ms": 63.512806000000005,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "页面外观和字号我偏好怎样设置？",
+        "kind": "preference",
+        "expected": [
+          "design"
+        ],
+        "selected": [
+          "design"
+        ],
+        "exact": true,
+        "ms": 344.727102,
+        "degraded": false,
+        "embedding_ms": 263.47483,
+        "rerank_ms": 72.545285,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我每月买书的额度是多少？",
+        "kind": "number",
+        "expected": [
+          "budget"
+        ],
+        "selected": [
+          "budget"
+        ],
+        "exact": true,
+        "ms": 361.727839,
+        "degraded": false,
+        "embedding_ms": 257.214638,
+        "rerank_ms": 93.604319,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "论文第一版最晚几号交？",
+        "kind": "time",
+        "expected": [
+          "deadline"
+        ],
+        "selected": [
+          "deadline"
+        ],
+        "exact": true,
+        "ms": 426.192595,
+        "degraded": false,
+        "embedding_ms": 332.40934599999997,
+        "rerank_ms": 84.42062,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我对象叫什么，从事什么职业？",
+        "kind": "relationship",
+        "expected": [
+          "partner"
+        ],
+        "selected": [
+          "partner"
+        ],
+        "exact": true,
+        "ms": 345.050343,
+        "degraded": false,
+        "embedding_ms": 257.041956,
+        "rerank_ms": 77.04635499999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我的伴侣哪天去攀岩？",
+        "kind": "multi_hop",
+        "expected": [
+          "partner",
+          "partner_hobby"
+        ],
+        "selected": [
+          "partner_hobby"
+        ],
+        "exact": false,
+        "ms": 333.410158,
+        "degraded": false,
+        "embedding_ms": 257.586487,
+        "rerank_ms": 65.9221,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "王老师做什么方向，什么时候方便答疑？",
+        "kind": "relationship",
+        "expected": [
+          "mentor"
+        ],
+        "selected": [
+          "mentor"
+        ],
+        "exact": true,
+        "ms": 423.913932,
+        "degraded": false,
+        "embedding_ms": 326.904513,
+        "rerank_ms": 86.100793,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "去年去敦煌最让我难忘的是什么？",
+        "kind": "past",
+        "expected": [
+          "trip"
+        ],
+        "selected": [
+          "trip"
+        ],
+        "exact": true,
+        "ms": 449.908237,
+        "degraded": false,
+        "embedding_ms": 345.149355,
+        "rerank_ms": 93.16827799999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "想联系我之前，直接打电话合适吗？",
+        "kind": "negation",
+        "expected": [
+          "contact"
+        ],
+        "selected": [
+          "contact"
+        ],
+        "exact": true,
+        "ms": 438.4269,
+        "degraded": false,
+        "embedding_ms": 336.517565,
+        "rerank_ms": 89.734861,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "我明年的长跑目标是什么？",
+        "kind": "long_term",
+        "expected": [
+          "goal"
+        ],
+        "selected": [
+          "goal"
+        ],
+        "exact": true,
+        "ms": 477.955786,
+        "degraded": false,
+        "embedding_ms": 355.27475400000003,
+        "rerank_ms": 112.56471,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "家里那只边牧叫什么？",
+        "kind": "paraphrase",
+        "expected": [
+          "dog"
+        ],
+        "selected": [
+          "dog"
+        ],
+        "exact": true,
+        "ms": 349.22164300000003,
+        "degraded": false,
+        "embedding_ms": 268.34584,
+        "rerank_ms": 69.802268,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "周禾的兴趣是什么？",
+        "kind": "direct",
+        "expected": [
+          "partner_hobby"
+        ],
+        "selected": [
+          "partner_hobby",
+          "partner"
+        ],
+        "exact": false,
+        "ms": 448.526532,
+        "degraded": false,
+        "embedding_ms": 326.30188300000003,
+        "rerank_ms": 111.47235699999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "你好呀，今天也请多关照。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 351.700537,
+        "degraded": false,
+        "embedding_ms": 342.414338,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "解释一下什么是黑洞。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 305.966751,
+        "degraded": false,
+        "embedding_ms": 295.023538,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "七乘以八等于多少？",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 355.397934,
+        "degraded": false,
+        "embedding_ms": 347.646799,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "给我讲个笑话吧。",
+        "kind": "irrelevant",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 347.83491,
+        "degraded": false,
+        "embedding_ms": 336.896477,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "我删除的秘密是什么内容？",
+        "kind": "deletion",
+        "expected": [],
+        "selected": [],
+        "exact": true,
+        "ms": 345.393793,
+        "degraded": false,
+        "embedding_ms": 334.611531,
+        "rerank_ms": 0.0,
+        "reranker_state": "skipped"
+      },
+      {
+        "query": "今天还有图书馆还书的计划吗？",
+        "kind": "expired",
+        "expected": [],
+        "selected": [
+          "budget"
+        ],
+        "exact": false,
+        "ms": 442.486869,
+        "degraded": false,
+        "embedding_ms": 346.331905,
+        "rerank_ms": 86.167803,
+        "reranker_state": "healthy"
+      }
+    ],
+    "failures": [
+      {
+        "query": "我的伴侣哪天去攀岩？",
+        "kind": "multi_hop",
+        "expected": [
+          "partner",
+          "partner_hobby"
+        ],
+        "selected": [
+          "partner_hobby"
+        ],
+        "exact": false,
+        "ms": 333.410158,
+        "degraded": false,
+        "embedding_ms": 257.586487,
+        "rerank_ms": 65.9221,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "周禾的兴趣是什么？",
+        "kind": "direct",
+        "expected": [
+          "partner_hobby"
+        ],
+        "selected": [
+          "partner_hobby",
+          "partner"
+        ],
+        "exact": false,
+        "ms": 448.526532,
+        "degraded": false,
+        "embedding_ms": 326.30188300000003,
+        "rerank_ms": 111.47235699999999,
+        "reranker_state": "healthy"
+      },
+      {
+        "query": "今天还有图书馆还书的计划吗？",
+        "kind": "expired",
+        "expected": [],
+        "selected": [
+          "budget"
+        ],
+        "exact": false,
+        "ms": 442.486869,
+        "degraded": false,
+        "embedding_ms": 346.331905,
+        "rerank_ms": 86.167803,
+        "reranker_state": "healthy"
+      }
+    ]
+  },
+  "real_model_load_before_client_cache": [
+    {
+      "concurrency": 1,
+      "degraded": 1,
+      "exact": 106,
+      "p50_ms": 109.443078,
+      "p95_ms": 143.123732,
+      "p99_ms": 160.70699299999998,
+      "precision": 0.8879310344827587,
+      "recall": 0.9903846153846154,
+      "requests": 120,
+      "throughput_rps": 6.12234950296991
+    },
+    {
+      "concurrency": 5,
+      "degraded": 3,
+      "exact": 105,
+      "p50_ms": 367.228003,
+      "p95_ms": 687.956861,
+      "p99_ms": 2407.673334,
+      "precision": 0.8938053097345132,
+      "recall": 0.9711538461538461,
+      "requests": 120,
+      "throughput_rps": 10.922134249898985
+    },
+    {
+      "concurrency": 20,
+      "degraded": 101,
+      "exact": 41,
+      "p50_ms": 13.461028,
+      "p95_ms": 1681.647596,
+      "p99_ms": 2052.306705,
+      "precision": 0.9130434782608695,
+      "recall": 0.20192307692307693,
+      "requests": 120,
+      "throughput_rps": 50.847675237932165
+    },
+    {
+      "concurrency": 50,
+      "degraded": 98,
+      "exact": 38,
+      "p50_ms": 147.308549,
+      "p95_ms": 1386.685741,
+      "p99_ms": 1763.698386,
+      "precision": 0.8947368421052632,
+      "recall": 0.16346153846153846,
+      "requests": 120,
+      "throughput_rps": 61.263336408683045
+    }
+  ],
+  "real_model_load_final": [
+    {
+      "concurrency": 1,
+      "degraded": 0,
+      "exact": 107,
+      "p50_ms": 8.834089,
+      "p95_ms": 13.52527,
+      "p99_ms": 17.260116,
+      "precision": 0.8888888888888888,
+      "recall": 1.0,
+      "requests": 120,
+      "throughput_rps": 100.30176437774513,
+      "workload": "repeated_queries"
+    },
+    {
+      "concurrency": 5,
+      "degraded": 0,
+      "exact": 107,
+      "p50_ms": 21.629897,
+      "p95_ms": 35.667246999999996,
+      "p99_ms": 51.662701,
+      "precision": 0.8888888888888888,
+      "recall": 1.0,
+      "requests": 120,
+      "throughput_rps": 210.83935341621398,
+      "workload": "repeated_queries"
+    },
+    {
+      "concurrency": 20,
+      "degraded": 0,
+      "exact": 107,
+      "p50_ms": 76.25453399999999,
+      "p95_ms": 103.773754,
+      "p99_ms": 111.64975100000001,
+      "precision": 0.8888888888888888,
+      "recall": 1.0,
+      "requests": 120,
+      "throughput_rps": 257.5993332814056,
+      "workload": "repeated_queries"
+    },
+    {
+      "concurrency": 50,
+      "degraded": 0,
+      "exact": 107,
+      "p50_ms": 217.48742800000002,
+      "p95_ms": 247.987205,
+      "p99_ms": 249.87638,
+      "precision": 0.8888888888888888,
+      "recall": 1.0,
+      "requests": 120,
+      "throughput_rps": 222.15284635667,
+      "workload": "repeated_queries"
+    },
+    {
+      "concurrency": 1,
+      "degraded": 2,
+      "exact": 102,
+      "p50_ms": 535.289933,
+      "p95_ms": 622.0006460000001,
+      "p99_ms": 8001.38177,
+      "precision": 0.864406779661017,
+      "recall": 0.9807692307692307,
+      "requests": 120,
+      "throughput_rps": 1.5590733459045467,
+      "workload": "distinct_query_inputs"
+    },
+    {
+      "concurrency": 50,
+      "degraded": 113,
+      "exact": 31,
+      "p50_ms": 99.751822,
+      "p95_ms": 4368.705043,
+      "p99_ms": 4897.692758,
+      "precision": 1.0,
+      "recall": 0.0673076923076923,
+      "requests": 120,
+      "throughput_rps": 23.98862550055768,
+      "workload": "distinct_query_inputs"
+    }
+  ],
+  "resources": {
+    "writes": {
+      "samples": 33,
+      "containers": {
+        "neo4j": {
+          "peak_memory_mib": 498.0087280273438,
+          "max_interval_cpu_percent": 2.4201700306310205,
+          "peak_pids": 61
+        }
+      },
+      "min_host_available_mib": 5153.5625,
+      "min_host_swap_free_mib": 5827.6796875
+    },
+    "retrieval": {
+      "samples": 48,
+      "containers": {
+        "neo4j": {
+          "peak_memory_mib": 698.3757019042969,
+          "max_interval_cpu_percent": 196.12839827113316,
+          "peak_pids": 70
+        }
+      },
+      "min_host_available_mib": 4734.80859375,
+      "min_host_swap_free_mib": 5827.6796875
+    },
+    "semantics": {
+      "samples": 108,
+      "containers": {
+        "neo4j": {
+          "peak_memory_mib": 715.1603698730469,
+          "max_interval_cpu_percent": 172.49672032624645,
+          "peak_pids": 57
+        },
+        "models": {
+          "peak_memory_mib": 2987.8616333007812,
+          "max_interval_cpu_percent": 202.94544643972606,
+          "peak_pids": 6
+        }
+      },
+      "min_host_available_mib": 1279.453125,
+      "min_host_swap_free_mib": 4047.1796875
+    },
+    "heldout": {
+      "samples": 13,
+      "containers": {
+        "neo4j": {
+          "peak_memory_mib": 716.9723510742188,
+          "max_interval_cpu_percent": 52.187948843120445,
+          "peak_pids": 57
+        },
+        "models": {
+          "peak_memory_mib": 2988.8153076171875,
+          "max_interval_cpu_percent": 199.4564368413361,
+          "peak_pids": 6
+        }
+      },
+      "min_host_available_mib": 1331.55859375,
+      "min_host_swap_free_mib": 4633.6796875
+    }
+  },
+  "neo4j_plan_operators": {
+    "before": [
+      "ProduceResults@neo4j",
+      "Projection@neo4j",
+      "Top@neo4j",
+      "Projection@neo4j",
+      "EagerAggregation@neo4j",
+      "Filter@neo4j",
+      "Expand(All)@neo4j",
+      "Filter@neo4j",
+      "DirectedRelationshipTypeScan@neo4j"
+    ],
+    "after": [
+      "ProduceResults@neo4j",
+      "Projection@neo4j",
+      "Top@neo4j",
+      "Projection@neo4j",
+      "EagerAggregation@neo4j",
+      "Filter@neo4j",
+      "Expand(All)@neo4j",
+      "Filter@neo4j",
+      "Expand(All)@neo4j",
+      "Filter@neo4j",
+      "Apply@neo4j",
+      "Unwind@neo4j",
+      "NodeUniqueIndexSeek@neo4j"
+    ]
+  },
+  "replay": {
+    "profiles": 8,
+    "turns": 256,
+    "simulated_days": 90,
+    "expected_write_observations": 144,
+    "expected_skip_observations": 112,
+    "scope": "scripted extraction outputs; does not measure extraction LLM semantics",
+    "category_breakdown": [
+      {
+        "category": "长期事实/职业/宠物/习惯",
+        "observations": 40,
+        "expected_writes": 40,
+        "expected_skips": 0,
+        "correct": 40
+      },
+      {
+        "category": "偏好",
+        "observations": 16,
+        "expected_writes": 16,
+        "expected_skips": 0,
+        "correct": 16
+      },
+      {
+        "category": "人物关系/第三方关系事实",
+        "observations": 16,
+        "expected_writes": 16,
+        "expected_skips": 0,
+        "correct": 16
+      },
+      {
+        "category": "稳定情绪/临时情绪",
+        "observations": 16,
+        "expected_writes": 8,
+        "expected_skips": 8,
+        "correct": 16
+      },
+      {
+        "category": "计划/过期/低置信/敏感",
+        "observations": 32,
+        "expected_writes": 8,
+        "expected_skips": 24,
+        "correct": 32
+      },
+      {
+        "category": "更新/纠正/重复/延续",
+        "observations": 40,
+        "expected_writes": 40,
+        "expected_skips": 0,
+        "correct": 40
+      },
+      {
+        "category": "假设/引用/反问/问题/助手建议",
+        "observations": 40,
+        "expected_writes": 0,
+        "expected_skips": 40,
+        "correct": 40
+      },
+      {
+        "category": "不要保存/隐私请求",
+        "observations": 24,
+        "expected_writes": 0,
+        "expected_skips": 24,
+        "correct": 24
+      },
+      {
+        "category": "否定事实",
+        "observations": 16,
+        "expected_writes": 16,
+        "expected_skips": 0,
+        "correct": 16
+      },
+      {
+        "category": "无价值闲聊",
+        "observations": 16,
+        "expected_writes": 0,
+        "expected_skips": 16,
+        "correct": 16
+      }
+    ]
+  },
+  "limitations": [
+    "External LLM extraction accuracy, cost and latency not measured.",
+    "One personal identity per instance; session IDs are not tenants.",
+    "Cold distinct-query overload and residual relevance errors remain.",
+    "Semantic forgetting across unknown paraphrases is not guaranteed.",
+    "No real 10000-document embedding corpus or hours-long soak test."
+  ],
+  "regression": {
+    "rust_passed": 67,
+    "rust_failed": 0,
+    "rust_ignored": 4,
+    "python_discovered": 31,
+    "python_skipped_host_missing_service_dependencies": 5,
+    "model_image_python_queue_passed": 5,
+    "node_passed": 10,
+    "node_skipped_real_browser": 2,
+    "clippy": "passed -D warnings",
+    "rustfmt": "passed",
+    "replay": "256/256 labelled source writes and eight complete final states"
+  },
+  "semantic_category_breakdown": {
+    "直接/偏好/数值": {
+      "queries": 12,
+      "exact": 8,
+      "tp": 11,
+      "fp": 3,
+      "fn": 1
+    },
+    "模糊/同义/延续": {
+      "queries": 7,
+      "exact": 7,
+      "tp": 7,
+      "fp": 0,
+      "fn": 0
+    },
+    "跨话题/情绪/长期目标": {
+      "queries": 6,
+      "exact": 6,
+      "tp": 6,
+      "fp": 0,
+      "fn": 0
+    },
+    "人物关系": {
+      "queries": 3,
+      "exact": 3,
+      "tp": 3,
+      "fp": 0,
+      "fn": 0
+    },
+    "多跳": {
+      "queries": 3,
+      "exact": 2,
+      "tp": 5,
+      "fp": 0,
+      "fn": 1
+    },
+    "时间": {
+      "queries": 6,
+      "exact": 6,
+      "tp": 6,
+      "fp": 0,
+      "fn": 0
+    },
+    "否定": {
+      "queries": 3,
+      "exact": 3,
+      "tp": 3,
+      "fp": 0,
+      "fn": 0
+    },
+    "无关话题": {
+      "queries": 8,
+      "exact": 7,
+      "tp": 0,
+      "fp": 1,
+      "fn": 0
+    },
+    "删除/过期": {
+      "queries": 4,
+      "exact": 3,
+      "tp": 0,
+      "fp": 1,
+      "fn": 0
+    }
+  },
+  "post_expiry_fix": {
+    "changes": "Automatic aging uses its old observation cutoff and a revision guard; explicit deletion still protects all received input.",
+    "write_matrix": {
+      "cells": [
+        {
+          "active_slots": 20,
+          "concurrency": 1,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 0.743742,
+          "p95_ms": 1.710653,
+          "p99_ms": 2.765425,
+          "preparation_ms": 371.76796299999995,
+          "process_memory": [
+            "VmHWM:\t   69120 kB",
+            "VmRSS:\t   68876 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 120,
+          "requests": 240,
+          "size": 100,
+          "sqlite_pool": 4,
+          "throughput_rps": 1260.92539314603
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 5,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 1.988933,
+          "p95_ms": 11.702506,
+          "p99_ms": 55.958694,
+          "preparation_ms": 1171.906945,
+          "process_memory": [
+            "VmHWM:\t   70156 kB",
+            "VmRSS:\t   70156 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 240,
+          "requests": 240,
+          "size": 100,
+          "sqlite_pool": 4,
+          "throughput_rps": 1167.6699911609815
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 20,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 11.557416,
+          "p95_ms": 21.119018999999998,
+          "p99_ms": 104.769968,
+          "preparation_ms": 2559.0190279999997,
+          "process_memory": [
+            "VmHWM:\t   71892 kB",
+            "VmRSS:\t   71892 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 360,
+          "requests": 240,
+          "size": 100,
+          "sqlite_pool": 4,
+          "throughput_rps": 1153.347148221587
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 50,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 35.782478,
+          "p95_ms": 84.924683,
+          "p99_ms": 164.304667,
+          "preparation_ms": 4403.528561,
+          "process_memory": [
+            "VmHWM:\t   72756 kB",
+            "VmRSS:\t   72756 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 480,
+          "requests": 240,
+          "size": 100,
+          "sqlite_pool": 4,
+          "throughput_rps": 725.0879318666774
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 1,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 0.635381,
+          "p95_ms": 1.7498019999999999,
+          "p99_ms": 2.3211939999999998,
+          "preparation_ms": 290.637264,
+          "process_memory": [
+            "VmHWM:\t   73640 kB",
+            "VmRSS:\t   73640 kB",
+            "Threads:\t9"
+          ],
+          "processed_sources": 120,
+          "requests": 240,
+          "size": 1000,
+          "sqlite_pool": 2,
+          "throughput_rps": 1470.5185208223309
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 5,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 1.797203,
+          "p95_ms": 4.392427,
+          "p99_ms": 80.94641700000001,
+          "preparation_ms": 1135.4746630000002,
+          "process_memory": [
+            "VmHWM:\t   74032 kB",
+            "VmRSS:\t   74032 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 240,
+          "requests": 240,
+          "size": 1000,
+          "sqlite_pool": 4,
+          "throughput_rps": 1220.1818070892562
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 20,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 12.262737,
+          "p95_ms": 26.634886,
+          "p99_ms": 129.776173,
+          "preparation_ms": 2444.084151,
+          "process_memory": [
+            "VmHWM:\t   74464 kB",
+            "VmRSS:\t   74464 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 360,
+          "requests": 240,
+          "size": 1000,
+          "sqlite_pool": 4,
+          "throughput_rps": 1313.1509833150872
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 50,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 34.378415000000004,
+          "p95_ms": 55.210532,
+          "p99_ms": 104.61401,
+          "preparation_ms": 4299.705658,
+          "process_memory": [
+            "VmHWM:\t   74552 kB",
+            "VmRSS:\t   74552 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 480,
+          "requests": 240,
+          "size": 1000,
+          "sqlite_pool": 4,
+          "throughput_rps": 1041.5422692701138
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 1,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 0.670972,
+          "p95_ms": 1.555372,
+          "p99_ms": 2.1828440000000002,
+          "preparation_ms": 297.051276,
+          "process_memory": [
+            "VmHWM:\t   75980 kB",
+            "VmRSS:\t   75980 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 120,
+          "requests": 240,
+          "size": 10000,
+          "sqlite_pool": 4,
+          "throughput_rps": 1492.0440110211323
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 5,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 1.766992,
+          "p95_ms": 4.027895,
+          "p99_ms": 37.23172,
+          "preparation_ms": 1138.469579,
+          "process_memory": [
+            "VmHWM:\t   75988 kB",
+            "VmRSS:\t   75988 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 240,
+          "requests": 240,
+          "size": 10000,
+          "sqlite_pool": 4,
+          "throughput_rps": 1043.241227391039
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 20,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 17.968494,
+          "p95_ms": 27.716946999999998,
+          "p99_ms": 229.793708,
+          "preparation_ms": 2689.6448570000002,
+          "process_memory": [
+            "VmHWM:\t   76132 kB",
+            "VmRSS:\t   76132 kB",
+            "Threads:\t11"
+          ],
+          "processed_sources": 360,
+          "requests": 240,
+          "size": 10000,
+          "sqlite_pool": 4,
+          "throughput_rps": 726.1380529490973
+        },
+        {
+          "active_slots": 20,
+          "concurrency": 50,
+          "errors": 0,
+          "latest_values_correct": true,
+          "p50_ms": 28.173688,
+          "p95_ms": 61.633053,
+          "p99_ms": 114.50608299999999,
+          "preparation_ms": 4434.802957999999,
+          "process_memory": [
+            "VmHWM:\t   76272 kB",
+            "VmRSS:\t   76272 kB",
+            "Threads:\t10"
+          ],
+          "processed_sources": 480,
+          "requests": 240,
+          "size": 10000,
+          "sqlite_pool": 4,
+          "throughput_rps": 1333.6816984022987
+        }
+      ],
+      "mode": "sqlite_actual_transactions"
+    },
+    "source_sha256": "20414d75b1dba2bf8dcec4d332680d729992c0f34a9c3c4368568115eb8e2a5b",
+    "rust_regression_passed": 67,
+    "new_regression_tests_passed": 12
+  }
+}

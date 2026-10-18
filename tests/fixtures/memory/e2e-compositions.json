@@ -1,0 +1,107 @@
+{
+  "notes": "Same truth conditions as the original conjunctive gold, permitting atomic storage. Every clause must be supported; no expected facts or user text are changed. Added after detecting that requiring city and profession in a single memory misgrades correct atomic extraction. Used only by the evaluator, never by Mneme prompts or retrieval.",
+  "dev-lin:sister_job": [
+    {
+      "all": [
+        [
+          "林悦"
+        ],
+        [
+          "苏州"
+        ]
+      ]
+    },
+    {
+      "all": [
+        [
+          "林悦"
+        ],
+        [
+          "建筑",
+          "设计"
+        ]
+      ]
+    }
+  ],
+  "heldout-qi:brother_job": [
+    {
+      "all": [
+        [
+          "齐宁"
+        ],
+        [
+          "宁波"
+        ]
+      ]
+    },
+    {
+      "all": [
+        [
+          "齐宁"
+        ],
+        [
+          "园艺",
+          "花圃"
+        ]
+      ]
+    }
+  ],
+  "unseen-books:speech": [
+    {
+      "all": [
+        [
+          "用户"
+        ],
+        [
+          "公开",
+          "发言",
+          "演讲"
+        ],
+        [
+          "紧张"
+        ]
+      ]
+    },
+    {
+      "all": [
+        [
+          "用户"
+        ],
+        [
+          "公开",
+          "发言",
+          "演讲"
+        ],
+        [
+          "排练",
+          "练习"
+        ]
+      ]
+    }
+  ],
+  "confirm-museum:cousin_job": [
+    {
+      "label": "unused",
+      "all": [
+        [
+          "孟川"
+        ],
+        [
+          "洛阳"
+        ]
+      ]
+    },
+    {
+      "label": "unused",
+      "all": [
+        [
+          "孟川"
+        ],
+        [
+          "园林",
+          "工程师"
+        ]
+      ]
+    }
+  ]
+}

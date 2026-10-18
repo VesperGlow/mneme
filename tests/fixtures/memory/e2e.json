@@ -1,0 +1,973 @@
+{
+  "version": 1,
+  "notes": "Frozen gold before inference. all is AND of OR substring groups; non-matching extracted items count as false memories. Generative response scoring is a minimum fact/forbidden-claim check, with manual audit required for stronger conclusions. Simulated timestamps are now-90days+day; profiles own independent SQLite and unique graph IDs.",
+  "profiles": [
+    {
+      "id": "dev-lin",
+      "split": "dev",
+      "turns": [
+        {
+          "day": 0,
+          "category": "stable_fact",
+          "say": "最近安顿好了，我现在住在成都。",
+          "facts": [
+            {
+              "label": "home_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "成都"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 2,
+          "category": "preference",
+          "say": "平时喝茶我更喜欢乌龙茶，已经喝了很多年。",
+          "facts": [
+            {
+              "label": "tea_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "乌龙茶"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 5,
+          "category": "relationship",
+          "say": "顺便跟你说，我妹妹叫林悦。",
+          "facts": [
+            {
+              "label": "sister",
+              "all": [
+                [
+                  "林悦"
+                ],
+                [
+                  "妹妹"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 8,
+          "category": "third_party_fact",
+          "say": "林悦现在在苏州做建筑设计，她很喜欢这份工作。",
+          "facts": [
+            {
+              "label": "sister_job",
+              "all": [
+                [
+                  "林悦"
+                ],
+                [
+                  "苏州"
+                ],
+                [
+                  "建筑",
+                  "设计"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 11,
+          "category": "hypothetical",
+          "say": "如果以后中彩票，我大概会搬去海边吧，目前只是想象。",
+          "facts": []
+        },
+        {
+          "day": 15,
+          "category": "quotation",
+          "say": "小说里主角说“我是飞行员”，这只是书里的人物台词，不是我的职业。",
+          "facts": []
+        },
+        {
+          "day": 18,
+          "category": "ephemeral_emotion",
+          "say": "今天等车有点烦，等到了就没事了。",
+          "facts": []
+        },
+        {
+          "day": 23,
+          "category": "stable_hobby",
+          "say": "我每个周末都会去练陶艺，这是我一直坚持的爱好。",
+          "facts": [
+            {
+              "label": "hobby",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "陶艺"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 29,
+          "category": "negation",
+          "say": "我不会游泳，一直都没有学过。",
+          "facts": [
+            {
+              "label": "not_swim",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "游泳"
+                ],
+                [
+                  "不会",
+                  "不擅长",
+                  "不能"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 34,
+          "category": "no_save",
+          "say": "这件事不要保存：我的临时门禁暗号是松树蓝伞。",
+          "facts": []
+        },
+        {
+          "day": 40,
+          "category": "temporal_update",
+          "say": "这周我已经正式搬到杭州长期住了，不住成都了。",
+          "facts": [
+            {
+              "label": "home",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "杭州"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 45,
+          "category": "preference_update",
+          "say": "口味变了，现在我更喜欢茉莉花茶，乌龙茶已经不怎么喝了。",
+          "facts": [
+            {
+              "label": "tea",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "茉莉花茶"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 51,
+          "category": "paraphrase_duplicate",
+          "say": "平时最合我口味的茶还是茉莉花茶。",
+          "facts": [
+            {
+              "label": "tea",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "茉莉花茶"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 58,
+          "category": "pet",
+          "say": "我养了一只猫，名字叫团子。",
+          "facts": [
+            {
+              "label": "pet",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "猫"
+                ],
+                [
+                  "团子"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 64,
+          "category": "hypothetical_other",
+          "say": "同事说他想改行做厨师，那是他的打算，我没有改行计划。",
+          "facts": []
+        },
+        {
+          "day": 71,
+          "category": "chitchat",
+          "say": "哈哈，好啦，先聊到这里。",
+          "facts": []
+        },
+        {
+          "day": 78,
+          "category": "temporary_event",
+          "say": "我十分钟后去楼下取一次快递，拿完就回家。",
+          "facts": []
+        },
+        {
+          "day": 84,
+          "category": "repeat_fact",
+          "say": "对，我如今的常住地仍然是杭州。",
+          "facts": [
+            {
+              "label": "home",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "杭州"
+                ]
+              ]
+            }
+          ]
+        }
+      ],
+      "final": [
+        {
+          "label": "home",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "杭州"
+            ]
+          ]
+        },
+        {
+          "label": "tea",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "茉莉花茶"
+            ]
+          ]
+        },
+        {
+          "label": "sister",
+          "all": [
+            [
+              "林悦"
+            ],
+            [
+              "妹妹"
+            ]
+          ]
+        },
+        {
+          "label": "sister_job",
+          "all": [
+            [
+              "林悦"
+            ],
+            [
+              "苏州"
+            ],
+            [
+              "建筑",
+              "设计"
+            ]
+          ]
+        },
+        {
+          "label": "hobby",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "陶艺"
+            ]
+          ]
+        },
+        {
+          "label": "not_swim",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "游泳"
+            ],
+            [
+              "不会",
+              "不擅长",
+              "不能"
+            ]
+          ]
+        },
+        {
+          "label": "pet",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "猫"
+            ],
+            [
+              "团子"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我现在常住哪个城市？",
+          "relevant": [
+            "home"
+          ],
+          "answer_all": [
+            [
+              "杭州"
+            ]
+          ],
+          "answer_forbidden": [
+            "成都",
+            "苏州"
+          ]
+        },
+        {
+          "say": "给我挑一款我现在爱喝的茶。",
+          "relevant": [
+            "tea"
+          ],
+          "answer_all": [
+            [
+              "茉莉花茶"
+            ]
+          ],
+          "answer_forbidden": [
+            "乌龙茶"
+          ]
+        },
+        {
+          "say": "我妹妹叫什么名字？",
+          "relevant": [
+            "sister"
+          ],
+          "answer_all": [
+            [
+              "林悦"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "林悦在哪儿工作，做什么？",
+          "relevant": [
+            "sister_job"
+          ],
+          "answer_all": [
+            [
+              "苏州"
+            ],
+            [
+              "建筑",
+              "设计"
+            ]
+          ],
+          "answer_forbidden": [
+            "杭州"
+          ]
+        },
+        {
+          "say": "我周末通常有什么长期爱好？",
+          "relevant": [
+            "hobby"
+          ],
+          "answer_all": [
+            [
+              "陶艺"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我会游泳吗？",
+          "relevant": [
+            "not_swim"
+          ],
+          "answer_all": [
+            [
+              "不会",
+              "没有学",
+              "不能",
+              "不擅长"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我家的猫叫什么？",
+          "relevant": [
+            "pet"
+          ],
+          "answer_all": [
+            [
+              "团子"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我是不是飞行员？",
+          "relevant": [],
+          "answer_all": [
+            [
+              "没",
+              "不",
+              "无法",
+              "未"
+            ]
+          ],
+          "answer_forbidden": [
+            "你是飞行员",
+            "你就是飞行员"
+          ]
+        },
+        {
+          "say": "临时门禁暗号是什么？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "松树蓝伞"
+          ]
+        },
+        {
+          "say": "谢谢，晚安。",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "陶艺",
+            "杭州",
+            "茉莉花茶",
+            "苏州"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "heldout-qi",
+      "split": "heldout",
+      "turns": [
+        {
+          "day": 0,
+          "category": "stable_fact",
+          "say": "我目前定居在长沙。",
+          "facts": [
+            {
+              "label": "home_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "长沙"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 3,
+          "category": "preference",
+          "say": "我听音乐时最偏爱爵士乐，很多年都这样。",
+          "facts": [
+            {
+              "label": "music_old",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "爵士"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 6,
+          "category": "relationship",
+          "say": "我有一个哥哥，名字是齐宁。",
+          "facts": [
+            {
+              "label": "brother",
+              "all": [
+                [
+                  "齐宁"
+                ],
+                [
+                  "哥哥"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 10,
+          "category": "third_party_fact",
+          "say": "齐宁在宁波经营一个花圃，平时做园艺工作。",
+          "facts": [
+            {
+              "label": "brother_job",
+              "all": [
+                [
+                  "齐宁"
+                ],
+                [
+                  "宁波"
+                ],
+                [
+                  "园艺",
+                  "花圃"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 14,
+          "category": "hypothetical",
+          "say": "假如有一天去南极定居，那可真有意思，我只是在开玩笑。",
+          "facts": []
+        },
+        {
+          "day": 19,
+          "category": "quotation",
+          "say": "电影台词“我是一名律师”挺有意思，但这不是我的自我介绍。",
+          "facts": []
+        },
+        {
+          "day": 24,
+          "category": "ephemeral_emotion",
+          "say": "刚才排队太长让我有点着急，现在已经好了。",
+          "facts": []
+        },
+        {
+          "day": 30,
+          "category": "stable_hobby",
+          "say": "观鸟是我坚持多年的业余爱好，每周都会出去观察。",
+          "facts": [
+            {
+              "label": "hobby",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "观鸟"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 35,
+          "category": "negation",
+          "say": "我没有驾照，至今没考过。",
+          "facts": [
+            {
+              "label": "not_drive",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "驾照"
+                ],
+                [
+                  "没有",
+                  "没",
+                  "未"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 41,
+          "category": "no_save",
+          "say": "别把这句记进长期记忆：临时储物柜口令是橙子海风。",
+          "facts": []
+        },
+        {
+          "day": 46,
+          "category": "temporal_update",
+          "say": "更新一下，已经搬到厦门定居了，长沙是之前的住处。",
+          "facts": [
+            {
+              "label": "home",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "厦门"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 52,
+          "category": "preference_update",
+          "say": "现在更爱听古典音乐了，爵士已经不是我的偏好了。",
+          "facts": [
+            {
+              "label": "music",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "古典"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 57,
+          "category": "paraphrase_duplicate",
+          "say": "要说如今最喜欢的音乐，还是古典乐。",
+          "facts": [
+            {
+              "label": "music",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "古典"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 63,
+          "category": "pet",
+          "say": "我家养的是一只狗，叫年糕。",
+          "facts": [
+            {
+              "label": "dog",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "狗"
+                ],
+                [
+                  "年糕"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 69,
+          "category": "hypothetical_other",
+          "say": "朋友说自己想当导演，那是朋友的想法，我并没有这个计划。",
+          "facts": []
+        },
+        {
+          "day": 74,
+          "category": "chitchat",
+          "say": "嗯嗯，明白啦，多谢。",
+          "facts": []
+        },
+        {
+          "day": 80,
+          "category": "temporary_event",
+          "say": "我过五分钟下楼倒一次垃圾，马上就回来。",
+          "facts": []
+        },
+        {
+          "day": 86,
+          "category": "repeat_fact",
+          "say": "现在我一直常住在厦门。",
+          "facts": [
+            {
+              "label": "home",
+              "all": [
+                [
+                  "用户"
+                ],
+                [
+                  "厦门"
+                ]
+              ]
+            }
+          ]
+        }
+      ],
+      "final": [
+        {
+          "label": "home",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "厦门"
+            ]
+          ]
+        },
+        {
+          "label": "music",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "古典"
+            ]
+          ]
+        },
+        {
+          "label": "brother",
+          "all": [
+            [
+              "齐宁"
+            ],
+            [
+              "哥哥"
+            ]
+          ]
+        },
+        {
+          "label": "brother_job",
+          "all": [
+            [
+              "齐宁"
+            ],
+            [
+              "宁波"
+            ],
+            [
+              "园艺",
+              "花圃"
+            ]
+          ]
+        },
+        {
+          "label": "hobby",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "观鸟"
+            ]
+          ]
+        },
+        {
+          "label": "not_drive",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "驾照"
+            ],
+            [
+              "没有",
+              "没",
+              "未"
+            ]
+          ]
+        },
+        {
+          "label": "dog",
+          "all": [
+            [
+              "用户"
+            ],
+            [
+              "狗"
+            ],
+            [
+              "年糕"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我如今在哪座城市定居？",
+          "relevant": [
+            "home"
+          ],
+          "answer_all": [
+            [
+              "厦门"
+            ]
+          ],
+          "answer_forbidden": [
+            "长沙",
+            "宁波"
+          ]
+        },
+        {
+          "say": "按照我现在的喜好，推荐什么类型的音乐？",
+          "relevant": [
+            "music"
+          ],
+          "answer_all": [
+            [
+              "古典"
+            ]
+          ],
+          "answer_forbidden": [
+            "爵士"
+          ]
+        },
+        {
+          "say": "我哥哥的名字是什么？",
+          "relevant": [
+            "brother"
+          ],
+          "answer_all": [
+            [
+              "齐宁"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "齐宁的工作地点和工作内容是什么？",
+          "relevant": [
+            "brother_job"
+          ],
+          "answer_all": [
+            [
+              "宁波"
+            ],
+            [
+              "园艺",
+              "花圃"
+            ]
+          ],
+          "answer_forbidden": [
+            "厦门"
+          ]
+        },
+        {
+          "say": "我长期坚持的业余爱好是什么？",
+          "relevant": [
+            "hobby"
+          ],
+          "answer_all": [
+            [
+              "观鸟"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我考过驾照吗？",
+          "relevant": [
+            "not_drive"
+          ],
+          "answer_all": [
+            [
+              "没",
+              "未",
+              "不"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我养的狗的名字是？",
+          "relevant": [
+            "dog"
+          ],
+          "answer_all": [
+            [
+              "年糕"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我的职业是律师吗？",
+          "relevant": [],
+          "answer_all": [
+            [
+              "没",
+              "不",
+              "无法",
+              "未"
+            ]
+          ],
+          "answer_forbidden": [
+            "你是律师",
+            "你是一名律师"
+          ]
+        },
+        {
+          "say": "临时储物柜口令是什么？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "橙子海风"
+          ]
+        },
+        {
+          "say": "好啦，改天聊！",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": [
+            "厦门",
+            "古典",
+            "宁波",
+            "观鸟"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -139,6 +139,7 @@ pub struct Llm {
     temperature: f32,
     max_tokens: u32,
     context_tokens: usize,
+    json_schema: bool,
     pub metrics: std::sync::Arc<crate::telemetry::Metrics>,
 }
 
@@ -159,6 +160,7 @@ impl Llm {
             temperature: config.llm.temperature,
             max_tokens: config.llm.max_tokens,
             context_tokens: config.llm.context_tokens,
+            json_schema: config.llm.json_schema,
             metrics: Default::default(),
         })
     }
@@ -172,8 +174,20 @@ impl Llm {
         input: Value,
         max_tokens: u32,
     ) -> Result<Value> {
+        self.complete_json_schema(system, input, max_tokens, None)
+            .await
+    }
+    pub(crate) async fn complete_json_schema(
+        &self,
+        system: &str,
+        input: Value,
+        max_tokens: u32,
+        schema: Option<Value>,
+    ) -> Result<Value> {
         let start = std::time::Instant::now();
-        let result = self.complete_json_inner(system, input, max_tokens).await;
+        let result = self
+            .complete_json_inner(system, input, max_tokens, schema)
+            .await;
         self.metrics.record(start, result.is_ok());
         if let Err(error) = &result {
             crate::diagnostics::warn("llm.extract", error);
@@ -185,19 +199,37 @@ impl Llm {
         system: &str,
         input: Value,
         max_tokens: u32,
+        schema: Option<Value>,
     ) -> Result<Value> {
+        let schema_tokens = schema
+            .as_ref()
+            .filter(|_| self.json_schema)
+            .map(|s| crate::tokens::count(&s.to_string()) + 64)
+            .unwrap_or(0);
         ensure!(
-            crate::tokens::message(system)
+            schema_tokens
+                + crate::tokens::message(system)
                 + crate::tokens::message(&input.to_string())
                 + 3
                 + max_tokens as usize
                 <= self.context_tokens,
             "JSON request exceeds token budget"
         );
-        let response = self.client.post(&self.url).bearer_auth(&self.key)
-            .json(&json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,
-                "messages":[{"role":"system","content":system},{"role":"user","content":input.to_string()}]}))
-            .send().await?.error_for_status()?;
+        let mut body = json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,
+            "messages":[{"role":"system","content":system},{"role":"user","content":input.to_string()}]});
+        if self.json_schema
+            && let Some(schema) = schema
+        {
+            body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"memory_extraction","strict":true,"schema":schema}});
+        }
+        let response = self
+            .client
+            .post(&self.url)
+            .bearer_auth(&self.key)
+            .json(&body)
+            .send()
+            .await?
+            .error_for_status()?;
         let value: Value = serde_json::from_slice(&bounded_body(response, 1_048_576).await?)?;
         ensure!(
             value["choices"][0]["finish_reason"] == "stop",
