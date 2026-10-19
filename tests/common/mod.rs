@@ -39,9 +39,20 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                 let first=json!({"choices":[{"delta":{"content":answer},"finish_reason":null}]}).to_string();
                 let finish=json!({"choices":[{"delta":{},"finish_reason":"stop"}]}).to_string();
                 // Fragment UTF-8 and SSE frames across arbitrary network body chunks.
-                let wire=if broken{format!("data: {first}\n\n")}else{format!("data: {first}\r\n\r\ndata: {finish}\n\ndata: [DONE]\n\n")};
+                let thinking=messages.last().unwrap()["content"].as_str().unwrap().contains("__reasoning_chat__");
+                let usage=json!({"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":50,"completion_tokens_details":{"reasoning_tokens":30},"total_tokens":150}});
+                let reasoning=json!({"choices":[{"delta":{"reasoning_content":"再组织回答。"}}]});
+                let wire=if broken{format!("data: {first}\n\n")}else if thinking {format!("data: {reasoning}\n\ndata: {first}\n\ndata: {finish}\n\ndata: {usage}\n\ndata: [DONE]\n\n")}else{format!("data: {first}\r\n\r\ndata: {finish}\n\ndata: [DONE]\n\n")};
                 let chunks:Vec<_>=wire.into_bytes().chunks(7).map(|x|Ok::<_,std::convert::Infallible>(x.to_vec())).collect();
-                ([("content-type","text/event-stream")],Body::from_stream(futures_util::stream::iter(chunks))).into_response()
+                let stream=async_stream::stream! {
+                    if thinking {
+                        let reasoning=json!({"choices":[{"delta":{"reasoning_content":"先核对信息。<img src=x onerror=\"window.__reasoning_xss=1\">"}}]});
+                        yield Ok::<_,std::convert::Infallible>(format!("data: {reasoning}\n\n").into_bytes());
+                        tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+                    }
+                    for chunk in chunks { yield chunk; }
+                };
+                ([("content-type","text/event-stream")],Body::from_stream(stream)).into_response()
             } else {
                 let input:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
                 if input.get("max_chars").is_some() {

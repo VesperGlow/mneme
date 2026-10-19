@@ -756,6 +756,7 @@ async fn extract(app: &App, job: &Job) -> Result<()> {
     let schema = extraction_schema(None, &existing);
     let result: Extracted = serde_json::from_value(
         app.llm
+            .for_turn(&source.turn_id, "memory")
             .complete_json_schema(EXTRACT_PROMPT, input, 2500, Some(schema))
             .await?,
     )?;
@@ -903,6 +904,15 @@ async fn extract_batch(app: &App, job: &Job) -> Result<()> {
         let input = json!({"existing":existing_data,"targets":targets});
         let result = app
             .llm
+            .for_turn(
+                &sources
+                    .iter()
+                    .rev()
+                    .find(|s| allowed.contains(&s.id))
+                    .unwrap()
+                    .turn_id,
+                "memory",
+            )
             .complete_json_schema(
                 &prompt,
                 input,

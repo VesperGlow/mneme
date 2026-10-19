@@ -12,7 +12,7 @@ timeout_seconds = 120
 context_tokens = 100000
 # 仅在服务支持 response_format json_schema 时启用；默认兼容原有提供商。
 json_schema = false
-# 持续对话触及任一上限时压缩旧轮次，保留摘要与近期原文。
+# 兼容旧配置；自动压缩由 context_tokens 预算触发，不再按轮数触发。
 history_turns = 1000
 summary_chars = 2000
 

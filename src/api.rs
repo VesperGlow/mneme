@@ -185,7 +185,7 @@ async fn history(State(app): State<App>, Path(session): Path<String>) -> ApiResu
     }
     let history = app.store.history(&session, 100).await?;
     Ok(Json(
-        json!({"messages":history,"assets":crate::assets::history_metadata(&app,&session).await?,"tool_calls":crate::tools::logs(&app,Some(&session)).await?}),
+        json!({"messages":history,"assets":crate::assets::history_metadata(&app,&session).await?,"tool_calls":crate::tools::logs(&app,Some(&session)).await?,"model_requests":app.store.request_history(history.iter().map(|m|m.turn_id.as_str())).await?}),
     ))
 }
 
@@ -258,6 +258,22 @@ async fn chat(
                 "delta",
                 json!({"content":content.unwrap_or_default()}),
             );
+            // Replay existing request records without issuing or counting a new call.
+            let requests = app.store.turn_model_requests(&input.request_id).await?;
+            for request in requests.iter().filter(|r| r.purpose == "chat") {
+                if !request.reasoning.is_empty() {
+                    let _ = emit(
+                        &output,
+                        "reasoning",
+                        json!({"request_id":request.id,"content":request.reasoning}),
+                    );
+                }
+                let _ = emit(
+                    &output,
+                    "usage",
+                    json!({"request_id":request.id,"usage":request.usage,"status":request.status}),
+                );
+            }
             let _ = emit(
                 &output,
                 "done",
@@ -321,8 +337,9 @@ async fn turn(State(app): State<App>, Path(id): Path<String>) -> ApiResult<Json<
     };
     let messages: Vec<Message> = sqlx::query_as("SELECT id,session_id,turn_id,role,content,created_at FROM messages WHERE turn_id=? ORDER BY seq")
         .bind(&id).fetch_all(&app.store.pool).await.map_err(anyhow::Error::from)?;
+    let requests = app.store.turn_model_requests(&id).await?;
     Ok(Json(
-        json!({"id":id,"session_id":session,"status":status,"error":error,"messages":messages}),
+        json!({"id":id,"session_id":session,"status":status,"error":error,"messages":messages,"usage":crate::usage::aggregate(&requests),"model_requests":requests}),
     ))
 }
 async fn list_memories(

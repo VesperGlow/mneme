@@ -95,6 +95,7 @@ pub struct LlmConfig {
     /// Accepted for old TOML files; generation is now bounded by context_tokens.
     #[serde(default, rename = "context_chars")]
     pub legacy_context_chars: Option<usize>,
+    /// Legacy configuration retained for compatibility; compaction uses token budgets.
     pub history_turns: i64,
     #[serde(default = "default_summary_chars")]
     pub summary_chars: usize,

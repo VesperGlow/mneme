@@ -18,6 +18,7 @@ pub mod store;
 pub mod telemetry;
 pub mod tokens;
 pub mod tools;
+pub mod usage;
 
 use config::Config;
 use sha2::{Digest, Sha256};
@@ -84,7 +85,7 @@ impl App {
             } else {
                 None
             },
-            llm: llm::Llm::new(&config)?,
+            llm: llm::Llm::new(&config)?.tracked(store.clone()),
             models: models::Models::new(&config)?,
             graph: graph::Graph::new(&config)?,
             qq: if config.qq.enabled() {

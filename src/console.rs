@@ -92,8 +92,15 @@ async fn transcript(State(app): State<App>) -> ApiResult<Json<Value>> {
                 .is_some_and(|id| turns.contains(id))
         })
         .collect();
+    let requests = app.store.request_history(turns.iter().copied()).await?;
+    let requests: Vec<_> = requests
+        .into_iter()
+        .filter(|r| {
+            r.purpose == "chat" && r.turn_id.as_deref().is_some_and(|id| turns.contains(id))
+        })
+        .collect();
     Ok(Json(
-        json!({"messages":messages,"assets":assets,"tool_calls":calls,"conversation":conversation}),
+        json!({"messages":messages,"assets":assets,"tool_calls":calls,"model_requests":requests,"conversation":conversation}),
     ))
 }
 

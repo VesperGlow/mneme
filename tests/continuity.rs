@@ -177,18 +177,27 @@ async fn legacy_api_history_merges_once_and_all_clients_continue_after_restart()
 async fn compaction_preserves_summary_raw_evidence_and_durable_memory_jobs_across_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, fake) = common::fake_services().await;
-    let c = config(&temp, &base);
+    let mut c = config(&temp, &base);
+    c.llm.context_tokens = 12000;
     c.validate().unwrap();
     let (stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(c.clone(), rx.clone()).await.unwrap();
     let router = api::router(app.clone());
     assert!(chat(&router, "我住在成都").await.contains("event: done"));
     assert!(
-        chat(&router, "我们正在计划旅行，行程还没有完成")
+        chat(&router, &"乙".repeat(4000))
             .await
             .contains("event: done")
     );
-    let wire = chat(&router, "继续刚才的话题，我住在哪里？").await;
+    // A long historical assistant reply fills the token budget while leaving the
+    // first extraction source small enough for this deliberately small window.
+    sqlx::query("UPDATE messages SET content=? WHERE id=(SELECT id FROM messages WHERE role='assistant' ORDER BY seq DESC LIMIT 1)")
+        .bind("答".repeat(4000)).execute(&app.store.pool).await.unwrap();
+    let wire = chat(
+        &router,
+        &format!("继续刚才的话题，我住在哪里？{}", "丙".repeat(3900)),
+    )
+    .await;
     assert!(
         wire.contains("event: compaction") && wire.contains("event: done"),
         "{wire}"
@@ -427,7 +436,8 @@ async fn token_budget_preserves_more_than_a_hundred_thousand_english_characters(
     assert!(expected < 30_000);
     let router = api::router(app);
     let status = data(&router, "/v1/conversation").await;
-    assert_eq!(status["context"]["context_used_tokens"], expected);
+    assert_eq!(status["context"]["distribution"]["history"], expected);
+    assert!(status["context"]["context_used_tokens"].as_u64().unwrap() > expected as u64);
     assert_eq!(status["context"]["tokens_estimated"], true);
     let wire = chat(&router, "Continue our conversation.").await;
     assert!(wire.contains("event: done"), "{wire}");
@@ -517,5 +527,64 @@ async fn batch_with_fabricated_source_cannot_commit_facts_or_extraction_receipts
     assert_eq!(receipts, 0);
     stop.send(true).unwrap();
     worker.await.unwrap();
+    fake.abort();
+}
+
+#[tokio::test]
+async fn legacy_turn_limit_does_not_trigger_compaction_or_memory_extraction() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut c = config(&temp, &base);
+    c.llm.history_turns = 1;
+    c.memory.extract_every_chars = 100_000;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let router = api::router(app.clone());
+    for _ in 0..5 {
+        let wire = chat(&router, "继续聊聊").await;
+        assert!(wire.contains("event: done"), "{wire}");
+        assert!(!wire.contains("event: compaction"));
+    }
+    assert_eq!(app.store.job_stats().await.unwrap()["pending"], 0);
+    assert_eq!(
+        data(&router, "/v1/conversation").await["context"]["history_turns"],
+        5
+    );
+    fake.abort();
+}
+
+#[tokio::test]
+async fn compaction_does_not_advance_the_memory_watermark_or_enqueue_extraction() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut c = config(&temp, &base);
+    c.llm.context_tokens = 12000;
+    c.memory.extract_every_chars = 100_000;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let router = api::router(app.clone());
+    for _ in 0..2 {
+        assert!(
+            chat(&router, &"字".repeat(4000))
+                .await
+                .contains("event: done")
+        );
+    }
+    let before = app.store.extraction_pending_chars().await.unwrap();
+    let wire = chat(&router, &"字".repeat(4000)).await;
+    assert!(
+        wire.contains("event: compaction") && wire.contains("event: done"),
+        "{wire}"
+    );
+    assert!(app.store.extraction_pending_chars().await.unwrap() > before);
+    assert_eq!(app.store.job_stats().await.unwrap()["pending"], 0);
+    let context = data(&router, "/v1/conversation").await;
+    assert!(
+        context["context"]["session_usage"]["by_purpose"]["compression"]["requests"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert!(context["context"]["session_usage"]["total_tokens"].is_null());
     fake.abort();
 }

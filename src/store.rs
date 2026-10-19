@@ -81,6 +81,9 @@ impl Store {
     /// Single application process per SQLite file. Interrupted generations are explicit failures.
     pub async fn recover(&self) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query("UPDATE model_requests SET status='interrupted' WHERE status='running'")
+            .execute(&mut *tx)
+            .await?;
         sqlx::query("UPDATE tool_calls SET status='failed',error='interrupted',completed_at=? WHERE status='running'").bind(now()).execute(&mut *tx).await?;
         sqlx::query("UPDATE turns SET status='failed', error_code='interrupted', completed_at=? WHERE status='generating'")
             .bind(now()).execute(&mut *tx).await?;
@@ -163,6 +166,7 @@ impl Store {
                 "turns",
                 "assets",
                 "tool_calls",
+                "model_requests",
                 "qq_sessions",
                 "qq_inbox",
             ] {
@@ -338,6 +342,12 @@ impl Store {
 
     pub async fn fail_turn(&self, user: &Message, code: &str) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        sqlx::query(
+            "UPDATE model_requests SET status='interrupted' WHERE turn_id=? AND status='running'",
+        )
+        .bind(&user.turn_id)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("UPDATE tool_calls SET status='failed',error='turn_cancelled',completed_at=? WHERE turn_id=? AND status='running'").bind(now()).bind(&user.turn_id).execute(&mut *tx).await?;
         sqlx::query("UPDATE turns SET status='failed',error_code=?,completed_at=? WHERE id=? AND status='generating'")
             .bind(code).bind(now()).bind(&user.turn_id).execute(&mut *tx).await?;

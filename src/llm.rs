@@ -140,6 +140,9 @@ pub struct Llm {
     max_tokens: u32,
     context_tokens: usize,
     json_schema: bool,
+    store: Option<crate::store::Store>,
+    scope: Option<(String, String)>,
+    stream_usage: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub metrics: std::sync::Arc<crate::telemetry::Metrics>,
 }
 
@@ -161,8 +164,52 @@ impl Llm {
             max_tokens: config.llm.max_tokens,
             context_tokens: config.llm.context_tokens,
             json_schema: config.llm.json_schema,
+            store: None,
+            scope: None,
+            stream_usage: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
             metrics: Default::default(),
         })
+    }
+
+    pub(crate) fn tracked(mut self, store: crate::store::Store) -> Self {
+        self.store = Some(store);
+        self
+    }
+    pub(crate) fn for_turn(&self, turn: &str, purpose: &str) -> Self {
+        let mut scoped = self.clone();
+        scoped.scope = Some((turn.to_owned(), purpose.to_owned()));
+        scoped
+    }
+    async fn start_request(&self, context: &crate::usage::ContextTokens) -> Result<String> {
+        if let Some(store) = &self.store {
+            store
+                .start_model_request(
+                    self.scope.as_ref().map(|s| s.0.as_str()),
+                    self.scope
+                        .as_ref()
+                        .map(|s| s.1.as_str())
+                        .unwrap_or("memory"),
+                    &self.model,
+                    context,
+                )
+                .await
+        } else {
+            Ok(crate::domain::id())
+        }
+    }
+    async fn save_request(
+        &self,
+        id: &str,
+        usage: &crate::usage::TokenUsage,
+        reasoning: &str,
+        status: &str,
+    ) -> Result<()> {
+        if let Some(store) = &self.store {
+            store
+                .update_model_request(id, usage, reasoning, status)
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn complete_json(&self, system: &str, input: Value) -> Result<Value> {
@@ -222,15 +269,7 @@ impl Llm {
         {
             body["response_format"] = json!({"type":"json_schema","json_schema":{"name":"memory_extraction","strict":true,"schema":schema}});
         }
-        let response = self
-            .client
-            .post(&self.url)
-            .bearer_auth(&self.key)
-            .json(&body)
-            .send()
-            .await?
-            .error_for_status()?;
-        let value: Value = serde_json::from_slice(&bounded_body(response, 1_048_576).await?)?;
+        let value = self.json_request(&body).await?;
         ensure!(
             value["choices"][0]["finish_reason"] == "stop",
             "incomplete extraction response"
@@ -246,6 +285,41 @@ impl Llm {
             .map(|s| s.trim().strip_suffix("```").unwrap_or(s).trim())
             .unwrap_or(content.trim());
         Ok(serde_json::from_str(text)?)
+    }
+    async fn json_request(&self, body: &Value) -> Result<Value> {
+        let mut context =
+            crate::usage::ContextTokens::from_wire(body["messages"].as_array().unwrap(), None);
+        context.tools += body
+            .get("response_format")
+            .map(|s| crate::tokens::count(&s.to_string()) + 64)
+            .unwrap_or(0);
+        let id = self.start_request(&context).await?;
+        let result = async {
+            let response = self
+                .client
+                .post(&self.url)
+                .bearer_auth(&self.key)
+                .json(body)
+                .send()
+                .await?
+                .error_for_status()?;
+            Ok::<Value, anyhow::Error>(serde_json::from_slice(
+                &bounded_body(response, 1_048_576).await?,
+            )?)
+        }
+        .await;
+        let mut usage = crate::usage::TokenUsage::default();
+        if let Ok(value) = &result {
+            usage.update(value);
+        }
+        self.save_request(
+            &id,
+            &usage,
+            "",
+            if result.is_ok() { "complete" } else { "failed" },
+        )
+        .await?;
+        result
     }
 
     pub async fn stream(
@@ -331,7 +405,55 @@ impl Llm {
                 <= self.context_tokens,
             "model request exceeds token budget"
         );
-        let mut body = json!({"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens,"stream":true});
+        let context = crate::usage::ContextTokens::from_wire(messages, tools);
+        let id = self.start_request(&context).await?;
+        emit(
+            output,
+            "context",
+            json!({"request_id":id,"context":context,"estimated_input_tokens":context.total(),"tokens_estimated":true}),
+        )?;
+        let mut usage = crate::usage::TokenUsage::default();
+        let mut reasoning = String::new();
+        let result = self
+            .read_round(
+                messages,
+                tools,
+                tool_conversation,
+                output,
+                &id,
+                &mut usage,
+                &mut reasoning,
+            )
+            .await;
+        self.save_request(
+            &id,
+            &usage,
+            &reasoning,
+            if result.is_ok() { "complete" } else { "failed" },
+        )
+        .await?;
+        emit(
+            output,
+            "usage",
+            json!({"request_id":id,"usage":usage,"status":if result.is_ok(){"complete"}else{"failed"}}),
+        )?;
+        result
+    }
+    #[allow(clippy::too_many_arguments)]
+    async fn read_round(
+        &self,
+        messages: &[Value],
+        tools: Option<&Value>,
+        tool_conversation: bool,
+        output: &mpsc::Sender<Event>,
+        id: &str,
+        usage: &mut crate::usage::TokenUsage,
+        reasoning: &mut String,
+    ) -> Result<Completion> {
+        let mut body = json!({"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens,"stream":true,"stream_options":{"include_usage":true}});
+        if !self.stream_usage.load(std::sync::atomic::Ordering::Relaxed) {
+            body.as_object_mut().unwrap().remove("stream_options");
+        }
         if let Some(tools) = tools {
             body["tools"] = tools.clone();
             body["tool_choice"] = json!("auto");
@@ -339,17 +461,37 @@ impl Llm {
         } else if tool_conversation {
             body["tool_choice"] = json!("none");
         }
-        let response = self
+        let mut response = self
             .client
             .post(&self.url)
             .bearer_auth(&self.key)
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?;
+            .await?;
+        // Some compatible endpoints reject this optional parameter. Retry only
+        // explicit validation failures about stream usage, never an accepted call.
+        if matches!(response.status().as_u16(), 400 | 422) && body.get("stream_options").is_some() {
+            let status = response.status();
+            let detail =
+                String::from_utf8_lossy(&bounded_body(response, 65536).await?).to_lowercase();
+            ensure!(
+                detail.contains("stream_options") || detail.contains("include_usage"),
+                "upstream HTTP {status}"
+            );
+            self.stream_usage
+                .store(false, std::sync::atomic::Ordering::Relaxed);
+            body.as_object_mut().unwrap().remove("stream_options");
+            response = self
+                .client
+                .post(&self.url)
+                .bearer_auth(&self.key)
+                .json(&body)
+                .send()
+                .await?;
+        }
+        let response = response.error_for_status()?;
         let mut events = response.bytes_stream().eventsource();
         let mut content = String::new();
-        let mut reasoning = String::new();
         let mut guard = ToolTextGuard::default();
         let mut calls = std::collections::BTreeMap::<usize, ToolCall>::new();
         let mut finish = String::new();
@@ -400,13 +542,22 @@ impl Llm {
                     reasoning_content: if reasoning.is_empty() {
                         None
                     } else {
-                        Some(reasoning)
+                        Some(reasoning.clone())
                     },
                     tool_markup: guard.suppressed,
                 });
             }
             let chunk: Value = serde_json::from_str(&event.data)?;
             ensure!(chunk.get("error").is_none(), "upstream stream error");
+            if usage.update(&chunk) {
+                // Persist even if the stream later fails or the turn is cancelled.
+                self.save_request(id, usage, reasoning, "running").await?;
+                emit(
+                    output,
+                    "usage",
+                    json!({"request_id":id,"usage":usage,"status":"running"}),
+                )?;
+            }
             if let Some(reason) = chunk["choices"][0]["finish_reason"].as_str() {
                 ensure!(
                     matches!(reason, "stop" | "length" | "tool_calls"),
@@ -429,14 +580,17 @@ impl Llm {
                     emit(output, "delta", json!({"content":visible}))?;
                 }
             }
-            if tool_conversation
-                && let Some(delta) = chunk["choices"][0]["delta"]["reasoning_content"].as_str()
-            {
+            for delta in reasoning_deltas(&chunk["choices"][0]["delta"]) {
                 ensure!(
                     reasoning.len() + delta.len() <= 256_000,
                     "reasoning exceeds byte limit"
                 );
                 reasoning.push_str(delta);
+                emit(
+                    output,
+                    "reasoning",
+                    json!({"request_id":id,"content":delta}),
+                )?;
             }
             if let Some(deltas) = chunk["choices"][0]["delta"]["tool_calls"].as_array() {
                 ensure!(tools.is_some(), "unexpected tool call");
@@ -476,6 +630,29 @@ impl Llm {
     }
 }
 
+// Compatible providers expose plain reasoning under different names. Only render
+// returned text/summary blocks; signatures and encrypted blocks are not display text.
+fn reasoning_deltas(delta: &Value) -> Vec<&str> {
+    for key in ["reasoning_content", "reasoning", "thinking"] {
+        if let Some(text) = delta[key].as_str() {
+            return vec![text];
+        }
+    }
+    delta["reasoning_details"]
+        .as_array()
+        .map(|details| {
+            details
+                .iter()
+                .filter_map(|part| match part["type"].as_str() {
+                    Some("reasoning.text") => part["text"].as_str(),
+                    Some("reasoning.summary") => part["summary"].as_str(),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// A disconnected client does not cancel a durable turn. A slow connected client is bounded.
 pub fn emit(output: &mpsc::Sender<Event>, name: &str, data: Value) -> Result<()> {
     let event = Event::default().event(name).data(data.to_string());
@@ -499,6 +676,23 @@ pub async fn bounded_body(response: reqwest::Response, limit: usize) -> Result<V
 #[cfg(test)]
 mod tests {
     use super::ToolTextGuard;
+
+    #[test]
+    fn reasoning_aliases_render_only_returned_plain_text() {
+        use super::*;
+        for key in ["reasoning_content", "reasoning", "thinking"] {
+            assert_eq!(reasoning_deltas(&json!({key:"实际内容"})), vec!["实际内容"]);
+        }
+        assert_eq!(
+            reasoning_deltas(&json!({"reasoning_details":[
+                {"type":"reasoning.encrypted","data":"secret"},
+                {"type":"reasoning.summary","summary":"实际摘要"},
+                {"type":"reasoning.text","text":"实际内容"}
+            ]})),
+            vec!["实际摘要", "实际内容"]
+        );
+        assert!(reasoning_deltas(&json!({"content":"ordinary answer"})).is_empty());
+    }
 
     #[tokio::test]
     async fn token_guard_includes_reply_reserve_json_and_tool_schemas_before_network() {

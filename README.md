@@ -125,11 +125,17 @@ python3 scripts/chat.py
 
 旧 `/v1/sessions` 接口保留兼容：创建请求始终返回同一对话 ID，旧 API 和 QQ 会话及图片、工具记录启动时合并，旧 ID 继续指向全局对话。图片上传可直接使用 `POST /v1/images`。
 
-SSE 事件依次为 `meta`、可选的 `compaction`、多次 `delta`、`done`；失败时发送 `error`。`meta` 包含 `memory_ids` 和 `retrieval_degraded`。`done.persisted=true` 表示完整回复与记忆任务已经提交，之前的 delta 都是暂时输出。客户端断开后服务继续完成本轮；可通过 GET turn 查询结果。同一 `request_id` 和相同消息重试会重放已完成回复，不重复生成或提取。未完成/失败的旧 ID 返回 409，需查询状态，重试生成使用新 UUID。
+SSE 事件包含 `meta`、可选的 `compaction`、每次模型请求的 `context`（本地估算）、`reasoning`（仅供应商返回的思考文本）、`usage`（API 用量快照）、多次 `delta` 与最终 `done`；失败时发送 `error`。`reasoning`、`usage` 以 `request_id` 区分同一轮中的多次工具模型请求；usage 是替换快照，不能按流事件累加。`meta` 包含 `memory_ids` 和 `retrieval_degraded`。`done.persisted=true` 表示完整回复与记忆任务已经提交，之前的 delta 都是暂时输出。客户端断开后服务继续完成本轮；可通过 GET turn 查询结果。同一 `request_id` 和相同消息重试会重放已完成回复，不重复生成或提取。未完成/失败的旧 ID 返回 409，需查询状态，重试生成使用新 UUID。
 
 ## 长期记忆行为
 
-QQ、API 和 WebUI 不再新建或切换对话窗口。`[llm]` 的 `history_turns=1000`、`context_tokens=100000` 控制活跃原文轮数和生成上下文 token 预算；下一轮达到任一上限时，先把较早轮次与旧摘要合并成最多 `summary_chars=2000` 字的滚动摘要，保留约一半近期原文，再继续回复。使用内置 `o200k_base` 分词器估算文本 token，预算包含系统提示、记忆、历史、工具及回复预留；图片采用估算开销，实际统计可能与模型提供方不同。旧 `[llm].context_chars` 与 `MNEME_LLM_CONTEXT_CHARS` 不再限制对话，缺省采用 10 万 token；旧字符配置中的默认 16 轮自动升为 1000 轮，显式新配置或环境覆盖优先。安装脚本写入 `MNEME_LLM_CONTEXT_TOKENS=100000`、`MNEME_LLM_HISTORY_TURNS=1000`、`MNEME_MEMORY_EXTRACT_CHARS=10000`，保留已有配置文件和人格。
+QQ、API 和 WebUI 不再新建或切换对话窗口。`[llm]` 的 `context_tokens=100000` 控制生成上下文 token 预算；下一轮将超过预算时，先把较早轮次与旧摘要合并成最多 `summary_chars=2000` 字的滚动摘要，保留约一半近期原文，再继续回复。使用内置 `o200k_base` 分词器估算文本 token，预算包含系统提示、记忆、历史、工具及回复预留；图片采用估算开销，本地估算可能与模型提供方不同。`history_turns` 保留配置兼容性，不再限制活跃历史或触发压缩。旧 `[llm].context_chars` 与 `MNEME_LLM_CONTEXT_CHARS` 不再限制对话，缺省采用 10 万 token；旧字符配置中的默认 16 轮自动升为 1000 轮，显式新配置或环境覆盖优先。安装脚本写入 `MNEME_LLM_CONTEXT_TOKENS=100000`、`MNEME_LLM_HISTORY_TURNS=1000`、`MNEME_MEMORY_EXTRACT_CHARS=10000`，保留已有配置文件和人格。
+
+每次上游请求的输入、输出、推理、总量与可用思考文本保存在 `model_requests`，重复流式 usage 更新同一记录。输出统一包含推理，推理是其中的子项，不再次加入总量。缺失字段为 `null`，累计量附带每个字段的已报告请求数；会话累计包含对话/工具循环、压缩和记忆提取，并分别列出。流中断时保留已收到的实际用量；重放不新增请求或消耗。旧对话没有的 usage 无法补录。
+
+底部默认展示下一轮保留上下文的估算（系统、历史、摘要、最近召回的记忆大小、工具定义及封装），下一条消息与召回结果未知时不会宣称是实际值。展开可查看最近一次模型请求的 API 输入和本地估算分布，以及累计用量。临时工具结果和思考不会自动进入下一轮；供应商要求在同一轮工具续接时回传的 `reasoning_content` 按实际发送内容估算。回复预留单独列出。记忆提取沿用独立字数水位，压缩不推进它、不强制提取。
+
+继续使用现有 `/chat/completions` 兼容接口，支持 OpenAI/DeepSeek/Qwen 等兼容 usage、兼容网关透传的 Anthropic 缓存计数和 Gemini `usageMetadata`。未引入原生协议或 SDK。请求启用 `stream_options.include_usage`；仅在服务明确拒绝该选项时回退，不重试已接受的生成。计数语义参见 [OpenAI 流式 usage](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events)、[Anthropic 缓存输入](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance) 与 [Gemini UsageMetadata](https://ai.google.dev/api/generate-content#UsageMetadata)。
 
 压缩只调整生成上下文，不删除原始对话。记忆提取独立于压缩周期：`[memory].extract_every_chars=10000`，累计新增的完整用户/助手原文达到 1 万字后提交一次批量提取任务；未达阈值的累计进度跨重启保留。后台只从批次内用户原始消息提取事实，沿用重要性、置信度、敏感分类和逐字证据校验，不把模型摘要当作事实来源。摘要生成失败时本轮明确失败，压缩游标不前进，原始历史和待处理任务保留，避免无提示地裁掉历史。摘要和压缩进度随 SQLite 跨重启保留，界面可以查看。
 

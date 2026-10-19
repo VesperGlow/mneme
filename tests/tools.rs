@@ -66,6 +66,9 @@ async fn services(mode: &'static str) -> (String, Arc<Mutex<Seen>>, tokio::task:
             let second=json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":&args[split..]}}]},"finish_reason":"tool_calls"}]});
             wire.push_str(&format!("data: {first}\n\ndata: {second}\n\n"));
         }
+        let usage=json!({"choices":[],"usage":{"prompt_tokens":123,"completion_tokens":45,"completion_tokens_details":{"reasoning_tokens":10},"total_tokens":168}});
+        // Repeated cumulative snapshots must update one request rather than add up.
+        wire.push_str(&format!("data: {usage}\n\ndata: {usage}\n\n"));
         if mode!="truncated" && !(mode=="after_tools_truncated" && native_count>0 && body.get("tools").is_some()){wire.push_str("data: [DONE]\n\n");}
         let chunks:Vec<_>=wire.into_bytes().chunks(7).map(|b|Ok::<_,std::convert::Infallible>(b.to_vec())).collect();
         ([("content-type","text/event-stream")],Body::from_stream(futures_util::stream::iter(chunks))).into_response()
@@ -180,7 +183,7 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
     .await;
     assert!(wire.contains("event: done"), "{wire}");
     assert!(wire.contains("event: tool"));
-    assert!(!wire.contains("fixture reasoning"));
+    assert!(wire.contains("event: reasoning") && wire.contains("fixture reasoning"));
     let calls = seen.lock().unwrap().actions.len();
     assert_eq!(calls, 3);
     let (_, history) = request(
@@ -191,6 +194,37 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
     )
     .await;
     assert_eq!(history["messages"].as_array().unwrap().len(), 2);
+    assert!(
+        !history["messages"]
+            .to_string()
+            .contains("fixture reasoning")
+    );
+    assert_eq!(history["model_requests"].as_array().unwrap().len(), 4);
+    let (_, context) = request(&router, "GET", "/v1/conversation", json!({})).await;
+    assert_eq!(context["context"]["session_usage"]["requests"], 4);
+    assert_eq!(context["context"]["session_usage"]["input_tokens"], 492);
+    assert_eq!(context["context"]["session_usage"]["output_tokens"], 180);
+    assert_eq!(context["context"]["session_usage"]["reasoning_tokens"], 40);
+    assert_eq!(context["context"]["session_usage"]["total_tokens"], 672);
+    assert_eq!(
+        context["context"]["last_request"]["usage"]["input_tokens"],
+        123
+    );
+    let schemas = mneme::tokens::count(&mneme::tools::definitions().to_string()) + 20;
+    assert!(
+        context["context"]["last_request"]["context"]["tools"]
+            .as_u64()
+            .unwrap()
+            >= (schemas + 1024) as u64
+    );
+    assert!(
+        context["context"]["distribution"]["tools"]
+            .as_u64()
+            .unwrap()
+            < context["context"]["last_request"]["context"]["tools"]
+                .as_u64()
+                .unwrap()
+    );
     assert_eq!(history["assets"][0]["id"], asset);
     assert_eq!(history["tool_calls"].as_array().unwrap().len(), 3);
     assert_eq!(history["tool_calls"][0]["status"], "completed");
@@ -241,6 +275,11 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
     let replay = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
     assert!(String::from_utf8_lossy(&replay).contains("replayed"));
     assert_eq!(seen.lock().unwrap().actions.len(), calls);
+    let (_, replay_context) = request(&router, "GET", "/v1/conversation", json!({})).await;
+    assert_eq!(
+        replay_context["context"]["session_usage"],
+        context["context"]["session_usage"]
+    );
     let other = app.store.create_session().await.unwrap();
     let (_, wire) = chat(&router, &other, &format!("查看图片标识 {asset}"), vec![]).await;
     assert_eq!(other, session);

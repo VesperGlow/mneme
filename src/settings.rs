@@ -392,6 +392,7 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         .map_err(anyhow::Error::from)?;
     // Foreign-key order matters. Keep deployment configuration, credentials and model selection.
     for statement in [
+        "DELETE FROM model_requests",
         "DELETE FROM tool_calls",
         "DELETE FROM message_assets",
         "DELETE FROM assets",
