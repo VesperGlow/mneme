@@ -29,6 +29,9 @@ struct Fixture {
     sent: Arc<Mutex<Vec<Value>>>,
     downloads: Arc<AtomicUsize>,
     fail_media: Arc<AtomicBool>,
+    fail_vision: Arc<AtomicBool>,
+    vision_calls: Arc<AtomicUsize>,
+    vision_delay: Arc<AtomicUsize>,
 }
 async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
     let fixture = Fixture::default();
@@ -37,6 +40,13 @@ async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
             "/chat/completions",
             post(
                 |State(s): State<Fixture>, Json(body): Json<Value>| async move {
+                    if body["stream"] == false {
+                        s.vision_calls.fetch_add(1, Ordering::SeqCst);
+                        tokio::time::sleep(std::time::Duration::from_millis(s.vision_delay.load(Ordering::SeqCst) as u64)).await;
+                        if s.fail_vision.load(Ordering::SeqCst) { return ([("content-type", "text/event-stream")], Body::from("{}")); }
+                        assert!(body["messages"][1]["content"].to_string().contains("data:image/jpeg;base64,"));
+                        return ([("content-type", "text/event-stream")], Body::from(json!({"choices":[{"message":{"content":json!({"name":"自动识别的抱抱","description":"小动物张开手臂拥抱，表达安慰和陪伴。"}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":40,"total_tokens":1040}}).to_string()));
+                    }
                     s.requests.lock().await.push(body.clone());
                     let mut reply = s.reply.lock().await.clone();
                     if reply == "__echo_image__" {
@@ -85,6 +95,7 @@ async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
                 )
             }),
         )
+        .route("/v1/stickers/preview", post(|| async { Json(json!({"mime":"image/jpeg","data":"/9j/AA==","width":256,"height":256})) }))
         .route(
             "/v1/images/fetch",
             post(
@@ -231,9 +242,14 @@ async fn global_library_persistence_replay_disable_delete_and_reset() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(
-        request(&router, "POST", "/v1/stickers?name=", "gif".into())
-            .await
-            .0,
+        request(
+            &router,
+            "POST",
+            "/v1/stickers?name=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ",
+            "gif".into()
+        )
+        .await
+        .0,
         StatusCode::BAD_REQUEST
     );
     assert_eq!(
@@ -475,6 +491,120 @@ async fn qq_image_only_message_and_media_retry_survive_restart() {
     assert_eq!(sent[3]["msg_seq"], 2);
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM message_assets ma JOIN messages m ON m.id=ma.message_id WHERE m.role='assistant'").fetch_one(&app.store.pool).await.unwrap(), 1);
     assert_eq!(fake.requests.lock().await.len(), 2);
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    server.abort();
+    upstream.abort();
+}
+
+#[tokio::test]
+async fn automatic_understanding_resumes_after_restart_and_can_retry_without_overwriting_edits() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (fake, base, server) = fixture().await;
+    let (services, upstream) = common::fake_services().await;
+    let config = config(&temp, &base, &services);
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config.clone(), rx).await.unwrap();
+    let router = api::router(app.clone());
+    let (status, wire) = request(&router, "POST", "/v1/stickers?enabled=true", "gif".into()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let sticker = serde_json::from_str::<Value>(&wire).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(!app.stickers.read().unwrap().prompt().contains(&sticker));
+    drop(router);
+    app.store.pool.close().await;
+    drop(app);
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config, rx).await.unwrap();
+    let router = api::router(app.clone());
+    let worker = tokio::spawn(mneme::stickers::worker(app.clone()));
+    wait_for(
+        &app,
+        "SELECT EXISTS(SELECT 1 FROM stickers WHERE analysis_status='complete')",
+    )
+    .await;
+    assert_eq!(
+        app.stickers.read().unwrap().stickers[0].name,
+        "自动识别的抱抱"
+    );
+    assert!(app.stickers.read().unwrap().prompt().contains("安慰和陪伴"));
+    assert_eq!(fake.vision_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM model_requests WHERE purpose='sticker' AND json_extract(usage,'$.total_tokens')=1040").fetch_one(&app.store.pool).await.unwrap(), 1);
+    fake.fail_vision.store(true, Ordering::SeqCst);
+    assert_eq!(
+        call(
+            &router,
+            "POST",
+            &format!("/v1/stickers/{sticker}/analyze"),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    wait_for(
+        &app,
+        "SELECT EXISTS(SELECT 1 FROM stickers WHERE analysis_status='failed')",
+    )
+    .await;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sticker_images")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+        1
+    );
+    fake.fail_vision.store(false, Ordering::SeqCst);
+    call(
+        &router,
+        "POST",
+        &format!("/v1/stickers/{sticker}/analyze"),
+        json!({}),
+    )
+    .await;
+    wait_for(
+        &app,
+        "SELECT EXISTS(SELECT 1 FROM stickers WHERE analysis_status='complete')",
+    )
+    .await;
+    assert_eq!(fake.vision_calls.load(Ordering::SeqCst), 3);
+    fake.vision_delay.store(600, Ordering::SeqCst);
+    call(
+        &router,
+        "POST",
+        &format!("/v1/stickers/{sticker}/analyze"),
+        json!({}),
+    )
+    .await;
+    for _ in 0..100 {
+        if fake.vision_calls.load(Ordering::SeqCst) == 4 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }
+    assert_eq!(fake.vision_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        call(
+            &router,
+            "PUT",
+            &format!("/v1/stickers/{sticker}"),
+            json!({"name":"我修正的名字","description":"我自己的理解","enabled":true})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    assert_eq!(
+        app.stickers.read().unwrap().stickers[0].name,
+        "我修正的名字"
+    );
+    assert_eq!(
+        app.stickers.read().unwrap().stickers[0].analysis_status,
+        "manual"
+    );
     stop.send(true).unwrap();
     worker.await.unwrap();
     server.abort();

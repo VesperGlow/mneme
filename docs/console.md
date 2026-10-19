@@ -47,9 +47,11 @@ WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件�
 
 ## 自定义表情包
 
-进入 **Agent → 自定义表情包**，可批量上传自己的 PNG、JPEG、WebP 或 GIF，填写名字（最多 40 字）和使用场景 / 情绪标签（最多 120 字），例如“抱抱：安慰、鼓励，表达陪伴”。支持搜索、编辑、单张启停、删除和全局开关。网页、QQ、API 共用同一份素材，Agent 按语境选用，每轮最多一张；不额外调用模型生成图片。
+进入 **Agent → 自定义表情包**，可批量上传自己的 PNG、JPEG、WebP 或 GIF，无需填写名字和标签。后台使用当前多模态聊天模型理解画面、可读文案、动作、情绪与反讽语气，自动生成简短名字和适用场景；动图会按时间顺序抽取首、中、末帧。识别结果保存后在聊天中复用，不会每轮重新看整份表情库。支持搜索、编辑、单张启停、删除和全局开关。网页、QQ、API 共用同一份素材，Agent 按语境选用，每轮最多一张；上传时会调用现有聊天模型做一次视觉理解，不生成新图片。
 
 上传需启用并运行工具服务，每张原图最多 8 MiB。服务验证解码、移除元数据并缩至最长 512 像素，保留透明背景和 GIF / WebP 动画（最多 100 帧、总解码 4000 万像素）；处理后每张不超过 2 MiB。最多 50 张，目录描述还受当前上下文预算限制，总图片存储上限 64 MiB。表情库保存在 SQLite 中，重启和重置 Agent 对话后保留；删除库中表情后，已发送的历史图片仍可查看。历史引用在回复事务中提交，关闭页面和重放请求不会重复选择或发送。
+
+识别任务保存在 SQLite 中，关闭页面或重启后继续。未完成和失败的表情暂不交给 Agent 选择，图片仍保留；界面显示状态并可重试或重新识别。既有表情包升级后会自动补识别。需要修正时仍可编辑名字（最多 40 字）和识别描述（最多 120 字），进行中的旧识别不会覆盖手动修正。当前聊天模型须支持 `image_url`，不额外部署视觉模型服务；识别请求用量单独归为“表情包理解”。
 
 SSE `delta` 只含可见文本，提交成功后 `media` 事件返回 `stickers: [{image_id,name}]` 和 `images: [asset_id]`；重放也返回同一份媒体。历史接口包含 `stickers`，轮次查询包含 `media`。图片地址仍要求登录 Cookie 或 API Token。
 
@@ -86,8 +88,9 @@ SSE `delta` 只含可见文本，提交成功后 `media` 事件返回 `stickers:
 | POST | `/v1/console/logout` | 撤销当前密码会话 |
 | GET | `/v1/console/settings` | persona、default_persona、password_configured、graph_cleanup_pending；不返回密码哈希或密钥 |
 | PUT | `/v1/console/persona` | `{"name":"…","description":"…","style":"…","boundaries":"…","output_format":"…"}`；output_format 可省略，默认为空 |
-| GET / POST | `/v1/stickers` | 获取全局表情库 / 上传原始图片；上传用 query 的 name、description、enabled 描述素材 |
+| GET / POST | `/v1/stickers` | 获取全局表情库 / 上传原始图片；上传无需 name 或 description，后台自动识别；query 可选 enabled |
 | PUT | `/v1/stickers/{id}` | 保存 name、description、enabled |
+| POST | `/v1/stickers/{id}/analyze` | 重新排队自动理解 / 重试识别 |
 | DELETE | `/v1/stickers/{id}` | 移除素材，保留历史图片 |
 | PUT | `/v1/stickers/settings` | `{"enabled":true}`，设置全局开关 |
 | GET | `/v1/sticker-images/{id}` | 读取受鉴权保护的表情图片 |

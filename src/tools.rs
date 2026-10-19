@@ -97,14 +97,24 @@ impl Client {
     pub async fn normalize(&self, bytes: Vec<u8>) -> Result<ImageData> {
         self.normalize_kind(bytes, false).await
     }
+    pub async fn sticker_preview(&self, bytes: Vec<u8>) -> Result<ImageData> {
+        self.normalize_path(bytes, "stickers/preview").await
+    }
     pub async fn normalize_kind(&self, bytes: Vec<u8>, sticker: bool) -> Result<ImageData> {
+        self.normalize_path(
+            bytes,
+            if sticker {
+                "stickers/normalize"
+            } else {
+                "images/normalize"
+            },
+        )
+        .await
+    }
+    async fn normalize_path(&self, bytes: Vec<u8>, path: &str) -> Result<ImageData> {
         let response = self
             .http
-            .post(format!(
-                "{}/v1/{}/normalize",
-                self.url,
-                if sticker { "stickers" } else { "images" }
-            ))
+            .post(format!("{}/v1/{path}", self.url))
             .bearer_auth(&self.token)
             .header("content-type", "application/octet-stream")
             .body(bytes)

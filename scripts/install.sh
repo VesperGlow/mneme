@@ -2,18 +2,24 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 umask 077
-mneme_image_tag="${MNEME_IMAGE_TAG:-latest}"
-if [[ ! "$mneme_image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-    echo 'MNEME_IMAGE_TAG 必须是合法的容器镜像标签。' >&2
-    exit 1
+source scripts/images.sh
+mneme_select_services "$@"
+if [ "$#" -gt 0 ] && [ ! -f "$mneme_quadlet_dir/mneme.pod" ]; then
+    echo '首次安装请先运行不带服务参数的 scripts/start.sh。' >&2; exit 1
 fi
 python3 scripts/configure.py
-mkdir -p "$HOME/.config/containers/systemd" "$HOME/.config/systemd/user"
-cp deploy/quadlet/* "$HOME/.config/containers/systemd/"
-sed -i "s|^Image=ghcr.io/vesperglow/mneme-api:latest$|Image=ghcr.io/vesperglow/mneme-api:$mneme_image_tag|" "$HOME/.config/containers/systemd/mneme-api.container"
-sed -i "s|^Image=ghcr.io/vesperglow/mneme-models:latest$|Image=ghcr.io/vesperglow/mneme-models:$mneme_image_tag|" "$HOME/.config/containers/systemd/mneme-models.container"
-sed -i "s|^Image=ghcr.io/vesperglow/mneme-tools:latest$|Image=ghcr.io/vesperglow/mneme-tools:$mneme_image_tag|" "$HOME/.config/containers/systemd/mneme-tools.container"
-cp deploy/systemd/mneme.target "$HOME/.config/systemd/user/"
+mkdir -p "$mneme_quadlet_dir" "$mneme_systemd_dir"
+if [ "$#" = 0 ]; then
+    cp deploy/quadlet/* "$mneme_quadlet_dir/"
+    cp deploy/systemd/mneme.target "$mneme_systemd_dir/"
+fi
+for mneme_service in "${mneme_services[@]}"; do
+    cp "deploy/quadlet/mneme-$mneme_service.container" "$mneme_quadlet_dir/"
+    sed -i "s|^Image=ghcr.io/vesperglow/mneme-$mneme_service:latest$|Image=ghcr.io/vesperglow/mneme-$mneme_service:$mneme_image_tag|" "$mneme_quadlet_dir/mneme-$mneme_service.container"
+    if [ "$mneme_service" = tools ]; then cp deploy/quadlet/mneme-tools-seccomp.json "$mneme_quadlet_dir/"; fi
+done
 systemctl --user daemon-reload
-systemctl --user enable --now mneme.target
-systemctl --user --no-pager status mneme.target
+if [ "$#" = 0 ]; then
+    systemctl --user enable --now mneme.target
+    systemctl --user --no-pager status mneme.target
+fi

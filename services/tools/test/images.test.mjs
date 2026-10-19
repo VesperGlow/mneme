@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import sharp from 'sharp';
-import { fetchImage, normalizeImage } from '../images.mjs';
+import { fetchImage, normalizeImage, stickerPreview } from '../images.mjs';
 import { NetworkPolicy } from '../security.mjs';
 
 test('custom stickers preserve GIF frames and transparency; vision accepts GIF first frame', async () => {
@@ -48,4 +48,17 @@ test('attachment downloads validate each redirect, cap bytes and strip request c
     await assert.rejects(fetchImage(`http://127.0.0.1:${server.address().port}/private`));
     assert.equal(reached, 1);
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+});
+
+
+test('visual indexing samples chronological first, middle and final animation frames', async () => {
+  const gif = await sharp(Buffer.from([255, 0, 0, 0, 255, 0, 0, 0, 255]), { raw: { width: 1, height: 3, channels: 3, pageHeight: 1 } }).gif({ delay: [100, 100, 100] }).toBuffer();
+  const preview = await stickerPreview(gif);
+  assert.equal(preview.mime, 'image/jpeg'); assert.equal(preview.width, 768); assert.equal(preview.height, 256);
+  const { data } = await sharp(Buffer.from(preview.data, 'base64')).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (let frame = 0; frame < 3; frame++) {
+    const pixel = (128 * 768 + frame * 256 + 128) * 3;
+    assert(data[pixel + frame] > 200); assert(data[pixel + (frame + 1) % 3] < 40);
+  }
+  await assert.rejects(stickerPreview(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')));
 });

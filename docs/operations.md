@@ -108,3 +108,10 @@ curl -sS -X POST -H "Authorization: Bearer $MNEME_API_TOKEN" \
 - 若替换 Embedding 模型/维度，必须重新计算全部持久化向量并重建 Neo4j 索引，不能仅修改模型服务名称。v1 固定为 Qwen3 1024 维，不暴露不安全的热切换。
 
 CPU 延迟依赖机器、文本长度和队列。默认 512 token、Embedding batch=2、Reranker batch=4 优先控制峰值；大量旧任务时先检查提供商配额和模型队列，再调整并发，避免在 4 核机器上让多个模型进程争抢 CPU。
+
+
+## 按服务更新
+
+日常不必重启整个 Pod。运行 `bash scripts/update.sh api tools` 只拉取和重启 API、工具两个服务，不修改模型容器的 Quadlet、镜像标签或运行状态。只修改 Agent / WebUI 时可用 `bash scripts/update.sh api`；不带参数才更新三项。首次安装仍执行 `scripts/start.sh`，修改 Pod / 网络等公共配置时执行完整安装流程。
+
+CI 依据镜像输入文件选择重新构建的服务，并与上一次成功发布比较，覆盖被取消或失败的提交。未变服务复用已有 `latest`，只增加当前 SHA 标签；实际镜像内容不变，模型权重无需重新下载。`workflow_dispatch` 可手动执行完整构建。镜像复用遵循 [Docker 的单源 manifest 复制](https://docs.docker.com/reference/cli/docker/buildx/imagetools/create/)，使用 `--prefer-index=false` 保留原格式。只有实际构建的服务才生成新的离线归档。

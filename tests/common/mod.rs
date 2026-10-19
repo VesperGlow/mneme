@@ -59,6 +59,9 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                 };
                 ([("content-type","text/event-stream")],Body::from_stream(stream)).into_response()
             } else {
+                if body["messages"][1]["content"].is_array() {
+                    return Json(json!({"choices":[{"message":{"content":json!({"name":"开心表情","description":"画面表现开心与庆祝，适合高兴时回应。"}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1100,"completion_tokens":40,"total_tokens":1140}})).into_response();
+                }
                 let input:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
                 if input.get("max_chars").is_some() {
                     let mut summary = input["previous_summary"].as_str().unwrap_or("").to_owned();

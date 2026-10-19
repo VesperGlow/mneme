@@ -19,6 +19,22 @@ export async function normalizeImage(bytes, sticker = false) {
   } catch (error) { if (error instanceof ToolError) throw error; throw new ToolError('invalid_image'); }
 }
 
+export async function stickerPreview(bytes) {
+  try {
+    const metadata = await sharp(bytes, { animated: true, limitInputPixels: 40_000_000, failOn: 'warning' }).metadata();
+    if (!['png', 'jpeg', 'gif', 'webp'].includes(metadata.format) || (metadata.pages || 1) > 100) throw new ToolError('invalid_image');
+    const pages = metadata.pages || 1;
+    const frames = [...new Set([0, Math.floor((pages - 1) / 2), pages - 1])];
+    const tiles = await Promise.all(frames.map(async (page, i) => ({
+      input: await sharp(bytes, { page, pages: 1, limitInputPixels: 40_000_000, failOn: 'warning' })
+        .rotate().resize(256, 256, { fit: 'contain', background: '#fff' }).flatten({ background: '#fff' }).jpeg({ quality: 85 }).toBuffer(),
+      left: i * 256, top: 0,
+    })));
+    const data = await sharp({ create: { width: 256 * frames.length, height: 256, channels: 3, background: '#fff' } }).composite(tiles).jpeg({ quality: 85 }).toBuffer();
+    return { mime: 'image/jpeg', data: data.toString('base64'), width: 256 * frames.length, height: 256 };
+  } catch (error) { if (error instanceof ToolError) throw error; throw new ToolError('invalid_image'); }
+}
+
 // Resolve and pin every hop, preserving TLS hostname verification. No cookies or tokens
 // are sent to attachment hosts, and redirect targets must pass the same public-IP policy.
 export async function fetchImage(input, policy = new NetworkPolicy()) {

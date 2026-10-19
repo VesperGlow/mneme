@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-mneme_image_tag="${MNEME_IMAGE_TAG:-latest}"
-if [[ ! "$mneme_image_tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
-    echo 'MNEME_IMAGE_TAG 必须是合法的容器镜像标签。' >&2
-    exit 1
-fi
-podman build --platform linux/amd64 -t "ghcr.io/vesperglow/mneme-api:$mneme_image_tag" -t localhost/mneme:0.1.0 -f Containerfile .
-podman build --platform linux/amd64 -t "ghcr.io/vesperglow/mneme-models:$mneme_image_tag" -t localhost/mneme-models:0.1.0 -f services/models/Containerfile .
-
-podman build --platform linux/amd64 -t "ghcr.io/vesperglow/mneme-tools:$mneme_image_tag" -f services/tools/Containerfile .
+source scripts/images.sh
+mneme_select_services "$@"
+for mneme_service in "${mneme_services[@]}"; do
+    if [ "$mneme_service" = api ]; then mneme_containerfile=Containerfile; else mneme_containerfile="services/$mneme_service/Containerfile"; fi
+    mneme_local_tags=()
+    if [ "$mneme_service" = api ]; then mneme_local_tags=(-t localhost/mneme:0.1.0); fi
+    if [ "$mneme_service" = models ]; then mneme_local_tags=(-t localhost/mneme-models:0.1.0); fi
+    podman build --platform linux/amd64 "${mneme_local_tags[@]}" -t "ghcr.io/vesperglow/mneme-$mneme_service:$mneme_image_tag" -f "$mneme_containerfile" .
+done

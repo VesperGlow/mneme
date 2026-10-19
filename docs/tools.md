@@ -90,6 +90,7 @@ API 把图片作为 `image_url` 的 data URL 发给当前多模态 LLM。工具�
 | POST | /v1/reset | 关闭全部浏览器上下文 |
 | POST | /v1/images/normalize | application/octet-stream 图片，返回规范化 JPEG；GIF 使用首帧 |
 | POST | /v1/stickers/normalize | 原始图片，返回最长 512 像素的表情素材，保留透明和动画 |
+| POST | /v1/stickers/preview | 已保存表情，返回供视觉理解的 JPEG；动图按首、中、末帧从左到右排列 |
 | POST | /v1/images/fetch | `{"url":"公网附件地址"}`，验证每次解析与重定向，限 8 MiB / 15 秒，返回规范化 JPEG |
 
 以下接口由 mneme-api 暴露，使用原 API Token 或 Console 密码会话：

@@ -346,7 +346,7 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         for sticker in stickers {
-            let added = sqlx::query("INSERT INTO message_stickers(message_id,image_id,name) SELECT ?,image_id,name FROM stickers WHERE id=? AND enabled=1 AND COALESCE((SELECT value FROM metadata WHERE key='agent.stickers.enabled'),'true')='true' ON CONFLICT(message_id) DO NOTHING")
+            let added = sqlx::query("INSERT INTO message_stickers(message_id,image_id,name) SELECT ?,image_id,name FROM stickers WHERE id=? AND enabled=1 AND analysis_status IN ('complete','manual') AND COALESCE((SELECT value FROM metadata WHERE key='agent.stickers.enabled'),'true')='true' ON CONFLICT(message_id) DO NOTHING")
                 .bind(&message_id).bind(sticker).execute(&mut *tx).await?.rows_affected();
             if added > 0 {
                 break;

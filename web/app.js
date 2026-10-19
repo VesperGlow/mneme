@@ -274,7 +274,7 @@
   function contextDetails(context) {
     const last = context.last_request;
     const totals = context.session_usage;
-    const purposeLabels = { chat: '对话与工具循环', compression: '历史压缩', memory: '长期记忆提取' };
+    const purposeLabels = { chat: '对话与工具循环', compression: '历史压缩', memory: '长期记忆提取', sticker: '表情包理解' };
     return `<p>下一轮上下文估算 · ${fmt(context.context_used_tokens)} tokens</p>${distributionMarkup(context.distribution)}<p class="hint">按 ${esc(context.tokenizer || '本地分词器')} 估算，记忆沿用最近召回的大小；下一条消息及其召回结果尚未确定。回复预留 ${fmt(context.reply_reserve_tokens)} tokens${context.tool_reserve_tokens ? `，工具运行预留 ${fmt(context.tool_reserve_tokens)}` : ''}。</p>${last ? `<p>最近模型请求 · 输入 ${tokenValue(last.usage.input_tokens)} tokens（API）</p><details class="request-context"><summary>该请求的输入分布（估算）</summary>${distributionMarkup(last.context)}</details><dl class="token-distribution">${tokenRows(last.usage)}</dl>` : ''}<p>会话累计 · ${fmt(totals?.requests || 0)} 次模型请求</p>${totals?.incomplete_requests ? `<p class="hint">${fmt(totals.incomplete_requests)} 次请求未正常结束，用量以已收到的 API 统计为准。</p>` : ''}<dl class="token-distribution">${tokenRows(totals)}</dl>${Object.entries(totals?.by_purpose || {}).map(([purpose, usage]) => `<p class="hint">${purposeLabels[purpose] || esc(purpose)}：${tokenValue(usage.total_tokens)} tokens · ${fmt(usage.requests)} 次请求${usage.reported.total_tokens < usage.requests ? '（统计不完整）' : ''}</p>`).join('')}<p class="hint">推理已包含在输出中，不重复相加。仅统计 API 已返回的字段；缺失用量不按零处理。累计消耗与下一轮上下文分别统计。</p><p>已整理 ${fmt(context.compactions)} 次 · 按 Token 预算自动压缩历史；长期记忆独立按每 ${fmt(context.memory_extract_chars)} 字提取。</p><p id="chat-summary" class="prewrap conversation-summary">${esc(context.summary || '对话摘要将在整理历史后显示。')}</p>`;
   }
   function usageTotals(requests) {
@@ -448,12 +448,17 @@
   async function stickerPanel(epoch) {
     const data = await api('/v1/stickers'); if (epoch !== state.epoch) return;
     const panel = $('#sticker-panel');
-    panel.innerHTML = `<div class="panel-head between"><div><h2>自定义表情包</h2><p class="subheading">你收藏的表情，让每次回应多一点默契。</p></div><button class="btn primary" id="add-sticker" ${data.upload_available ? '' : 'disabled'}>${icon('plus')}添加表情包</button></div><div class="sticker-body"><label class="check-label"><input type="checkbox" id="stickers-enabled" ${data.enabled ? 'checked' : ''}>允许 Agent 在回复中使用表情包</label><p class="hint">网页、QQ 和 API 共用这份表情库。根据名字与使用场景选择，每轮最多一张。重启和重置对话后保留。</p>${!data.upload_available ? '<div class="notice warn">启用工具服务后即可上传图片；已有表情包仍可使用。</div>' : ''}<div class="sticker-toolbar"><label class="search-field">${icon('search')}<input id="sticker-search" placeholder="搜索名字或使用场景" aria-label="搜索表情包"></label><small id="sticker-count"></small></div><div id="sticker-grid" class="sticker-grid"></div><div class="error-inline" id="stickers-error" role="alert"></div><p class="hint">支持 PNG、JPEG、WebP 和 GIF 动图，原图最多 8 MiB。最多 ${data.limit} 张；自动缩至 512 像素并移除元数据。</p></div>`;
+    panel.innerHTML = `<div class="panel-head between"><div><h2>自定义表情包</h2><p class="subheading">你收藏的表情，让每次回应多一点默契。</p></div><button class="btn primary" id="add-sticker" ${data.upload_available ? '' : 'disabled'}>${icon('plus')}添加表情包</button></div><div class="sticker-body"><label class="check-label"><input type="checkbox" id="stickers-enabled" ${data.enabled ? 'checked' : ''}>允许 Agent 在回复中使用表情包</label><p class="hint">网页、QQ 和 API 共用这份表情库。上传后自动理解画面、文案和情绪，按语境选用，每轮最多一张。重启和重置对话后保留。</p>${!data.upload_available ? '<div class="notice warn">启用工具服务后即可上传图片；已有表情包仍可使用。</div>' : ''}<div class="sticker-toolbar"><label class="search-field">${icon('search')}<input id="sticker-search" placeholder="搜索名字或使用场景" aria-label="搜索表情包"></label><small id="sticker-count"></small></div><div id="sticker-grid" class="sticker-grid"></div><div class="error-inline" id="stickers-error" role="alert"></div><p class="hint">支持 PNG、JPEG、WebP 和 GIF 动图，原图最多 8 MiB。最多 ${data.limit} 张；自动缩至 512 像素并移除元数据。</p></div>`;
     const render = () => {
       const q = $('#sticker-search').value.trim().toLocaleLowerCase();
       const visible = data.stickers.filter(s => `${s.name} ${s.description}`.toLocaleLowerCase().includes(q));
       $('#sticker-count').textContent = `${data.stickers.length} / ${data.limit} 张`;
-      $('#sticker-grid').innerHTML = visible.map(s => `<article class="sticker-card${s.enabled ? '' : ' is-disabled'}"><div class="sticker-preview"><img src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy"></div><div class="sticker-caption"><strong>${esc(s.name)}</strong><span class="badge ${s.enabled ? 'green' : ''}">${s.enabled ? '已启用' : '已停用'}</span></div><p>${esc(s.description || '添加使用场景，帮助 Agent 选对表情。')}</p><div class="sticker-actions"><button class="btn small" data-sticker-edit="${esc(s.id)}" aria-label="编辑 ${esc(s.name)}">${icon('edit')}编辑</button><button class="icon-btn" data-sticker-delete="${esc(s.id)}" aria-label="删除 ${esc(s.name)}">${icon('trash')}</button></div></article>`).join('') || `<div class="sticker-empty">${icon('spark')}<strong>${q ? '没有找到表情包' : '把你的表情收藏放在这里'}</strong><p>${q ? '试试其他名字或使用场景。' : '上传喜欢的表情，告诉 Agent 什么时候用它。'}</p></div>`;
+      $('#sticker-grid').innerHTML = visible.map(s => `<article class="sticker-card${s.enabled ? '' : ' is-disabled'}"><div class="sticker-preview"><img src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy"></div><div class="sticker-caption"><strong>${esc(s.name)}</strong><span class="badge ${s.enabled ? 'green' : ''}">${s.analysis_status === 'pending' ? '正在识别' : s.analysis_status === 'failed' ? '待重试' : s.enabled ? '已启用' : '已停用'}</span></div><p>${esc(s.analysis_status === 'pending' ? '正在自动理解画面和表达，无需手动打标签…' : s.analysis_status === 'failed' ? s.analysis_error === 'catalog_full' ? '表情库上下文容量不足，请移除部分表情后重试。' : '自动识别未完成，请确认模型支持看图后重试。图片已保留。' : s.description)}</p><div class="sticker-actions"><button class="btn small" data-sticker-analyze="${esc(s.id)}" ${s.analysis_status === 'pending' ? 'disabled' : ''}>${s.analysis_status === 'failed' ? '重试识别' : '重新识别'}</button><button class="btn small" data-sticker-edit="${esc(s.id)}" aria-label="编辑 ${esc(s.name)}">${icon('edit')}编辑</button><button class="icon-btn" data-sticker-delete="${esc(s.id)}" aria-label="删除 ${esc(s.name)}">${icon('trash')}</button></div></article>`).join('') || `<div class="sticker-empty">${icon('spark')}<strong>${q ? '没有找到表情包' : '把你的表情收藏放在这里'}</strong><p>${q ? '试试其他名字或使用场景。' : '上传喜欢的表情，Agent 会自动理解什么时候用它。'}</p></div>`;
+      $$('[data-sticker-analyze]', panel).forEach(button => { button.onclick = async () => {
+        button.disabled = true; $('#stickers-error').textContent = '';
+        try { await send(`/v1/stickers/${button.dataset.stickerAnalyze}/analyze`, {}); if (epoch === state.epoch) await stickerPanel(epoch); }
+        catch (error) { if (error.name !== 'AbortError' && epoch === state.epoch) $('#stickers-error').textContent = errorText(error); button.disabled = false; }
+      }; });
       $$('[data-sticker-edit]', panel).forEach(button => { button.onclick = () => editSticker(data.stickers.find(s => s.id === button.dataset.stickerEdit), epoch); });
       $$('[data-sticker-delete]', panel).forEach(button => { button.onclick = () => {
         const sticker = data.stickers.find(s => s.id === button.dataset.stickerDelete);
@@ -466,6 +471,13 @@
       }; });
     };
     render(); $('#sticker-search').oninput = render;
+    const pollAnalysis = async () => {
+      try { const latest = await api('/v1/stickers'); if (epoch !== state.epoch) return; data.stickers = latest.stickers; render(); }
+      catch (error) { if (error.name === 'AbortError' || epoch !== state.epoch) return; }
+      if (data.stickers.some(s => s.analysis_status === 'pending')) state.poll = setTimeout(pollAnalysis, 2000);
+    };
+    clearTimeout(state.poll);
+    if (data.stickers.some(s => s.analysis_status === 'pending')) state.poll = setTimeout(pollAnalysis, 2000);
     $('#add-sticker').onclick = () => editSticker(null, epoch);
     $('#stickers-enabled').onchange = async event => {
       const input = event.target; input.disabled = true; $('#stickers-error').textContent = '';
@@ -475,27 +487,27 @@
     };
   }
   function editSticker(sticker, epoch) {
-    const dialog = openDialog('editor', `<form id="sticker-form"><header class="dialog-head"><div><div class="eyebrow">YOUR EXPRESSIONS</div><h2>${sticker ? '编辑表情包' : '添加你的表情包'}</h2></div><button type="button" class="icon-btn" data-close="editor" aria-label="关闭">${icon('close')}</button></header><div class="dialog-body stack">${sticker ? '' : '<label class="field">选择图片<input type="file" id="sticker-files" accept="image/png,image/jpeg,image/webp,image/gif" multiple required><span class="hint">可一次选择多张，每张不超过 8 MiB；GIF 会保留动效。</span></label>'}<div id="sticker-editor-items" class="stack"></div><p class="hint">名字与使用场景供 Agent 选择表情。例如：名字“抱抱”，场景“安慰、鼓励，表达陪伴”。</p><div class="error-inline" id="sticker-editor-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="editor">取消</button><button type="submit" class="btn primary">${sticker ? '保存表情包' : '上传表情包'}</button></footer></form>`);
+    const dialog = openDialog('editor', `<form id="sticker-form"><header class="dialog-head"><div><div class="eyebrow">YOUR EXPRESSIONS</div><h2>${sticker ? '编辑表情包' : '添加你的表情包'}</h2></div><button type="button" class="icon-btn" data-close="editor" aria-label="关闭">${icon('close')}</button></header><div class="dialog-body stack">${sticker ? '' : '<label class="field">选择图片<input type="file" id="sticker-files" accept="image/png,image/jpeg,image/webp,image/gif" multiple required><span class="hint">可一次选择多张，每张不超过 8 MiB；GIF 会保留动效。</span></label>'}<div id="sticker-editor-items" class="stack"></div><p class="hint">${sticker ? '下面是识别结果，可按需要修正；保存后采用你的描述。' : '上传后自动识别画面、文案、情绪和使用场景，无需填写标签。识别会在后台继续，关闭页面也不影响。'}</p><div class="error-inline" id="sticker-editor-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="editor">取消</button><button type="submit" class="btn primary">${sticker ? '保存表情包' : '上传表情包'}</button></footer></form>`);
     let files = []; let previews = [];
-    const fields = (name, description, src, enabled = true) => `<div class="sticker-editor-item"><img src="${esc(src)}" alt="表情预览"><div class="stack"><label class="field">名字<input name="sticker_name" maxlength="40" required value="${esc(name)}"></label><label class="field">使用场景 / 情绪标签<textarea name="sticker_description" maxlength="120" rows="2" placeholder="例如：开心、庆祝、打招呼">${esc(description)}</textarea></label><label class="check-label"><input name="sticker_enabled" type="checkbox" ${enabled ? 'checked' : ''}>允许使用这张表情</label></div></div>`;
+    const fields = (name, description, src, enabled = true) => `<div class="sticker-editor-item"><img src="${esc(src)}" alt="表情预览"><div class="stack"><label class="field">名字<input name="sticker_name" maxlength="40" required value="${esc(name)}"></label><label class="field">识别描述（可选修正）<textarea name="sticker_description" maxlength="120" rows="2" placeholder="例如：开心、庆祝、打招呼">${esc(description)}</textarea></label><label class="check-label"><input name="sticker_enabled" type="checkbox" ${enabled ? 'checked' : ''}>允许使用这张表情</label></div></div>`;
     if (sticker) $('#sticker-editor-items').innerHTML = fields(sticker.name, sticker.description, `/v1/sticker-images/${sticker.image_id}`, sticker.enabled);
     else $('#sticker-files').onchange = event => {
       previews.forEach(url => { URL.revokeObjectURL(url); objectURLs.delete(url); }); previews = [];
       files = [...event.target.files]; const error = $('#sticker-editor-error'); error.textContent = '';
       if (files.length > 50 || files.some(f => f.size > 8 * 1024 * 1024 || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(f.type))) { files = []; event.target.value = ''; error.textContent = '请选择 PNG、JPEG、WebP 或 GIF，每张不超过 8 MiB，最多 50 张。'; }
-      $('#sticker-editor-items').innerHTML = files.map(file => { const url = URL.createObjectURL(file); objectURLs.add(url); previews.push(url); return fields(file.name.replace(/\.[^.]+$/, '').slice(0, 40), '', url); }).join('');
+      $('#sticker-editor-items').innerHTML = files.map(file => { const url = URL.createObjectURL(file); objectURLs.add(url); previews.push(url); return `<div class="sticker-editor-item"><img src="${esc(url)}" alt="表情预览"><div class="stack"><strong>${esc(file.name)}</strong><p class="hint">上传后自动识别</p><label class="check-label"><input name="sticker_enabled" type="checkbox" checked>识别完成后允许使用</label></div></div>`; }).join('');
     };
     $('#sticker-form').onsubmit = async event => {
       event.preventDefault(); const form = event.target; const button = $('button[type=submit]', form); const error = $('#sticker-editor-error'); error.textContent = '';
-      const items = $$('.sticker-editor-item', form).map(el => ({ name: $('[name=sticker_name]', el).value.trim(), description: $('[name=sticker_description]', el).value.trim(), enabled: $('[name=sticker_enabled]', el).checked }));
-      if (!items.length || items.some(item => !item.name)) return;
+      const items = $$('.sticker-editor-item', form).map(el => ({ name: $('[name=sticker_name]', el)?.value.trim() || '', description: $('[name=sticker_description]', el)?.value.trim() || '', enabled: $('[name=sticker_enabled]', el).checked }));
+      if (!items.length || (sticker && items.some(item => !item.name))) return;
       $$('input,textarea,button', form).forEach(el => { el.disabled = true; });
       let completed = 0;
       try {
         if (sticker) await send(`/v1/stickers/${sticker.id}`, items[0], 'PUT');
-        else for (let i = 0; i < files.length; i++) { button.textContent = `正在上传 ${i + 1} / ${files.length}…`; await api(`/v1/stickers?${new URLSearchParams(items[i])}`, { method: 'POST', body: files[i], headers: { 'Content-Type': 'application/octet-stream' } }); completed++; }
+        else for (let i = 0; i < files.length; i++) { button.textContent = `正在上传 ${i + 1} / ${files.length}…`; await api(`/v1/stickers?${new URLSearchParams({ enabled: items[i].enabled })}`, { method: 'POST', body: files[i], headers: { 'Content-Type': 'application/octet-stream' } }); completed++; }
         previews.forEach(url => { URL.revokeObjectURL(url); objectURLs.delete(url); });
-        closeDialog('editor'); if (epoch === state.epoch) { await stickerPanel(epoch); toast(sticker ? '表情包已保存。' : `已添加 ${completed} 张表情包，所有渠道均可使用。`); }
+        closeDialog('editor'); if (epoch === state.epoch) { await stickerPanel(epoch); toast(sticker ? '表情包已保存。' : `已添加 ${completed} 张表情包，正在后台自动识别。`); }
       } catch (failure) {
         if (failure.name !== 'AbortError' && epoch === state.epoch) {
           error.textContent = `${completed ? `已上传 ${completed} 张，剩余图片未完成。` : ''}${errorText(failure)}`;

@@ -141,7 +141,7 @@ pub struct Llm {
     context_tokens: usize,
     json_schema: bool,
     store: Option<crate::store::Store>,
-    scope: Option<(String, String)>,
+    scope: Option<(Option<String>, String)>,
     stream_usage: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub metrics: std::sync::Arc<crate::telemetry::Metrics>,
 }
@@ -177,14 +177,19 @@ impl Llm {
     }
     pub(crate) fn for_turn(&self, turn: &str, purpose: &str) -> Self {
         let mut scoped = self.clone();
-        scoped.scope = Some((turn.to_owned(), purpose.to_owned()));
+        scoped.scope = Some((Some(turn.to_owned()), purpose.to_owned()));
+        scoped
+    }
+    pub(crate) fn for_purpose(&self, purpose: &str) -> Self {
+        let mut scoped = self.clone();
+        scoped.scope = Some((None, purpose.into()));
         scoped
     }
     async fn start_request(&self, context: &crate::usage::ContextTokens) -> Result<String> {
         if let Some(store) = &self.store {
             store
                 .start_model_request(
-                    self.scope.as_ref().map(|s| s.0.as_str()),
+                    self.scope.as_ref().and_then(|s| s.0.as_deref()),
                     self.scope
                         .as_ref()
                         .map(|s| s.1.as_str())
@@ -214,6 +219,35 @@ impl Llm {
 
     pub async fn complete_json(&self, system: &str, input: Value) -> Result<Value> {
         self.complete_json_with_tokens(system, input, 2500).await
+    }
+    pub(crate) async fn describe_image(
+        &self,
+        system: &str,
+        image: &crate::assets::ImageData,
+    ) -> Result<Value> {
+        let messages = json!([
+            {"role":"system","content":system},
+            {"role":"user","content":[
+                {"type":"text","text":"请识别这张表情包。若有多格，按从左到右的首、中、末帧理解动作；只描述实际可见的内容。"},
+                {"type":"image_url","image_url":{"url":format!("data:{};base64,{}",image.mime,image.data)}}
+            ]}
+        ]);
+        let context = crate::usage::ContextTokens::from_wire(messages.as_array().unwrap(), None);
+        ensure!(
+            context.total() + 768 <= self.context_tokens,
+            "image request exceeds token budget"
+        );
+        let start = std::time::Instant::now();
+        let result = async {
+            let response = self.json_request(&json!({"model":self.model,"temperature":0,"max_tokens":768,"stream":false,"messages":messages})).await?;
+            ensure!(response["choices"][0]["finish_reason"] == "stop", "incomplete image description");
+            let content = response["choices"][0]["message"]["content"].as_str().ok_or_else(|| anyhow::anyhow!("missing image description"))?;
+            let text = content.trim().strip_prefix("```json").or_else(|| content.trim().strip_prefix("```"))
+                .map(|s| s.trim().strip_suffix("```").unwrap_or(s).trim()).unwrap_or(content.trim());
+            Ok::<Value, anyhow::Error>(serde_json::from_str(text)?)
+        }.await;
+        self.metrics.record(start, result.is_ok());
+        result
     }
     pub(crate) async fn complete_json_with_tokens(
         &self,

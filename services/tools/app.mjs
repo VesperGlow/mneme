@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { BrowserTools } from './browser.mjs';
 import { ToolError } from './security.mjs';
-import { normalizeImage, fetchImage } from './images.mjs';
+import { normalizeImage, fetchImage, stickerPreview } from './images.mjs';
 
 sharp.concurrency(1);
 sharp.cache({ memory: 16, files: 0, items: 0 });
@@ -25,7 +25,7 @@ export async function createServer({ token, browser = new BrowserTools(), eager 
     const expected = Buffer.from(token);
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return reply.code(401).send({ error: 'unauthorized' });
     if (request.headers['sec-fetch-site'] === 'cross-site') return reply.code(403).send({ error: 'cross_site_request' });
-    if (['/v1/execute','/v1/images/normalize','/v1/stickers/normalize','/v1/images/fetch'].includes(request.url)) {
+    if (['/v1/execute','/v1/images/normalize','/v1/stickers/normalize','/v1/stickers/preview','/v1/images/fetch'].includes(request.url)) {
       if (active >= 4) throw new ToolError('tools_busy', 429);
       active++; request.counted = true;
     }
@@ -54,6 +54,7 @@ export async function createServer({ token, browser = new BrowserTools(), eager 
   app.post('/v1/reset', async () => { await browser.reset(); return { reset: true }; });
   app.post('/v1/images/normalize', { bodyLimit: 8 * 1024 * 1024 }, async request => normalizeImage(request.body));
   app.post('/v1/stickers/normalize', { bodyLimit: 8 * 1024 * 1024 }, async request => normalizeImage(request.body, true));
+  app.post('/v1/stickers/preview', { bodyLimit: 2 * 1024 * 1024 }, async request => stickerPreview(request.body));
   app.post('/v1/images/fetch', { schema: { body: { type: 'object', additionalProperties: false, required: ['url'], properties: { url: { type: 'string', maxLength: 4096 } } } } }, async request => fetchImage(request.body.url));
   app.addHook('onClose', async () => browser.close());
   if (eager) await browser.start();

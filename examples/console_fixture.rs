@@ -141,6 +141,7 @@ async fn main() -> anyhow::Result<()> {
             .await?;
     }
     let worker = tokio::spawn(mneme::memory::worker(app.clone()));
+    let sticker_worker = tokio::spawn(mneme::stickers::worker(app.clone()));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:18080").await?;
     println!("Console QA fixture: http://127.0.0.1:18080/console/");
     axum::serve(listener, mneme::api::router(app))
@@ -150,6 +151,7 @@ async fn main() -> anyhow::Result<()> {
         })
         .await?;
     worker.await?;
+    sticker_worker.await?;
     upstream.abort();
     Ok(())
 }

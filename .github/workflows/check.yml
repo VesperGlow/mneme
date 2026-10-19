@@ -3,12 +3,27 @@ on: [push, pull_request, workflow_dispatch]
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  changes:
+    name: Image build plan
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/image-plan.py
+
   rust:
     name: Checks
     runs-on: ubuntu-24.04
@@ -38,13 +53,13 @@ jobs:
           cache: npm
           cache-dependency-path: services/tools/package-lock.json
       - run: npm ci --prefix services/tools --no-audit --no-fund
-      - run: node --check web/app.js && node --check scripts/console-browser-test.cjs
+      - run: node --check web/app.js && node --check scripts/console-browser-test.cjs && node --check scripts/stickers-browser-test.cjs
       - run: node --test services/tools/test/*.test.mjs
       - run: for file in services/tools/*.mjs scripts/smoke-tools.mjs; do node --check "$file"; done
 
   containers:
     name: Container / ${{ matrix.image }} / amd64
-    needs: rust
+    needs: [rust, changes]
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -52,17 +67,7 @@ jobs:
       packages: write
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - image: mneme
-            suffix: '-api'
-            file: Containerfile
-          - image: mneme-tools
-            suffix: '-tools'
-            file: services/tools/Containerfile
-          - image: mneme-models
-            suffix: '-models'
-            file: services/models/Containerfile
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - name: Image name
@@ -78,7 +83,30 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Choose build or reuse
+        id: mode
+        env:
+          BUILD: ${{ matrix.build }}
+          IMAGE: ${{ steps.image.outputs.name }}
+        run: |
+          if [ "$BUILD" = true ] || ! docker buildx imagetools inspect "$IMAGE:latest" >/dev/null 2>&1; then
+            echo 'build=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'build=false' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Reuse unchanged image
+        if: steps.mode.outputs.build == 'false' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ steps.image.outputs.name }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          mneme_source_manifest=$(docker buildx imagetools inspect --raw "$IMAGE:latest" | sha256sum)
+          docker buildx imagetools create --prefer-index=false --tag "$IMAGE:sha-$COMMIT_SHA" "$IMAGE:latest"
+          mneme_reused_manifest=$(docker buildx imagetools inspect --raw "$IMAGE:sha-$COMMIT_SHA" | sha256sum)
+          test "$mneme_source_manifest" = "$mneme_reused_manifest"
+          printf '### %s reused\n\nImage inputs are unchanged; no layers were rebuilt or downloaded.\n' "$IMAGE" >> "$GITHUB_STEP_SUMMARY"
       - name: Build amd64 image
+        if: steps.mode.outputs.build == 'true'
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -96,6 +124,7 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}-amd64
           cache-to: type=gha,mode=max,scope=${{ matrix.image }}-amd64
       - name: Verify architecture and save Podman-compatible archive
+        if: steps.mode.outputs.build == 'true'
         env:
           IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
           ARCHIVE: ${{ matrix.image }}-linux-amd64.tar.gz
@@ -106,6 +135,7 @@ jobs:
           cd dist
           sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
       - name: Verify archive and runtime with Podman
+        if: steps.mode.outputs.build == 'true'
         env:
           IMAGE: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
           SERVICE: ${{ matrix.image }}
@@ -144,6 +174,7 @@ jobs:
             test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/console/)" = 404
           fi
       - uses: actions/upload-artifact@v4
+        if: steps.mode.outputs.build == 'true'
         with:
           name: ${{ matrix.image }}-linux-amd64
           path: dist/*
@@ -151,7 +182,7 @@ jobs:
           compression-level: 0
           retention-days: 7
       - name: Publish to GHCR
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: steps.mode.outputs.build == 'true' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           IMAGE: ${{ steps.image.outputs.name }}
           COMMIT_SHA: ${{ github.sha }}

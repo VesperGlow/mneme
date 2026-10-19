@@ -95,7 +95,7 @@ python3 scripts/chat.py
 
 可在 Console 的 **Agent 页** 中修改名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话立即生效，重启后保留。输出格式可填写回复结构、Markdown 等要求，留空表示不额外约束。初始人格来自 `~/.config/mneme/config.toml` 的 `[persona]`；WebUI 保存的设置优先于文件，可用“填入配置文件默认值”后保存来恢复。人格指令每轮重新加入，不依赖可能被裁剪的历史消息。
 
-Agent 页还可批量上传自己的 PNG、JPEG、WebP、GIF 表情包，按名字与情绪 / 使用场景管理、搜索和启停。表情库全局共享，网页、QQ 和 API 回复均可按语境选用，重启和重置对话后保留。QQ 同时支持接收图文 / 纯图片并交给现有多模态模型理解，也能回复表情包、已有图片和工具截图。上传与 QQ 看图需运行工具服务；配置与限制见 [Console 表情包说明](docs/console.md#自定义表情包) 和 [QQ 图片说明](docs/qq.md#图片与自定义表情包)。
+Agent 页还可批量上传自己的 PNG、JPEG、WebP、GIF 表情包，上传后由当前多模态聊天模型自动理解画面、文案、动作与适用场景，无需手动打标签；支持搜索、启停和可选修正。表情库全局共享，网页、QQ 和 API 回复均可按语境选用，重启和重置对话后保留。QQ 同时支持接收图文 / 纯图片并交给现有多模态模型理解，也能回复表情包、已有图片和工具截图。上传与 QQ 看图需运行工具服务；配置与限制见 [Console 表情包说明](docs/console.md#自定义表情包) 和 [QQ 图片说明](docs/qq.md#图片与自定义表情包)。
 
 ## Mneme Console
 
@@ -176,9 +176,9 @@ SQLite 备份已经包含所有重建记忆和图谱所需的信息。配置/密
 
 ## 开发与验证
 
-GitHub 的 [build 工作流](https://github.com/VesperGlow/mneme/actions/workflows/check.yml) 在推送、Pull Request 或手动触发时执行格式检查、Clippy 和测试，通过后构建 API、模型、工具三个 `linux/amd64` 镜像。Rust Release 二进制和内嵌 Console 均封装在 API 镜像内。只有 `main` 分支的推送或手动构建会发布 GHCR，标签为 `latest` 和 `sha-完整提交SHA`；Pull Request 仅验证构建。
+GitHub 的 [build 工作流](https://github.com/VesperGlow/mneme/actions/workflows/check.yml) 在推送、Pull Request 或手动触发时执行格式检查、Clippy 和测试，再按镜像输入变化构建对应的 `linux/amd64` 镜像：Rust / WebUI / 迁移改动只构建 API，工具服务改动构建 tools，模型服务 / 权重清单 / 依赖改动才构建 models。比较基准是上一次成功发布，避免遗漏失败或取消的发布；手动触发会完整构建。未变的镜像复用现有内容，只补当前提交的 `sha-完整提交SHA` 标签，保留统一版本部署，不重新导出或上传模型层。Rust Release 二进制和内嵌 Console 均封装在 API 镜像内。只有 `main` 分支的推送或手动构建会发布 GHCR，标签为 `latest` 和 `sha-完整提交SHA`；Pull Request 仅验证构建。
 
-每次构建还提供 `mneme-linux-amd64`、`mneme-models-linux-amd64` 和 `mneme-tools-linux-amd64` 三份镜像归档及 SHA-256 文件，Artifacts 保留 7 天。下载解压 GitHub Artifact ZIP 后，可离线导入（将 `完整提交SHA` 替换为该次运行的 SHA）：
+每次构建只为实际重新构建的服务提供对应的 `mneme-linux-amd64`、`mneme-models-linux-amd64` 或 `mneme-tools-linux-amd64` 镜像归档及 SHA-256 文件，Artifacts 保留 7 天。下载解压 GitHub Artifact ZIP 后，可离线导入（将 `完整提交SHA` 替换为该次运行的 SHA）：
 
 ```bash
 sha256sum -c mneme-linux-amd64.tar.gz.sha256
@@ -191,7 +191,7 @@ export MNEME_IMAGE_TAG=sha-完整提交SHA
 bash scripts/install.sh
 ```
 
-归档内使用同一 SHA 标签，无需 GHCR 登录，模型归档已包含全部模型文件。拉取 Neo4j 和访问外部 LLM 仍需要网络。更新时先拉取目标版本，再安装对应 Quadlet 并执行 `systemctl --user restart mneme.target`；脚本保留配置和持久卷。
+归档内使用同一 SHA 标签，无需 GHCR 登录，模型归档已包含全部模型文件。拉取 Neo4j 和访问外部 LLM 仍需要网络。日常更新可直接运行 `bash scripts/update.sh api tools`，只拉取并重启指定服务，模型容器和其版本保持不变；只改 Agent / WebUI 时用 `bash scripts/update.sh api`。不带参数表示更新全部服务；首次安装或变更 Pod / 公共单元仍使用 `scripts/start.sh`。`pull.sh`、`build.sh`、`install.sh` 也接受 `api`、`tools`、`models` 参数。脚本保留配置和持久卷。复用的未变镜像没有本次新归档；离线部署时保留之前已导入的镜像，或从此前的成功构建获取对应归档。
 
 ```bash
 cargo fmt --all -- --check

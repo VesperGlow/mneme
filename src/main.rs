@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
     }
     let worker = tokio::spawn(mneme::memory::worker(app.clone()));
     let qq_worker = tokio::spawn(mneme::qq::worker(app.clone()));
+    let sticker_worker = tokio::spawn(mneme::stickers::worker(app.clone()));
     let mut qq_shutdown = shutdown_rx.clone();
     let qq_server = qq_listener.map(|listener| {
         let router = mneme::qq::router(app.clone());
@@ -73,6 +74,7 @@ async fn main() -> Result<()> {
     let _ = tokio::time::timeout(Duration::from_secs(15), async {
         let _ = worker.await;
         let _ = qq_worker.await;
+        let _ = sticker_worker.await;
         if let Some(server) = qq_server {
             let _ = server.await;
         }

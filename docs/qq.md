@@ -50,7 +50,7 @@ Console 的“Agent → QQ 机器人”显示个人会话和投递队列，用�
 
 启用 `MNEME_TOOLS_ENABLED=true`，确保工具服务运行，并配置支持 `image_url` 的多模态聊天模型。QQ 私聊接收 PNG、JPEG、WebP、GIF（每条最多 4 张，每张不超过 8 MiB），纯图片消息也会进入对话。Webhook 在保存附件地址后立即 ACK，由队列下载、验证并转为 JPEG，再与文字一起送入模型；GIF 看图使用首帧。下载逐跳验证公网地址并固定解析 IP，禁止内部网络、携带凭证的地址和超限响应。无法读取时会明确提示重新发送，不声称看到了图片。
 
-在 **Agent → 自定义表情包** 上传自己的素材、填写使用场景，Agent 即可在 QQ 与网页回复中共用。表情动图保留原格式与动画；QQ 最终展示效果由平台决定。Agent 还可以按用户要求发送当前对话中已上传的图片或工具截图。通过 QQ 的 `POST /v2/users/{openid}/files` 上传 Base64 数据，再用 `msg_type=7` 与 `media.file_info` 发送；无需公开 Console 图片地址。协议参考 [腾讯官方 SDK 的媒体说明](https://github.com/tencent-connect/qqbot-nodejs/blob/main/USAGE.md#10-媒体上传与发送)。
+在 **Agent → 自定义表情包** 上传自己的素材，由模型自动理解内容和使用场景，Agent 即可在 QQ 与网页回复中共用。表情动图保留原格式与动画；QQ 最终展示效果由平台决定。Agent 还可以按用户要求发送当前对话中已上传的图片或工具截图。通过 QQ 的 `POST /v2/users/{openid}/files` 上传 Base64 数据，再用 `msg_type=7` 与 `media.file_info` 发送；无需公开 Console 图片地址。协议参考 [腾讯官方 SDK 的媒体说明](https://github.com/tencent-connect/qqbot-nodejs/blob/main/USAGE.md#10-媒体上传与发送)。
 
 文字最多四段，文字加图片合计最多五条。图片失败后复用已保存的回复与媒体，从原 `msg_seq` 继续投递；不会重复生成回复或重发已经确认成功的文字。重启也保留这一进度。未收到平台成功响应的请求仍依赖 QQ 按 `msg_id + msg_seq` 去重。
 
