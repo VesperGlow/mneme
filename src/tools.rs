@@ -269,7 +269,14 @@ fn safe_url(input: &str) -> String {
         })
         .unwrap_or_default()
 }
-pub fn bounded_result(mut value: Value, limit: usize) -> Value {
+pub fn bounded_result(value: Value, limit: usize) -> Value {
+    bounded_result_with(&crate::tokens::Counter::default(), value, limit)
+}
+pub fn bounded_result_with(
+    counter: &crate::tokens::Counter,
+    mut value: Value,
+    limit: usize,
+) -> Value {
     if let Some(text) = value.get_mut("text") {
         *text = json!(truncate(text.as_str().unwrap_or(""), 3000));
     }
@@ -283,7 +290,7 @@ pub fn bounded_result(mut value: Value, limit: usize) -> Value {
             }
         }
     }
-    while value.to_string().chars().count() > limit {
+    while counter.count(&value.to_string()) > limit {
         let mut reduced = false;
         for field in ["elements", "links", "results"] {
             if let Some(items) = value.get_mut(field).and_then(Value::as_array_mut)
@@ -305,12 +312,12 @@ pub fn bounded_result(mut value: Value, limit: usize) -> Value {
             break;
         }
     }
-    if value.to_string().chars().count() > limit {
+    if counter.count(&value.to_string()) > limit {
         let url = value["url"]
             .as_str()
-            .filter(|url| url.chars().count() < limit / 3)
+            .filter(|url| counter.count(url) < limit / 3)
             .unwrap_or("");
-        let text = truncate(value["text"].as_str().unwrap_or(""), limit / 3);
+        let text = counter.truncate(value["text"].as_str().unwrap_or(""), limit / 3);
         return json!({"url":url,"text":text,"asset_id":value["asset_id"],"error":value["error"],"truncated":true});
     }
     value

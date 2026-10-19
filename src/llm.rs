@@ -139,6 +139,7 @@ pub struct Llm {
     temperature: f32,
     max_tokens: u32,
     context_tokens: usize,
+    tokens: crate::tokens::Counter,
     json_schema: bool,
     store: Option<crate::store::Store>,
     scope: Option<(Option<String>, String)>,
@@ -163,6 +164,10 @@ impl Llm {
             temperature: config.llm.temperature,
             max_tokens: config.llm.max_tokens,
             context_tokens: config.llm.context_tokens,
+            tokens: crate::tokens::Counter::new(
+                &config.llm.model,
+                config.llm.tokenizer_path.as_deref(),
+            )?,
             json_schema: config.llm.json_schema,
             store: None,
             scope: None,
@@ -216,6 +221,17 @@ impl Llm {
         }
         Ok(())
     }
+    async fn emit_turn_usage(&self, output: &mpsc::Sender<Event>) -> Result<()> {
+        if let (Some(store), Some((Some(turn), _))) = (&self.store, &self.scope) {
+            let requests = store.turn_model_requests(turn).await?;
+            emit(
+                output,
+                "turn_usage",
+                json!({"turn_id":turn,"usage":crate::usage::aggregate(&requests)}),
+            )?;
+        }
+        Ok(())
+    }
 
     pub async fn complete_json(&self, system: &str, input: Value) -> Result<Value> {
         self.complete_json_with_tokens(system, input, 2500).await
@@ -232,7 +248,11 @@ impl Llm {
                 {"type":"image_url","image_url":{"url":format!("data:{};base64,{}",image.mime,image.data)}}
             ]}
         ]);
-        let context = crate::usage::ContextTokens::from_wire(messages.as_array().unwrap(), None);
+        let context = crate::usage::ContextTokens::from_wire_with(
+            &self.tokens,
+            messages.as_array().unwrap(),
+            None,
+        );
         ensure!(
             context.total() + 768 <= self.context_tokens,
             "image request exceeds token budget"
@@ -285,12 +305,12 @@ impl Llm {
         let schema_tokens = schema
             .as_ref()
             .filter(|_| self.json_schema)
-            .map(|s| crate::tokens::count(&s.to_string()) + 64)
+            .map(|s| self.tokens.count(&s.to_string()) + 64)
             .unwrap_or(0);
         ensure!(
             schema_tokens
-                + crate::tokens::message(system)
-                + crate::tokens::message(&input.to_string())
+                + self.tokens.message(system)
+                + self.tokens.message(&input.to_string())
                 + 3
                 + max_tokens as usize
                 <= self.context_tokens,
@@ -321,13 +341,20 @@ impl Llm {
         Ok(serde_json::from_str(text)?)
     }
     async fn json_request(&self, body: &Value) -> Result<Value> {
-        let mut context =
-            crate::usage::ContextTokens::from_wire(body["messages"].as_array().unwrap(), None);
+        let mut context = crate::usage::ContextTokens::from_wire_with(
+            &self.tokens,
+            body["messages"].as_array().unwrap(),
+            None,
+        );
         context.tools += body
             .get("response_format")
-            .map(|s| crate::tokens::count(&s.to_string()) + 64)
+            .map(|s| self.tokens.count(&s.to_string()) + 64)
             .unwrap_or(0);
         let id = self.start_request(&context).await?;
+        let guard = crate::usage::RequestGuard::new(self.store.clone(), Some(&id));
+        let mut usage = crate::usage::TokenUsage::default();
+        usage.estimate_input(context.total(), &self.tokens);
+        self.save_request(&id, &usage, "", "running").await?;
         let result = async {
             let response = self
                 .client
@@ -342,17 +369,32 @@ impl Llm {
             )?)
         }
         .await;
-        let mut usage = crate::usage::TokenUsage::default();
+        let mut reasoning = String::new();
         if let Ok(value) = &result {
             usage.update(value);
+            let message = &value["choices"][0]["message"];
+            reasoning = reasoning_deltas(message).join("");
+            if message.is_object() {
+                usage.estimate_output(
+                    self.tokens.wire_message(message).saturating_sub(5)
+                        + self.tokens.count(&reasoning)
+                        - message["reasoning_content"]
+                            .as_str()
+                            .map(|s| self.tokens.count(s))
+                            .unwrap_or(0),
+                    (!reasoning.is_empty()).then(|| self.tokens.count(&reasoning)),
+                    true,
+                );
+            }
         }
         self.save_request(
             &id,
             &usage,
-            "",
+            &reasoning,
             if result.is_ok() { "complete" } else { "failed" },
         )
         .await?;
+        guard.finish();
         result
     }
 
@@ -401,7 +443,9 @@ impl Llm {
         output: &mpsc::Sender<Event>,
     ) -> Result<String> {
         let messages = messages.iter().map(|m| json!(m)).collect::<Vec<_>>();
-        Ok(self
+        let scoped = self.scope.is_none().then(|| self.for_purpose("chat"));
+        let llm = scoped.as_ref().unwrap_or(self);
+        Ok(llm
             .round_inner(&messages, None, false, output)
             .await?
             .content)
@@ -430,24 +474,28 @@ impl Llm {
         ensure!(
             3 + messages
                 .iter()
-                .map(crate::tokens::wire_message)
+                .map(|m| self.tokens.wire_message(m))
                 .sum::<usize>()
                 + tools
-                    .map(|t| crate::tokens::count(&t.to_string()) + 20)
+                    .map(|t| self.tokens.count(&t.to_string()) + 20)
                     .unwrap_or(0)
                 + self.max_tokens as usize
                 <= self.context_tokens,
             "model request exceeds token budget"
         );
-        let context = crate::usage::ContextTokens::from_wire(messages, tools);
+        let context = crate::usage::ContextTokens::from_wire_with(&self.tokens, messages, tools);
         let id = self.start_request(&context).await?;
+        let guard = crate::usage::RequestGuard::new(self.store.clone(), Some(&id));
         emit(
             output,
             "context",
-            json!({"request_id":id,"context":context,"estimated_input_tokens":context.total(),"tokens_estimated":true}),
+            json!({"request_id":id,"model":self.model,"purpose":self.scope.as_ref().map(|s|&s.1),"context":context,"estimated_input_tokens":context.total(),"tokens_estimated":true,"tokenizer":self.tokens.name,"tokenizer_model_matched":self.tokens.model_matched}),
         )?;
         let mut usage = crate::usage::TokenUsage::default();
+        usage.estimate_input(context.total(), &self.tokens);
+        self.save_request(&id, &usage, "", "running").await?;
         let mut reasoning = String::new();
+        let mut observed_output = String::new();
         let result = self
             .read_round(
                 messages,
@@ -457,8 +505,16 @@ impl Llm {
                 &id,
                 &mut usage,
                 &mut reasoning,
+                &mut observed_output,
             )
             .await;
+        if result.is_ok() || !observed_output.is_empty() || !reasoning.is_empty() {
+            usage.estimate_output(
+                self.tokens.count(&observed_output) + self.tokens.count(&reasoning),
+                (!reasoning.is_empty()).then(|| self.tokens.count(&reasoning)),
+                result.is_ok(),
+            );
+        }
         self.save_request(
             &id,
             &usage,
@@ -466,11 +522,13 @@ impl Llm {
             if result.is_ok() { "complete" } else { "failed" },
         )
         .await?;
+        guard.finish();
         emit(
             output,
             "usage",
             json!({"request_id":id,"usage":usage,"status":if result.is_ok(){"complete"}else{"failed"}}),
         )?;
+        self.emit_turn_usage(output).await?;
         result
     }
     #[allow(clippy::too_many_arguments)]
@@ -483,6 +541,7 @@ impl Llm {
         id: &str,
         usage: &mut crate::usage::TokenUsage,
         reasoning: &mut String,
+        observed_output: &mut String,
     ) -> Result<Completion> {
         let mut body = json!({"model":self.model,"messages":messages,"temperature":self.temperature,"max_tokens":self.max_tokens,"stream":true,"stream_options":{"include_usage":true}});
         if !self.stream_usage.load(std::sync::atomic::Ordering::Relaxed) {
@@ -605,6 +664,7 @@ impl Llm {
                 finish = reason.into();
             }
             if let Some(delta) = chunk["choices"][0]["delta"]["content"].as_str() {
+                observed_output.push_str(delta);
                 ensure!(
                     content.len() + delta.len() <= 128_000,
                     "completion exceeds byte limit"
@@ -655,9 +715,11 @@ impl Llm {
                     }
                     if let Some(name) = delta["function"]["name"].as_str() {
                         call.function.name.push_str(name);
+                        observed_output.push_str(name);
                     }
                     if let Some(arguments) = delta["function"]["arguments"].as_str() {
                         call.function.arguments.push_str(arguments);
+                        observed_output.push_str(arguments);
                     }
                     ensure!(
                         call.id.len() <= 128

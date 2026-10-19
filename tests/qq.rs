@@ -80,6 +80,8 @@ async fn platform() -> (Platform, String, tokio::task::JoinHandle<()>) {
 }
 fn config(temp: &tempfile::TempDir, base: &str, qq_base: &str) -> Config {
     let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    c.memory.verify_recall = false;
     c.api_token = TOKEN.into();
     c.llm_key = "fixture".into();
     c.neo4j_password = "fixture-only".into();
@@ -92,7 +94,7 @@ fn config(temp: &tempfile::TempDir, base: &str, qq_base: &str) -> Config {
     c.qq.api_base = qq_base.into();
     c.qq.token_url = format!("{qq_base}/app/getAppAccessToken");
     c.memory.poll_seconds = 1;
-    c.memory.extract_every_chars = 1;
+    c.memory.extract_every_tokens = 1;
     c.validate().unwrap();
     c
 }

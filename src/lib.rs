@@ -31,6 +31,7 @@ pub struct App {
     pub store: store::Store,
     pub llm: llm::Llm,
     pub models: models::Models,
+    pub tokens: tokens::Counter,
     pub graph: graph::Graph,
     pub generation_slots: Arc<tokio::sync::Semaphore>,
     pub shutdown: tokio::sync::watch::Receiver<bool>,
@@ -51,7 +52,8 @@ impl App {
         shutdown: tokio::sync::watch::Receiver<bool>,
     ) -> anyhow::Result<Self> {
         let mut store = store::Store::open(&config.database).await?;
-        store.extract_every_chars = config.memory.extract_every_chars;
+        store.extract_every_tokens = config.memory.extract_every_tokens;
+        store.extract_max_delay_seconds = config.memory.extract_max_delay_seconds;
         store.recover().await?;
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions)")
             .fetch_one(&store.pool)
@@ -81,6 +83,8 @@ impl App {
                     .await?;
             }
         }
+        let tokens = tokens::Counter::new(&config.llm.model, config.llm.tokenizer_path.as_deref())?;
+        store.tokens = tokens.clone();
         Ok(Self {
             tools: if config.tools.enabled {
                 Some(tools::Client::new(&config.tools)?)
@@ -88,7 +92,8 @@ impl App {
                 None
             },
             llm: llm::Llm::new(&config)?.tracked(store.clone()),
-            models: models::Models::new(&config)?,
+            models: models::Models::new(&config)?.tracked(store.clone()),
+            tokens,
             graph: graph::Graph::new(&config)?,
             qq: if config.qq.enabled() {
                 Some(qq::Client::new(&config.qq)?)

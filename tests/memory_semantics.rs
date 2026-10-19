@@ -18,6 +18,8 @@ async fn real_model_semantics() {
     .unwrap();
     let temp = tempfile::TempDir::new().unwrap();
     let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    c.memory.verify_recall = false;
     c.database = temp.path().join("db").to_str().unwrap().into();
     c.api_token = "memory-evaluation-only-01234567890123456789".into();
     c.llm_key = "unused".into();

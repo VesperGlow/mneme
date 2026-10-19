@@ -63,7 +63,7 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                     return Json(json!({"choices":[{"message":{"content":json!({"name":"开心表情","description":"画面表现开心与庆祝，适合高兴时回应。"}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1100,"completion_tokens":40,"total_tokens":1140}})).into_response();
                 }
                 let input:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
-                if input.get("max_chars").is_some() {
+                if input.get("max_tokens").is_some() {
                     let mut summary = input["previous_summary"].as_str().unwrap_or("").to_owned();
                     if input["messages"].to_string().contains("__summary_fail__") {
                         return Json(json!({"choices":[{"message":{"content":"{}"},"finish_reason":"stop"}]})).into_response();
@@ -75,7 +75,7 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                         }
                     }
                     summary = summary.replace("我住在成都", "用户住在成都");
-                    summary = summary.chars().take(input["max_chars"].as_u64().unwrap() as usize).collect();
+                    summary = mneme::tokens::Counter::default().truncate(&summary, input["max_tokens"].as_u64().unwrap() as usize);
                     return Json(json!({"choices":[{"message":{"content":json!({"summary":summary}).to_string()},"finish_reason":"stop"}]})).into_response();
                 }
                 let mut facts=Vec::new();
@@ -85,7 +85,9 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                     if input.get("targets").is_some() { fact["source_id"]=if target["content"].as_str().unwrap().contains("__bad_batch_source__") {json!("unknown-source")} else {target["id"].clone()}; }
                     facts.push(fact);
                 }
-                Json(json!({"choices":[{"message":{"content":json!({"memories":facts}).to_string()},"finish_reason":"stop"}]})).into_response()
+                let mut result=json!({"memories":facts});
+                if let Some(targets)=input["targets"].as_array(){result["processed_source_ids"]=json!(targets.iter().map(|t|&t["id"]).collect::<Vec<_>>());}
+                Json(json!({"choices":[{"message":{"content":result.to_string()},"finish_reason":"stop"}]})).into_response()
             }
         }))
         .route("/db/neo4j/tx/commit",post(move |Json(body):Json<Value>| {

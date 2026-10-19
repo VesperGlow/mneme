@@ -167,11 +167,9 @@ async def health():
 
 @app.post("/embed")
 async def embed(body: EmbedRequest, request: Request):
-    vectors = await submit(0 if body.query else 1, lambda: app.state.engine.embed(body.texts, body.query), request)
-    return {"embeddings": vectors}
+    return await submit(0 if body.query else 1, lambda: app.state.engine.embed(body.texts, body.query, with_usage=True), request)
 
 
 @app.post("/rerank")
 async def rerank(body: RerankRequest, request: Request):
-    scores = await submit(0, lambda: app.state.engine.rerank(body.query, body.documents), request)
-    return {"scores": scores}
+    return await submit(0, lambda: app.state.engine.rerank(body.query, body.documents, with_usage=True), request)

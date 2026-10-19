@@ -131,24 +131,29 @@ SSE 事件包含 `meta`、可选的 `compaction`、每次模型请求的 `contex
 
 ## 长期记忆行为
 
-QQ、API 和 WebUI 不再新建或切换对话窗口。`[llm]` 的 `context_tokens=100000` 控制生成上下文 token 预算；下一轮将超过预算时，先把较早轮次与旧摘要合并成最多 `summary_chars=2000` 字的滚动摘要，保留约一半近期原文，再继续回复。使用内置 `o200k_base` 分词器估算文本 token，预算包含系统提示、记忆、历史、工具及回复预留；图片采用估算开销，本地估算可能与模型提供方不同。`history_turns` 保留配置兼容性，不再限制活跃历史或触发压缩。旧 `[llm].context_chars` 与 `MNEME_LLM_CONTEXT_CHARS` 不再限制对话，缺省采用 10 万 token；旧字符配置中的默认 16 轮自动升为 1000 轮，显式新配置或环境覆盖优先。安装脚本写入 `MNEME_LLM_CONTEXT_TOKENS=100000`、`MNEME_LLM_HISTORY_TURNS=1000`、`MNEME_MEMORY_EXTRACT_CHARS=10000`，保留已有配置文件和人格。
+QQ、API 和 WebUI 共用一个持续对话。`[llm].context_tokens=100000` 控制上下文预算，`summary_tokens=2000` 控制摘要上限；系统提示、历史、记忆、工具定义、工具参数、结果、实际回传的推理文本和回复预留都纳入 Token 预算。仅按预算触发压缩，不按 `history_turns` 截断；原始消息和来源保留。
 
-每次上游请求的输入、输出、推理、总量与可用思考文本保存在 `model_requests`，重复流式 usage 更新同一记录。输出统一包含推理，推理是其中的子项，不再次加入总量。缺失字段为 `null`，累计量附带每个字段的已报告请求数；会话累计包含对话/工具循环、压缩和记忆提取，并分别列出。流中断时保留已收到的实际用量；重放不新增请求或消耗。旧对话没有的 usage 无法补录。
+优先采用 API usage，输入缓存和推理是输入/输出的子项，不重复加入总量。缺失字段保留 `null`，单独保存 `estimated`；累计同时返回实测总量、`reported` 覆盖次数、使用实测优先补缺的 `effective` 总量及 `estimated` 次数。未知的隐藏推理不能补造，没有输出 usage 时的已观测输出可能只是下限。流式 usage 是同一请求的替换快照；重放、模型客户端缓存命中及合并的并发请求不新增消耗。
 
-底部默认展示下一轮保留上下文的估算（系统、历史、摘要、最近召回的记忆大小、工具定义及封装），下一条消息与召回结果未知时不会宣称是实际值。展开可查看最近一次模型请求的 API 输入和本地估算分布，以及累计用量。临时工具结果和思考不会自动进入下一轮；供应商要求在同一轮工具续接时回传的 `reasoning_content` 按实际发送内容估算。回复预留单独列出。记忆提取沿用独立字数水位，压缩不推进它、不强制提取。
+`model_requests` 统一记录对话与工具循环、历史压缩、记忆提取、表情理解、Embedding 和 Reranker。CPU 服务返回对应固定模型 Tokenizer 在截断后实际处理的非填充 Token 数；查询指令、每个精排对中的查询、缓存命中都计入相应分项。批量提取跨多个来源时，请求归属于该批最后一个来源轮次，会话总账只计一次。
+
+WebUI 区分下一轮上下文估算、每个对话模型请求、本轮累计和会话累计；按调用用途拆分。累计在后端统一计算，通过 `turn_usage` SSE 和历史接口返回。临时工具结果与推理不自动进入下一轮。上下文是保留内容的估算，并非本轮或会话的累计消耗。
+
+文本估算按模型选择内置 tiktoken 词表；其他模型建议设置 `[llm].tokenizer_path` 或 `MNEME_LLM_TOKENIZER_PATH` 指向对应的本地 Hugging Face `tokenizer.json`。未知词表回退 `o200k_base` 时明确标记 fallback，`tokenizer_model_matched=false`；即使用对应词表，消息封装与图片开销仍是估算，不冒充 API 实测。官方 DeepSeek 离线分词器可从其 [Token 文档](https://api-docs.deepseek.com/quick_start/token_usage/) 获取，测试下载仅放在 `artifacts/`，生产不会自动下载。
 
 继续使用现有 `/chat/completions` 兼容接口，支持 OpenAI/DeepSeek/Qwen 等兼容 usage、兼容网关透传的 Anthropic 缓存计数和 Gemini `usageMetadata`。未引入原生协议或 SDK。请求启用 `stream_options.include_usage`；仅在服务明确拒绝该选项时回退，不重试已接受的生成。计数语义参见 [OpenAI 流式 usage](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events)、[Anthropic 缓存输入](https://platform.claude.com/docs/en/build-with-claude/prompt-caching#tracking-cache-performance) 与 [Gemini UsageMetadata](https://ai.google.dev/api/generate-content#UsageMetadata)。
 
-压缩只调整生成上下文，不删除原始对话。记忆提取独立于压缩周期：`[memory].extract_every_chars=10000`，累计新增的完整用户/助手原文达到 1 万字后提交一次批量提取任务；未达阈值的累计进度跨重启保留。后台只从批次内用户原始消息提取事实，沿用重要性、置信度、敏感分类和逐字证据校验，不把模型摘要当作事实来源。摘要生成失败时本轮明确失败，压缩游标不前进，原始历史和待处理任务保留，避免无提示地裁掉历史。摘要和压缩进度随 SQLite 跨重启保留，界面可以查看。
+记忆提取独立于压缩：`[memory].extract_every_tokens=2048` 累计完整用户/助手原文 Token；短对话在等待满 `extract_max_delay_seconds=120` 秒后的后台调度中排队，不要求继续发送消息。后台繁忙或依赖故障时，完成时间还包括排队和重试。水位和任务持久化，重启后重新计算未排队原文，压缩不推进提取游标。安装脚本写入 `MNEME_MEMORY_EXTRACT_TOKENS=2048` 与 `MNEME_MEMORY_EXTRACT_MAX_DELAY_SECONDS=120`，移除旧字符环境配置。旧 TOML 的 `summary_chars`、记忆 `context_chars`、`extract_every_chars` 接受为新 Token 字段的数值别名；建议明确改成新名称。旧会话水位保留，不重复提取已确认的来源。
 
-1. 完整对话落库后累计字数，达到 1 万字再批量提取；批次内每条事实绑定其用户来源消息，只从原话取证。证据必须是原消息中连续出现的逐字引文；过滤低置信度、低重要性及默认禁存的敏感候选。
-2. 稳定属性键控制版本更新，标准化内容哈希消除重复；提取器可对提供的已有记忆声明语义等价并沿用原键和内容。新的住址、否定、时间或数值变化会创建版本，旧版本保留来源并标记为 `superseded`。
-3. 原始消息序号决定新旧，避免重试中的旧任务覆盖较新事实。遗忘屏障防止已经开始的旧提取任务恢复被手动遗忘的属性；用户在之后的新消息重新提供事实时可以再次记忆。
-4. 时效使用带时区的绝对时间；用户的相对时间由提取器结合观察时间解析。检索会即时检查过期状态；每小时将过期或衰减到阈值以下的记忆标记为遗忘。重要事实衰减较慢，重复明确告知会刷新观察时间；单纯被 AI 检索不会自动延长事实寿命。
+1. 批次只从原始用户消息取证，逐字引用、置信度、重要性、敏感分类和语义证据校验仍生效。每组最多四个来源，模型须报告已处理的来源 ID；部分失败先保存有效事实，未完整来源保持有界重试，不伪造完成回执。
+2. 使用向量索引与近期 SQLite 事实共同寻找相关旧属性；`attribute_of` 可声明同一主体/属性并沿用旧键，`equivalent_to` 只有同时匹配规范内容才确认。完全重复内容归并后记住键别名，后续通过任一键更新仍替换同一属性。重复确认合并实体并保留有效期限；同一来源的重试不会重复增加版本。
+3. 原始消息序号决定新旧，批次按数据库顺序处理；晚到任务不能覆盖新事实。人工编辑/删除屏障、来源屏蔽、版本比较及投影重读保留，索引不是事实源。召回在精排后及压缩后再次核查版本。
+4. 混合召回为原问题和最多三个保留原上下文的子问题取候选；RRF 融合向量、CJK 全文、SQLite 补检和两层共享实体扩展。全部候选交精排；低于 cosine 门槛的改写须通过更强的精排补救门槛。相对门槛逐分面计算，关系链附带仍有效的桥接事实；总时限、条数和 Token 预算保持有界。失效、删除和无关弱候选不注入。
+5. 事实有效期使用带时区绝对时间，过期即时排除，每小时做衰减维护。重复明确告知刷新观察时间；被检索不会延长寿命。自然回复优先当前纠正，区分人物和时序，逐项回答复合问题，缺失部分单独说明。
 
 这是可审计的记忆系统，不保证 LLM 的提取、等价判断或相对时间解析永远正确。重要事实可通过来源 API 核查。敏感分类依赖模型判断；不要把自动分类当作凭证保险箱。自然语言“忘记某事”目前不触发删除，使用 DELETE API 确定执行。
 
-逻辑遗忘会保留 SQLite 原始对话和审计记录，删除后的内容仍可能存在于同一会话最近历史或备份中；需要彻底清空当前对话与摘要时，可在设置中重置 Agent；该操作也会清空长期记忆。此 API 不代表物理擦除，也不实现选择性原始数据销毁。外部 LLM 会接收当前消息、所需历史、滚动摘要、召回记忆；提取时还会接收批次内的用户原文及最多 64 条近期记忆。请按提供商的数据政策选择服务。
+逻辑遗忘会保留 SQLite 原始对话和审计记录，删除后的内容仍可能存在于同一会话最近历史或备份中；需要彻底清空当前对话与摘要时，可在设置中重置 Agent；该操作也会清空长期记忆。此 API 不代表物理擦除，也不实现选择性原始数据销毁。外部 LLM 会接收当前消息、所需历史、滚动摘要、召回记忆；提取时还会接收批次内的用户原文及最多 24 条相关旧记忆。请按提供商的数据政策选择服务。
 
 ## 持久化、备份与恢复
 
@@ -217,3 +222,5 @@ python3 scripts/smoke-pod.py
 实现参考：[Qwen3 Embedding 模型卡](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)、[GTE Reranker 模型卡](https://huggingface.co/Alibaba-NLP/gte-multilingual-reranker-base)、[Neo4j 索引语法](https://neo4j.com/docs/cypher-manual/current/indexes/syntax/)、[Podman 5.4 Quadlet](https://docs.podman.io/en/v5.4.2/markdown/podman-systemd.unit.5.html)。
 
 本次实际执行的检查与测试边界见 [docs/validation.md](docs/validation.md)。
+
+2026-10-19 的统一 Token 与记忆优化验证见 [测试报告](docs/reports/memory-tokens-2026-10-19.md)。

@@ -233,8 +233,8 @@
     $('#retrieval-form').onsubmit = async event => { event.preventDefault(); const query = $('#retrieval-query').value.trim(); if (!query) return; const epoch = state.epoch; const button = $('#run-retrieval'); button.disabled = true; $('#retrieval-results').innerHTML = loading('正在检索与精排…'); try { const data = await send('/v1/console/retrieval', { query }); if (epoch !== state.epoch) return; renderRetrieval(data); } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') $('#retrieval-results').innerHTML = empty('这次回想没有完成', errorText(error)); } finally { if (epoch === state.epoch) button.disabled = false; } };
   }
   function renderRetrieval(data) {
-    const trace = data.trace; const labels = { vector: ['向量召回', 'Neo4j HNSW · 索引分数'], keyword: ['关键词召回', '中文 CJK 全文 · Lucene 分数'], graph_entity: ['实体匹配', '查询中直接提及的实体'], graph_neighbor: ['图谱扩展', '共享实体的两跳邻居'], sqlite_vector: ['近期向量补充', 'SQLite · cosine 相似度'], sqlite_keyword: ['近期关键词补充', 'SQLite · 中文双字重叠'] };
-    const reason = { inactive: '已失效', changed_during_search: '检索中发生修改', below_rerank_threshold: '低于精排阈值', context_limit: '超出条数或上下文预算' };
+    const trace = data.trace; const labels = { vector: ['向量召回', 'Neo4j HNSW · 索引分数'], keyword: ['关键词召回', '中文 CJK 全文 · Lucene 分数'], graph_entity: ['实体匹配', '查询中直接提及的实体'], graph_neighbor: ['图谱扩展', '第一层共享实体邻居'], graph_multihop: ['多跳关系', '第二层共享实体扩展'], sqlite_vector: ['近期向量补充', 'SQLite · cosine 相似度'], sqlite_keyword: ['近期关键词补充', 'SQLite · 中文双字重叠'] };
+    const reason = { inactive: '已失效', changed_during_search: '检索中发生修改', below_rerank_threshold: '低于精排阈值', context_limit: '超出条数或 Token 预算', below_relative_rerank_threshold: '低于分面相对精排阈值', below_vector_and_rescue_threshold: '语义与补救证据不足', support_changed_during_search: '桥接事实发生修改', supporting_path: '关系链的桥接事实' };
     $('#retrieval-results').innerHTML = `<section class="panel trace-summary"><strong>${data.degraded ? '部分通道不可用，已使用可用结果' : '本次检索已完成'}</strong><span class="badge ${data.degraded ? 'amber' : 'green'}"><i class="dot"></i>${data.degraded ? '降级检索' : '完整检索'}</span><span class="badge">总耗时 ${ms(trace.total_ms)}</span><span class="badge">编码 ${ms(trace.embedding_ms)}</span><span class="badge">精排 ${ms(trace.rerank_ms)}</span></section><section class="panel spaced"><div class="panel-head between"><div><h2>最终想起的记忆</h2><p class="subheading">精排、时效与上下文预算共同决定</p></div><span class="badge green">${data.results.length} 条</span></div>${data.results.length ? `<div class="recall-list">${data.results.map((r, i) => `<article class="recall-row"><span class="hit-rank">${i + 1}</span><div class="recall-content"><button class="text-btn prewrap" data-detail="${esc(r.memory.id)}">${esc(r.memory.content)}</button><small>${r.channels.map(c => esc(labels[c]?.[0] || c)).join(' · ')}</small></div><span class="hit-score">${r.score.toFixed(4)}</span></article>`).join('')}</div>` : empty('没有足够相关的记忆', '可以调整问题，或先检查记忆是否已生效、索引是否已同步。')}</section><div class="spaced between"><div><div class="eyebrow">RECALL CHANNELS</div><h2>候选从哪里来</h2></div><small>不同通道的原始分数不可直接比较</small></div><section class="channel-grid spaced">${trace.channels.map(channel => `<article class="panel"><header class="panel-head between"><div><h2>${esc(labels[channel.name]?.[0] || channel.name)}</h2><p class="subheading">${esc(labels[channel.name]?.[1] || '')}</p></div><span class="badge ${channel.state === 'healthy' ? '' : 'amber'}">${channel.state === 'healthy' ? ms(channel.duration_ms) : '不可用'}</span></header><div class="channel-hits">${channel.hits.length ? channel.hits.map(hit => `<div class="hit"><span class="hit-rank">${hit.rank}</span><div class="hit-body">${hit.content ? `<button class="text-btn" data-detail="${esc(hit.id)}">${esc(hit.content)}</button>` : '<span class="muted">内容已删除或不可用</span>'}${hit.excluded ? '<span class="badge">不参与召回</span>' : ''}</div><span class="hit-score">${hit.score === null ? '—' : hit.score.toFixed(4)}</span></div>`).join('') : '<div class="empty">该通道没有候选</div>'}</div></article>`).join('')}</section><section class="panel spaced"><div class="panel-head"><h2>Reranker 与最终排序</h2><p class="subheading">${trace.reranker_state === 'healthy' ? `精排阈值 ${data.rerank_min_score} · 最终得分包含相关性、融合排名和时间强度` : trace.reranker_state === 'skipped' ? '没有有效候选，未调用精排' : '精排不可用，按 RRF 融合排名回退'}</p></div><div class="table-scroll"><table><thead><tr><th>候选记忆</th><th>精排顺序</th><th>RRF</th><th>Reranker</th><th>最终得分</th><th>结果</th></tr></thead><tbody>${trace.candidates.map(c => `<tr><td class="memory-cell">${esc(c.content || '内容已删除或不可用')}</td><td>${c.rerank_rank ?? '—'}</td><td>${c.rrf_score.toFixed(4)}</td><td>${c.rerank_score === null ? '—' : c.rerank_score.toFixed(4)}</td><td>${c.final_score === null ? '—' : c.final_score.toFixed(4)}</td><td><span class="badge${c.selected ? ' green' : ''}">${c.selected ? '已召回' : esc(reason[c.reason] || '未选中')}</span></td></tr>`).join('') || '<tr><td colspan="6" class="muted">没有有效候选</td></tr>'}</tbody></table></div></section>`;
   }
   async function systemPage(epoch) {
@@ -267,34 +267,34 @@
     return `上下文 ≈ ${fmt(context.context_used_tokens)} / ${fmt(context.context_tokens)} tokens · ${percent}%`;
   };
   const tokenValue = value => value == null ? '未提供' : fmt(value);
-  const tokenLabels = { input_tokens: '输入', output_tokens: '输出（含推理）', reasoning_tokens: '其中推理', total_tokens: '总消耗' };
+  const tokenLabels = { input_tokens: '输入', output_tokens: '输出（含推理）', reasoning_tokens: '其中推理', total_tokens: '总消耗', cached_input_tokens: '其中缓存命中', cache_creation_input_tokens: '其中缓存写入' };
   const contextLabels = { system: '系统提示词', history: '历史消息', summary: '压缩摘要', memory: '长期记忆', current: '本轮消息', tools: '工具与图片', overhead: '消息封装' };
-  const tokenRows = usage => Object.entries(tokenLabels).map(([key, label]) => `<div><dt>${label}</dt><dd>${tokenValue(usage?.[key])}${usage?.reported && usage.reported[key] < usage.requests ? ` <small>已知 ${fmt(usage.reported[key])}/${fmt(usage.requests)} 次请求</small>` : ''}</dd></div>`).join('');
+  const tokenRows = usage => Object.entries(tokenLabels).map(([key, label]) => {
+    const cumulative = !!usage?.reported;
+    const reported = cumulative ? (usage.reported[key] || 0) : Number(usage?.[key] != null);
+    const estimates = cumulative ? (usage.estimated?.[key] || 0) : Number(usage?.[key] == null && usage?.estimated?.[key] != null);
+    const value = cumulative ? (usage.effective?.[key] ?? usage[key]) : (usage?.[key] ?? usage?.estimated?.[key]);
+    const missing = cumulative ? usage.requests - reported - estimates : Number(value == null);
+    const lower = ['output_tokens', 'total_tokens'].includes(key) && (cumulative ? usage.output_lower_bound_requests > 0 : estimates && usage.estimated.output_is_lower_bound);
+    const source = cumulative ? `${reported} 实测 / ${estimates} 估算${missing ? ` / ${missing} 未知` : ''}` : estimates ? '估算' : reported ? '实测' : '';
+    return `<div><dt>${label}</dt><dd>${estimates ? '≈ ' : ''}${tokenValue(value)} <small>${source}${cumulative && estimates && usage[key] != null ? ` · 实测合计 ${fmt(usage[key])}` : ''}${lower ? '，含已观测下限' : ''}</small></dd></div>`;
+  }).join('');
   const distributionMarkup = distribution => `<dl class="token-distribution">${Object.entries(contextLabels).map(([key, label]) => `<div><dt>${label}</dt><dd>≈ ${fmt(distribution?.[key] || 0)}</dd></div>`).join('')}</dl>`;
   function contextDetails(context) {
     const last = context.last_request;
     const totals = context.session_usage;
-    const purposeLabels = { chat: '对话与工具循环', compression: '历史压缩', memory: '长期记忆提取', sticker: '表情包理解' };
-    return `<p>下一轮上下文估算 · ${fmt(context.context_used_tokens)} tokens</p>${distributionMarkup(context.distribution)}<p class="hint">按 ${esc(context.tokenizer || '本地分词器')} 估算，记忆沿用最近召回的大小；下一条消息及其召回结果尚未确定。回复预留 ${fmt(context.reply_reserve_tokens)} tokens${context.tool_reserve_tokens ? `，工具运行预留 ${fmt(context.tool_reserve_tokens)}` : ''}。</p>${last ? `<p>最近模型请求 · 输入 ${tokenValue(last.usage.input_tokens)} tokens（API）</p><details class="request-context"><summary>该请求的输入分布（估算）</summary>${distributionMarkup(last.context)}</details><dl class="token-distribution">${tokenRows(last.usage)}</dl>` : ''}<p>会话累计 · ${fmt(totals?.requests || 0)} 次模型请求</p>${totals?.incomplete_requests ? `<p class="hint">${fmt(totals.incomplete_requests)} 次请求未正常结束，用量以已收到的 API 统计为准。</p>` : ''}<dl class="token-distribution">${tokenRows(totals)}</dl>${Object.entries(totals?.by_purpose || {}).map(([purpose, usage]) => `<p class="hint">${purposeLabels[purpose] || esc(purpose)}：${tokenValue(usage.total_tokens)} tokens · ${fmt(usage.requests)} 次请求${usage.reported.total_tokens < usage.requests ? '（统计不完整）' : ''}</p>`).join('')}<p class="hint">推理已包含在输出中，不重复相加。仅统计 API 已返回的字段；缺失用量不按零处理。累计消耗与下一轮上下文分别统计。</p><p>已整理 ${fmt(context.compactions)} 次 · 按 Token 预算自动压缩历史；长期记忆独立按每 ${fmt(context.memory_extract_chars)} 字提取。</p><p id="chat-summary" class="prewrap conversation-summary">${esc(context.summary || '对话摘要将在整理历史后显示。')}</p>`;
-  }
-  function usageTotals(requests) {
-    const total = { requests: requests.length, reported: {} };
-    for (const key of Object.keys(tokenLabels)) {
-      const known = requests.map(request => request.usage?.[key]).filter(value => value != null);
-      total[key] = known.length ? known.reduce((sum, value) => sum + value, 0) : null;
-      total.reported[key] = known.length;
-    }
-    return total;
+    const purposeLabels = { chat: '对话与工具循环', compression: '历史压缩', memory: '长期记忆提取', embedding: 'Embedding', reranker: 'Reranker', sticker: '表情包理解' };
+    return `<p>下一轮上下文估算 · ${fmt(context.context_used_tokens)} tokens</p>${distributionMarkup(context.distribution)}<p class="hint">按 ${esc(context.tokenizer || '本地分词器')} 估算，记忆沿用最近召回的大小；下一条消息及其召回结果尚未确定。回复预留 ${fmt(context.reply_reserve_tokens)} tokens${context.tool_reserve_tokens ? `，工具运行预留 ${fmt(context.tool_reserve_tokens)}` : ''}。</p>${last ? `<p>最近模型请求 · 输入 ${tokenValue(last.usage.input_tokens)} tokens（API）</p><details class="request-context"><summary>该请求的输入分布（估算）</summary>${distributionMarkup(last.context)}</details><dl class="token-distribution">${tokenRows(last.usage)}</dl>` : ''}<p>会话累计 · ${fmt(totals?.requests || 0)} 次模型请求</p>${totals?.incomplete_requests ? `<p class="hint">${fmt(totals.incomplete_requests)} 次请求未正常结束，用量以已收到的 API 统计为准。</p>` : ''}<dl class="token-distribution">${tokenRows(totals)}</dl>${Object.entries(totals?.by_purpose || {}).map(([purpose, usage]) => `<p class="hint">${purposeLabels[purpose] || esc(purpose)}：${usage.estimated?.total_tokens ? '≈ ' : ''}${tokenValue(usage.effective?.total_tokens ?? usage.total_tokens)} tokens · ${fmt(usage.requests)} 次请求${usage.reported.total_tokens < usage.requests ? '（统计不完整）' : ''}</p>`).join('')}<p class="hint">推理已包含在输出中，不重复相加。优先采用 API 或本地模型实际分词数；缺失字段单独标记估算，隐藏推理未知时显示已观测下限。累计消耗与下一轮上下文分别统计。</p><p>已整理 ${fmt(context.compactions)} 次 · 按 Token 预算自动压缩历史；长期记忆独立按每 ${fmt(context.memory_extract_tokens)} tokens 提取，最长等待 ${fmt(context.memory_extract_max_delay_seconds)} 秒。</p><p id="chat-summary" class="prewrap conversation-summary">${esc(context.summary || '对话摘要将在整理历史后显示。')}</p>`;
   }
   function requestMarkup(request, live = false) {
     const thinking = request.reasoning || '';
     const stats = `<dl class="token-distribution request-usage" aria-label="模型请求 Token 用量">${tokenRows(request.usage)}</dl>`;
-    return thinking ? `<details class="chat-reasoning"><summary>${live ? '正在思考' : '思考过程'}</summary><div class="prewrap reasoning-body">${esc(thinking)}</div>${stats}</details>` : '';
+    return `<details class="chat-reasoning"><summary>${thinking ? (live ? '正在思考' : '思考过程') : '模型请求'} · ${esc(request.model || '')}</summary><div class="prewrap reasoning-body">${esc(thinking)}</div>${stats}<p class="hint">估算分词器：${esc(request.usage?.estimated?.tokenizer || '未记录')}</p></details>`;
   }
-  const turnUsageMarkup = requests => requests.length ? `<dl class="token-distribution request-usage turn-usage" aria-label="本轮 Token 用量">${tokenRows(usageTotals(requests))}</dl>` : '';
+  const turnUsageMarkup = usage => usage ? `<dl class="token-distribution request-usage turn-usage" aria-label="本轮 Token 用量">${tokenRows(usage)}</dl>` : '';
   function reasoningMarkup(history, message) {
     const requests = (history.model_requests || []).filter(request => request.turn_id === message.turn_id && request.purpose === 'chat');
-    return requests.map(request => `<div class="model-request" data-request-id="${esc(request.id)}">${requestMarkup(request, request.status === 'running')}</div>`).join('') + turnUsageMarkup(requests);
+    return requests.map(request => `<div class="model-request" data-request-id="${esc(request.id)}">${requestMarkup(request, request.status === 'running')}</div>`).join('') + turnUsageMarkup(history.turn_usage?.[message.turn_id]);
   }
   function answerMarkup(text) {
     const inline = value => value.split(/(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\))/g).map(part => {
@@ -375,23 +375,24 @@
             if (name === 'usage' && data.usage.input_tokens != null) {
               $('#chat-context').textContent = `当前请求 ${fmt(data.usage.input_tokens)} / ${fmt(history.conversation.context.context_tokens)} tokens（API）`;
             }
-            if (name === 'reasoning' || name === 'usage') {
+            if (name === 'turn_usage') $('#chat-live-usage').innerHTML = turnUsageMarkup(data.usage);
+            if (name === 'context' || name === 'reasoning' || name === 'usage') {
               const request = liveRequests.get(data.request_id) || { id: data.request_id, reasoning: '', usage: {}, status: 'running' };
               if (name === 'reasoning') request.reasoning += data.content;
-              else { request.usage = data.usage; request.status = data.status; }
+              else if (name === 'usage') { request.usage = data.usage; request.status = data.status; }
+              else { request.model = data.model; request.purpose = data.purpose; request.context = data.context; }
               liveRequests.set(request.id, request);
               let element = document.getElementById(`request-${request.id}`);
               if (!element) { element = document.createElement('div'); element.className = 'model-request'; element.id = `request-${request.id}`; $('#chat-live-requests').append(element); }
-              if (request.reasoning && !$('.reasoning-body', element)) element.innerHTML = requestMarkup(request, true);
+              if (!$('.reasoning-body', element)) element.innerHTML = requestMarkup(request, true);
               const thinkingBody = $('.reasoning-body', element);
               if (thinkingBody) {
                 const followThinking = thinkingBody.scrollHeight - thinkingBody.scrollTop - thinkingBody.clientHeight < 40;
                 thinkingBody.textContent = request.reasoning;
                 if (followThinking) thinkingBody.scrollTop = thinkingBody.scrollHeight;
-                $('summary', element).textContent = request.status === 'running' ? '正在思考' : '思考过程';
+                $('summary', element).textContent = request.reasoning ? (request.status === 'running' ? '正在思考' : '思考过程') : '模型请求';
                 if (name === 'usage') $('.request-usage', element).innerHTML = tokenRows(request.usage);
               }
-              $('#chat-live-usage').innerHTML = turnUsageMarkup([...liveRequests.values()]);
               if (name === 'reasoning') $('#chat-progress').textContent = '正在思考…';
             }
             if (name === 'delta') { answer += data.content; $('#chat-answer').innerHTML = answerMarkup(answer); $('#chat-progress').textContent = '正在回复…'; }
@@ -524,7 +525,7 @@
     $('#page').innerHTML = `<div class="agent-layout"><section class="panel agent-profile"><div class="agent-avatar">${icon('leaf')}</div><div><h2 id="agent-name">${esc(data.persona.name)}</h2><p>${esc(data.model)}</p></div><span class="badge green">全局共享对话</span></section><div class="agent-columns"><div class="settings-stack"><section class="panel" id="sticker-panel"></section><section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
       <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
       <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
-      <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div><aside class="agent-aside">${qqCard(qq)}<section class="panel context-card"><div class="panel-head"><h2>上下文与记忆</h2></div><div class="context-facts"><div><small>上下文预算</small><strong>${fmt(conversation.context.context_tokens)} tokens</strong></div><div><small>下一轮上下文（估算）</small><strong>${fmt(conversation.context.context_used_tokens)} tokens</strong></div><div><small>定期提取记忆</small><strong>每 ${fmt(conversation.context.memory_extract_chars)} 字</strong></div><div><small>已压缩历史</small><strong>${fmt(conversation.context.compactions)} 次</strong></div></div><p class="hint">QQ、网页和 API 共用上下文。占用包含系统指令、历史、摘要、记忆和工具，按 Token 预算压缩历史。API 实际用量与本地估算、长期记忆提取独立统计，可在聊天底部查看。</p></section></aside></div></div>`;
+      <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div><aside class="agent-aside">${qqCard(qq)}<section class="panel context-card"><div class="panel-head"><h2>上下文与记忆</h2></div><div class="context-facts"><div><small>上下文预算</small><strong>${fmt(conversation.context.context_tokens)} tokens</strong></div><div><small>下一轮上下文（估算）</small><strong>${fmt(conversation.context.context_used_tokens)} tokens</strong></div><div><small>定期提取记忆</small><strong>每 ${fmt(conversation.context.memory_extract_tokens)} tokens</strong></div><div><small>已压缩历史</small><strong>${fmt(conversation.context.compactions)} 次</strong></div></div><p class="hint">QQ、网页和 API 共用上下文。占用包含系统指令、历史、摘要、记忆和工具，按 Token 预算压缩历史。API 实际用量与本地估算、长期记忆提取独立统计，可在聊天底部查看。</p></section></aside></div></div>`;
     await stickerPanel(epoch); if (epoch !== state.epoch) return;
     const personaForm = $('#persona-form');
     $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };

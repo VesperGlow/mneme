@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 
 fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    c.memory.verify_recall = false;
     c.database = temp.path().join("eval.db").to_str().unwrap().into();
     c.llm.model = "fixture".into();
     c.llm.base_url = base.into();
@@ -34,7 +36,150 @@ fn fact(key: &str, text: &str) -> Candidate {
         valid_until: None,
         sensitive: false,
         equivalent_to: None,
+        attribute_of: None,
+        relation: Default::default(),
+        supersedes: Vec::new(),
     }
+}
+
+#[tokio::test]
+async fn compatible_assertions_survive_then_explicit_conflict_retires_both() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let store = Store::open(temp.path().join("truth.db").to_str().unwrap())
+        .await
+        .unwrap();
+    let a = source(&store, "用户主要用甲语言开发。").await;
+    store
+        .apply_candidates(
+            &a,
+            vec![(fact("user.main_language", &a.content), vec![], None)],
+            "none",
+        )
+        .await
+        .unwrap();
+    let b = source(&store, "用户不用乙语言作为主力。").await;
+    let mut additive = fact("user.main_language", &b.content);
+    additive.relation = FactRelation::Coexist;
+    store
+        .apply_candidates(&b, vec![(additive.clone(), vec![], None)], "none")
+        .await
+        .unwrap();
+    let old = store.active_memories(10).await.unwrap();
+    assert_eq!(old.len(), 2);
+    assert!(old.iter().any(|m| m.content == a.content));
+    assert!(old.iter().any(|m| m.slot == additive.storage_key()));
+    // A delayed retry cannot remove the newer assertion.
+    let c = source(&store, "用户现在改用乙语言作为主力。").await;
+    let mut changed = fact("user.main_language", &c.content);
+    changed.supersedes = old.iter().map(|m| m.id.clone()).collect();
+    store
+        .apply_candidates(&c, vec![(changed, vec![], None)], "none")
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .active_memories(10)
+            .await
+            .unwrap()
+            .iter()
+            .map(|m| m.content.as_str())
+            .collect::<Vec<_>>(),
+        vec![c.content.as_str()]
+    );
+    store
+        .apply_candidates(&b, vec![(additive, vec![], None)], "none")
+        .await
+        .unwrap();
+    assert_eq!(store.active_memories(10).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn explicit_conflict_cannot_cross_a_forget_barrier() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let store = Store::open(temp.path().join("barrier.db").to_str().unwrap())
+        .await
+        .unwrap();
+    let old = source(&store, "用户有一项长期约束。").await;
+    store
+        .apply_candidates(
+            &old,
+            vec![(fact("user.constraint", &old.content), vec![], None)],
+            "none",
+        )
+        .await
+        .unwrap();
+    let stale = source(&store, "用户变更了长期约束。").await;
+    let target = store.active_memories(10).await.unwrap().remove(0);
+    store.forget(&target.id).await.unwrap();
+    let mut change = fact("user.new_constraint", &stale.content);
+    change.supersedes = vec![target.id.clone()];
+    store
+        .apply_candidates(&stale, vec![(change, vec![], None)], "none")
+        .await
+        .unwrap();
+    // The deleted target is never revived by an explicit reference.
+    assert!(
+        store
+            .active_memories(10)
+            .await
+            .unwrap()
+            .iter()
+            .all(|m| m.id != target.id)
+    );
+    assert!(store.active_memories(10).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn changed_reconciliation_target_retries_without_receipting_a_lost_fact() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let store = Store::open(temp.path().join("race.db").to_str().unwrap())
+        .await
+        .unwrap();
+    let initial = source(&store, "用户当前使用第一种方案。").await;
+    store
+        .apply_candidates(
+            &initial,
+            vec![(fact("user.plan", &initial.content), vec![], None)],
+            "none",
+        )
+        .await
+        .unwrap();
+    let old = store.active_memories(10).await.unwrap().remove(0);
+    let earlier = source(&store, "用户改用第二种方案。").await;
+    let later = source(&store, "用户最终改用第三种方案。").await;
+    // The later job read `old` before the earlier job committed.
+    store
+        .apply_candidates(
+            &earlier,
+            vec![(fact("user.plan", &earlier.content), vec![], None)],
+            "none",
+        )
+        .await
+        .unwrap();
+    let mut stale = fact("user.plan", &later.content);
+    stale.supersedes = vec![old.id];
+    assert!(
+        store
+            .apply_candidates(&later, vec![(stale.clone(), vec![], None)], "none")
+            .await
+            .is_err()
+    );
+    let receipt: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)")
+            .bind(&later.id)
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+    assert!(!receipt);
+    stale.supersedes = vec![store.active_memories(10).await.unwrap().remove(0).id];
+    store
+        .apply_candidates(&later, vec![(stale, vec![], None)], "none")
+        .await
+        .unwrap();
+    assert_eq!(
+        store.active_memories(10).await.unwrap().remove(0).content,
+        later.content
+    );
 }
 
 #[tokio::test]
@@ -154,6 +299,14 @@ async fn updating_a_slot_to_an_existing_fact_retires_its_old_value() {
         "the old tea preference must be superseded even when the new content is deduplicated"
     );
     assert_eq!(active[0].content, "用户喜欢咖啡。");
+    // The next update through either deduplicated spelling must replace the
+    // canonical property rather than leave the confirmed coffee fact active.
+    let d = source(&store, "用户喜欢红茶。").await;
+    apply(&store, &d, "user.preference.drink", &d.content).await;
+    let active = store.active_memories(100).await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].content, "用户喜欢红茶。");
+    assert_eq!(active[0].slot, "user.preference.coffee");
 }
 
 #[test]
@@ -273,7 +426,9 @@ async fn partial_batch_retries_only_sources_with_no_valid_fact_instead_of_receip
                 let mut value=item("user.hobby.ceramics","用户长期喜欢陶艺。",&input["target"]);
                 value.as_object_mut().unwrap().remove("source_id");vec![value]
             };
-            Json(json!({"choices":[{"finish_reason":"stop","message":{"content":json!({"memories":facts}).to_string()}}]}))
+            let mut result=json!({"memories":facts});
+            if let Some(targets)=input["targets"].as_array(){ result["processed_source_ids"]=json!(targets.iter().map(|t|&t["id"]).collect::<Vec<_>>()); }
+            Json(json!({"choices":[{"finish_reason":"stop","message":{"content":result.to_string()}}]}))
         }
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -310,6 +465,82 @@ async fn partial_batch_retries_only_sources_with_no_valid_fact_instead_of_receip
         .await
         .unwrap();
     assert_eq!(receipts, 2);
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    services.abort();
+    llm.abort();
+}
+
+#[tokio::test]
+async fn split_batches_carry_attribute_keys_and_apply_repeated_slots_in_source_order() {
+    let (base, services) = common::fake_services().await;
+    let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = calls.clone();
+    let router=Router::new().route("/chat/completions",post(move|Json(body):Json<Value>| {
+        let index=seen.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+        async move {
+            let input:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+            let targets=input["targets"].as_array().unwrap();
+            if index==1 {
+                assert_eq!(input["batch_prior_facts"][0]["key"],"user.craft.monthly_target");
+                assert!(input["batch_prior_facts"][0]["content"].as_str().unwrap().contains("4件"));
+            }
+            let facts:Vec<_>=targets.iter().map(|s|json!({"key":"user.craft.monthly_target","content":s["content"].as_str().unwrap().replace('我',"用户"),"kind":"fact","importance":0.8,"confidence":0.99,"entities":[],"source_quote":s["content"],"source_id":s["id"],"valid_until":null,"sensitive":false,"equivalent_to":null})).collect();
+            Json(json!({"choices":[{"finish_reason":"stop","message":{"content":json!({"memories":facts,"processed_source_ids":targets.iter().map(|s|&s["id"]).collect::<Vec<_>>()}).to_string()}}]}))
+        }
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let llm = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut c = config(&temp, &base);
+    c.llm.base_url = url;
+    c.memory.max_attempts = 1;
+    c.memory.poll_seconds = 1;
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let mut ids = Vec::new();
+    for n in 1..=5 {
+        ids.push(
+            source(&app.store, &format!("我计划每月制作{n}件木模型。"))
+                .await
+                .id,
+        );
+    }
+    ids.reverse(); // Untrusted job ordering must not decide which observation wins.
+    sqlx::query(
+        "INSERT INTO jobs(id,kind,payload,available_at,created_at) VALUES('split','extract',?,?,?)",
+    )
+    .bind(json!({"message_ids":ids}).to_string())
+    .bind(now())
+    .bind(now())
+    .execute(&app.store.pool)
+    .await
+    .unwrap();
+    let worker = tokio::spawn(memory::worker(app.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let stats = app.store.job_stats().await.unwrap();
+            assert_eq!(stats["dead"], 0);
+            if stats["pending"] == 0 && stats["running"] == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let active = app.store.active_memories(10).await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert!(active[0].content.contains("5件"));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::Relaxed), 2);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM extracted_messages")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+        5
+    );
     stop.send(true).unwrap();
     worker.await.unwrap();
     services.abort();
@@ -421,7 +652,9 @@ async fn vector_cache_observes_embedding_replacement_without_a_revision_change()
     let (base, task) = common::fake_services().await;
     let temp = tempfile::TempDir::new().unwrap();
     let (_stop, rx) = tokio::sync::watch::channel(false);
-    let app = App::new(config(&temp, &base), rx).await.unwrap();
+    let mut c = config(&temp, &base);
+    c.memory.rerank_rescue_score = 1.0;
+    let app = App::new(c, rx).await.unwrap();
     let m = source(&app.store, "用户住在杭州。").await;
     let mut vector = vec![0.0; 1024];
     vector[0] = 1.0;
@@ -701,7 +934,7 @@ async fn mixed_model_candidates_preserve_valid_evidence_without_admitting_bad_it
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             loop {
                 let stats = app.store.job_stats().await.unwrap();
-                assert_eq!(stats["dead"], 0);
+                assert!(stats["dead"].as_u64().unwrap() <= 1);
                 if stats["pending"] == 0 && stats["running"] == 0 {
                     break;
                 }
@@ -720,6 +953,17 @@ async fn mixed_model_candidates_preserve_valid_evidence_without_admitting_bad_it
                 .await
                 .unwrap();
         assert_eq!(count, 1);
+        let receipts: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM extracted_messages WHERE message_id=?")
+                .bind(&message.id)
+                .fetch_one(&app.store.pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            receipts, 0,
+            "partial failures must remain visible and retryable"
+        );
+        assert_eq!(app.store.job_stats().await.unwrap()["dead"], 1);
         stop.send(true).unwrap();
         worker.await.unwrap();
         services.abort();
@@ -769,6 +1013,58 @@ async fn a_literal_but_unrelated_quote_cannot_reinforce_a_fact() {
     assert_eq!(
         receipts, 0,
         "unsupported output stays retryable rather than acknowledging an extraction"
+    );
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    services.abort();
+    llm.abort();
+}
+
+#[tokio::test]
+async fn a_short_predicate_quote_keeps_its_source_subject_for_semantic_validation() {
+    let (base, services) = common::fake_services().await;
+    let server=Router::new().route("/chat/completions",post(||async {
+        Json(json!({"choices":[{"finish_reason":"stop","message":{"content":json!({"memories":[{
+            "key":"user.relationship.songlan.occupation","content":"用户的朋友宋澜是一位音乐教师。","kind":"fact","importance":0.8,"confidence":0.99,
+            "entities":["宋澜"],"source_quote":"是位音乐教师","valid_until":null,"sensitive":false,"equivalent_to":null
+        }]}).to_string()}}]}))
+    })).route("/embed",post(|Json(body):Json<Value>|async move {
+        let vectors:Vec<_>=body["texts"].as_array().unwrap().iter().map(|v| {
+            let mut unit=vec![0.0_f32;1024];unit[usize::from(!v.as_str().unwrap().contains("宋澜"))]=1.0;unit
+        }).collect();
+        Json(json!({"embeddings":vectors}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let llm = tokio::spawn(async move { axum::serve(listener, server).await.unwrap() });
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut c = config(&temp, &base);
+    c.llm.base_url = url.clone();
+    c.models.base_url = url;
+    c.memory.max_attempts = 1;
+    c.memory.poll_seconds = 1;
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let source = source(&app.store, "我的朋友宋澜是位音乐教师。").await;
+    sqlx::query("INSERT INTO jobs(id,kind,payload,available_at,created_at) VALUES('predicate','extract',?,?,?)").bind(&source.id).bind(now()).bind(now()).execute(&app.store.pool).await.unwrap();
+    let worker = tokio::spawn(memory::worker(app.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let stats = app.store.job_stats().await.unwrap();
+            assert_eq!(stats["dead"], 0);
+            if !app.store.active_memories(1).await.unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let memory = app.store.active_memories(1).await.unwrap().pop().unwrap();
+    let provenance = app.store.sources(&memory.id).await.unwrap();
+    let quote = provenance[0]["quote"].as_str().unwrap();
+    assert!(
+        quote.contains("宋澜") && quote.contains("是位音乐教师") && source.content.contains(quote)
     );
     stop.send(true).unwrap();
     worker.await.unwrap();

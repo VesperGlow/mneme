@@ -5,6 +5,38 @@ use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// A retrieval deadline or disconnected task drops its inference future. Keep
+/// that cancellation visible without waiting for a process restart to recover it.
+pub(crate) struct RequestGuard {
+    store: Option<Store>,
+    id: Option<String>,
+}
+impl RequestGuard {
+    pub(crate) fn new(store: Option<Store>, id: Option<&str>) -> Self {
+        Self {
+            store,
+            id: id.map(str::to_owned),
+        }
+    }
+    pub(crate) fn finish(mut self) {
+        self.id = None;
+    }
+}
+impl Drop for RequestGuard {
+    fn drop(&mut self) {
+        if let (Some(store), Some(id), Ok(runtime)) = (
+            self.store.take(),
+            self.id.take(),
+            tokio::runtime::Handle::try_current(),
+        ) {
+            runtime.spawn(async move {
+                let _ = sqlx::query("UPDATE model_requests SET status='interrupted' WHERE id=? AND status='running'")
+                    .bind(id).execute(&store.pool).await;
+            });
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct TokenUsage {
     pub input_tokens: Option<u64>,
@@ -13,8 +45,25 @@ pub struct TokenUsage {
     pub reasoning_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
     pub cached_input_tokens: Option<u64>,
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Estimates never fill provider fields. Missing hidden reasoning remains
+    /// unknown; observed output is a lower bound when no provider total exists.
+    #[serde(default)]
+    pub estimated: TokenEstimate,
     #[serde(skip)]
     raw: UsageFields,
+}
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct TokenEstimate {
+    pub input_tokens: Option<u64>,
+    pub output_tokens: Option<u64>,
+    pub reasoning_tokens: Option<u64>,
+    pub total_tokens: Option<u64>,
+    pub tokenizer: String,
+    pub model_matched: bool,
+    pub output_is_lower_bound: bool,
 }
 #[derive(Clone, Debug, Default, PartialEq)]
 struct UsageFields {
@@ -35,6 +84,26 @@ fn number(value: &Value, paths: &[&str]) -> Option<u64> {
 }
 
 impl TokenUsage {
+    pub fn estimate_input(&mut self, tokens: usize, counter: &crate::tokens::Counter) {
+        self.estimated.input_tokens = Some(tokens as u64);
+        self.estimated.tokenizer = counter.name.clone();
+        self.estimated.model_matched = counter.model_matched;
+    }
+    pub fn estimate_output(&mut self, tokens: usize, reasoning: Option<usize>, complete: bool) {
+        let output = (tokens as u64)
+            .saturating_sub(reasoning.unwrap_or(0) as u64)
+            .saturating_add(
+                self.reasoning_tokens
+                    .unwrap_or(reasoning.unwrap_or(0) as u64),
+            );
+        self.estimated.output_tokens = Some(output);
+        self.estimated.reasoning_tokens = reasoning.map(|n| n as u64);
+        self.estimated.total_tokens = self
+            .estimated
+            .input_tokens
+            .map(|n| n.saturating_add(output));
+        self.estimated.output_is_lower_bound = !complete || self.reasoning_tokens.is_none();
+    }
     /// Merge fields before deriving totals: some relays send input and output in
     /// separate cumulative snapshots. Null/absent fields must not erase known data.
     pub fn update(&mut self, chunk: &Value) -> bool {
@@ -45,6 +114,7 @@ impl TokenUsage {
             .or_else(|| chunk.pointer("/message/usage").filter(|v| v.is_object()));
         let Some(value) = value else { return false };
         let previous = self.clone();
+        self.source = Some(value["source"].as_str().unwrap_or("api").into());
         if value.get("prompt_tokens").is_some() {
             self.raw.anthropic = false;
         } else if value.get("input_tokens").is_some() {
@@ -78,6 +148,7 @@ impl TokenUsage {
         }
         if let Some(write) = number(value, &["/cache_creation_input_tokens"]) {
             self.raw.cache_write = write;
+            self.cache_creation_input_tokens = Some(write);
         }
         if let Some(tools) = number(value, &["/toolUsePromptTokenCount"]) {
             self.raw.tool_input = tools;
@@ -164,6 +235,13 @@ impl ContextTokens {
             + self.overhead
     }
     pub fn from_wire(messages: &[Value], tools: Option<&Value>) -> Self {
+        Self::from_wire_with(&crate::tokens::Counter::default(), messages, tools)
+    }
+    pub fn from_wire_with(
+        counter: &crate::tokens::Counter,
+        messages: &[Value],
+        tools: Option<&Value>,
+    ) -> Self {
         let mut result = Self {
             overhead: 3,
             ..Self::default()
@@ -178,7 +256,7 @@ impl ContextTokens {
         let mut block = "";
         for (index, message) in messages.iter().enumerate() {
             let text = message["content"].as_str().unwrap_or("");
-            let size = crate::tokens::wire_message(message);
+            let size = counter.wire_message(message);
             if message["role"] == "system" {
                 result.system += size;
             } else if text.starts_with("<untrusted_conversation_summary>") {
@@ -207,7 +285,7 @@ impl ContextTokens {
             }
         }
         result.tools += tools
-            .map(|t| crate::tokens::count(&t.to_string()) + 20)
+            .map(|t| counter.count(&t.to_string()) + 20)
             .unwrap_or(0);
         result
     }
@@ -260,6 +338,17 @@ pub fn aggregate(requests: &[RequestUsage]) -> Value {
     }
     serde_json::to_value(total).expect("token counters serialize")
 }
+pub fn by_turn(requests: &[RequestUsage]) -> Value {
+    let mut groups = std::collections::BTreeMap::<String, UsageTotal>::new();
+    for request in requests {
+        if let Some(turn) = &request.turn_id {
+            let group = groups.entry(turn.clone()).or_default();
+            group.add(&request.usage);
+            group.incomplete_requests += usize::from(request.status != "complete");
+        }
+    }
+    serde_json::to_value(groups).expect("token counters serialize")
+}
 
 impl Store {
     pub(crate) async fn start_model_request(
@@ -289,9 +378,10 @@ impl Store {
         reasoning: &str,
         status: &str,
     ) -> Result<()> {
-        sqlx::query("UPDATE model_requests SET usage=?,reasoning=?,status=? WHERE id=?")
+        sqlx::query("UPDATE model_requests SET usage=?,reasoning=?,status=CASE WHEN status='interrupted' AND ?='running' THEN status ELSE ? END WHERE id=?")
             .bind(serde_json::to_string(usage)?)
             .bind(reasoning)
+            .bind(status)
             .bind(status)
             .bind(request)
             .execute(&self.pool)
@@ -353,47 +443,106 @@ struct Coverage {
     output_tokens: usize,
     reasoning_tokens: usize,
     total_tokens: usize,
+    cached_input_tokens: usize,
+    cache_creation_input_tokens: usize,
+}
+#[derive(Default, Serialize)]
+struct Counters {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+    cached_input_tokens: Option<u64>,
+    cache_creation_input_tokens: Option<u64>,
 }
 #[derive(Default, Serialize)]
 struct UsageTotal {
     requests: usize,
     incomplete_requests: usize,
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    reasoning_tokens: Option<u64>,
-    total_tokens: Option<u64>,
+    #[serde(flatten)]
+    actual: Counters,
     reported: Coverage,
+    /// API values with missing fields filled by explicitly separate estimates.
+    effective: Counters,
+    estimated: Coverage,
+    output_lower_bound_requests: usize,
+}
+fn add_counter(target: &mut Option<u64>, value: Option<u64>) {
+    if let Some(value) = value {
+        *target = Some(target.unwrap_or(0).saturating_add(value));
+    }
 }
 impl UsageTotal {
     fn add(&mut self, usage: &TokenUsage) {
         self.requests += 1;
-        for (target, count, value) in [
+        let e = &usage.estimated;
+        let effective_input = usage.input_tokens.or(e.input_tokens);
+        let effective_output = usage.output_tokens.or(e.output_tokens);
+        // Derive the effective total from effective components; never combine
+        // an actual input with a fully estimated input+output total.
+        let effective_total = usage.total_tokens.or_else(|| {
+            effective_input
+                .zip(effective_output)
+                .map(|(i, o)| i.saturating_add(o))
+        });
+        for (actual, effective, coverage, estimated_count, value, fallback) in [
             (
-                &mut self.input_tokens,
+                &mut self.actual.input_tokens,
+                &mut self.effective.input_tokens,
                 &mut self.reported.input_tokens,
+                &mut self.estimated.input_tokens,
                 usage.input_tokens,
+                effective_input,
             ),
             (
-                &mut self.output_tokens,
+                &mut self.actual.output_tokens,
+                &mut self.effective.output_tokens,
                 &mut self.reported.output_tokens,
+                &mut self.estimated.output_tokens,
                 usage.output_tokens,
+                effective_output,
             ),
             (
-                &mut self.reasoning_tokens,
+                &mut self.actual.reasoning_tokens,
+                &mut self.effective.reasoning_tokens,
                 &mut self.reported.reasoning_tokens,
+                &mut self.estimated.reasoning_tokens,
                 usage.reasoning_tokens,
+                usage.reasoning_tokens.or(e.reasoning_tokens),
             ),
             (
-                &mut self.total_tokens,
+                &mut self.actual.total_tokens,
+                &mut self.effective.total_tokens,
                 &mut self.reported.total_tokens,
+                &mut self.estimated.total_tokens,
                 usage.total_tokens,
+                effective_total,
+            ),
+            (
+                &mut self.actual.cached_input_tokens,
+                &mut self.effective.cached_input_tokens,
+                &mut self.reported.cached_input_tokens,
+                &mut self.estimated.cached_input_tokens,
+                usage.cached_input_tokens,
+                usage.cached_input_tokens,
+            ),
+            (
+                &mut self.actual.cache_creation_input_tokens,
+                &mut self.effective.cache_creation_input_tokens,
+                &mut self.reported.cache_creation_input_tokens,
+                &mut self.estimated.cache_creation_input_tokens,
+                usage.cache_creation_input_tokens,
+                usage.cache_creation_input_tokens,
             ),
         ] {
-            if let Some(n) = value {
-                *target = Some(target.unwrap_or(0).saturating_add(n));
-                *count += 1;
-            }
+            add_counter(actual, value);
+            add_counter(effective, fallback);
+            *coverage += usize::from(value.is_some());
+            *estimated_count += usize::from(value.is_none() && fallback.is_some());
         }
+        self.output_lower_bound_requests += usize::from(
+            usage.output_tokens.is_none() && e.output_tokens.is_some() && e.output_is_lower_bound,
+        );
     }
 }
 
@@ -416,6 +565,25 @@ mod tests {
         assert_eq!(usage.total_tokens, Some(140));
         assert_eq!(usage.cached_input_tokens, Some(60));
         assert!(!usage.update(&json!({"usage":{"prompt_tokens":null}})));
+    }
+    #[test]
+    fn estimates_remain_separate_and_mixed_totals_use_actual_components() {
+        let mut u = TokenUsage::default();
+        u.estimate_input(500, &crate::tokens::Counter::default());
+        u.update(&json!({"usage":{"prompt_tokens":100,"completion_tokens_details":{"reasoning_tokens":40}}}));
+        u.estimate_output(12, Some(2), true);
+        assert_eq!(u.input_tokens, Some(100));
+        assert_eq!(u.output_tokens, None);
+        assert_eq!(u.estimated.output_tokens, Some(50));
+        let mut total = UsageTotal::default();
+        total.add(&u);
+        total.add(&u);
+        assert_eq!(total.actual.input_tokens, Some(200));
+        assert_eq!(total.actual.total_tokens, None);
+        assert_eq!(total.effective.total_tokens, Some(300));
+        assert_eq!(total.estimated.total_tokens, 2);
+        assert_eq!(total.reported.total_tokens, 0);
+        assert_eq!(total.effective.reasoning_tokens, Some(80));
     }
 
     #[test]
@@ -504,14 +672,14 @@ mod tests {
     fn totals_reveal_incomplete_coverage_instead_of_reporting_missing_as_zero() {
         let mut total = UsageTotal::default();
         total.add(&TokenUsage::default());
-        assert_eq!(total.total_tokens, None);
+        assert_eq!(total.actual.total_tokens, None);
         let mut usage = TokenUsage::default();
         usage.update(&json!({"usage":{"prompt_tokens":100,"completion_tokens":40,"completion_tokens_details":{"reasoning_tokens":30}}}));
         total.add(&usage);
         total.add(&usage);
         assert_eq!(total.requests, 3);
-        assert_eq!(total.total_tokens, Some(280));
-        assert_eq!(total.reasoning_tokens, Some(60));
+        assert_eq!(total.actual.total_tokens, Some(280));
+        assert_eq!(total.actual.reasoning_tokens, Some(60));
         assert_eq!(total.reported.total_tokens, 2);
     }
 }

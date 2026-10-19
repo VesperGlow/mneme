@@ -55,6 +55,9 @@ async fn provider(legacy: bool) -> (String, Arc<Mutex<Vec<Value>>>, tokio::task:
 }
 fn config(temp: &tempfile::TempDir, base: &str, models: &str) -> Config {
     let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    c.memory.verify_recall = false;
+    c.memory.semantic_rewrite = false;
     c.database = temp.path().join("db").to_string_lossy().into();
     c.api_token = TOKEN.into();
     c.llm_key = "fixture".into();
@@ -63,7 +66,7 @@ fn config(temp: &tempfile::TempDir, base: &str, models: &str) -> Config {
     c.llm.base_url = base.into();
     c.models.base_url = models.into();
     c.neo4j.base_url = models.into();
-    c.memory.extract_every_chars = 100_000;
+    c.memory.extract_every_tokens = 100_000;
     c
 }
 async fn request(router: &Router, method: &str, path: &str, body: Value) -> String {
@@ -125,7 +128,7 @@ async fn actual_usage_reasoning_replay_restart_and_context_are_separate() {
     );
     let before = data(&router, "/v1/conversation").await;
     let context = &before["context"];
-    assert_eq!(context["session_usage"]["requests"], 1);
+    assert_eq!(context["session_usage"]["requests"], 2);
     assert_eq!(context["session_usage"]["input_tokens"], 100);
     assert_eq!(context["session_usage"]["output_tokens"], 90010);
     assert_eq!(context["session_usage"]["reasoning_tokens"], 90000);
@@ -139,7 +142,12 @@ async fn actual_usage_reasoning_replay_restart_and_context_are_separate() {
     let history = data(&router, "/v1/console/messages").await;
     assert_eq!(history["messages"][1]["content"], "答复");
     assert!(
-        history["model_requests"][0]["reasoning"]
+        history["model_requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["purpose"] == "chat")
+            .unwrap()["reasoning"]
             .as_str()
             .unwrap()
             .contains("再组织回答")
@@ -161,15 +169,25 @@ async fn actual_usage_reasoning_replay_restart_and_context_are_separate() {
         context["session_usage"]
     );
     assert_eq!(
-        data(&router, "/v1/console/messages").await["model_requests"][0]["reasoning"],
-        history["model_requests"][0]["reasoning"]
+        data(&router, "/v1/console/messages").await["model_requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["purpose"] == "chat")
+            .unwrap()["reasoning"],
+        history["model_requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["purpose"] == "chat")
+            .unwrap()["reasoning"]
     );
     let counts = chat(&router, &id(), "counts-only").await;
     assert!(counts.contains("event: usage") && !counts.contains("event: reasoning"));
     let missing = chat(&router, &id(), "missing").await;
     assert!(missing.contains("event: done") && !missing.contains("event: reasoning"));
     let context = data(&router, "/v1/conversation").await;
-    assert_eq!(context["context"]["session_usage"]["requests"], 3);
+    assert_eq!(context["context"]["session_usage"]["requests"], 6);
     assert_eq!(
         context["context"]["session_usage"]["reported"]["total_tokens"],
         2
@@ -208,11 +226,27 @@ async fn interrupted_stream_keeps_reported_usage_without_committing_partial_repl
     let detail = data(&router, &format!("/v1/turns/{turn}")).await;
     assert_eq!(detail["status"], "failed");
     assert_eq!(detail["messages"].as_array().unwrap().len(), 1);
-    assert_eq!(detail["model_requests"][0]["usage"]["total_tokens"], 90110);
-    assert_eq!(detail["model_requests"][0]["status"], "failed");
+    assert_eq!(
+        detail["model_requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["purpose"] == "chat")
+            .unwrap()["usage"]["total_tokens"],
+        90110
+    );
+    assert_eq!(
+        detail["model_requests"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["purpose"] == "chat")
+            .unwrap()["status"],
+        "failed"
+    );
     assert_eq!(
         data(&router, "/v1/conversation").await["context"]["session_usage"]["requests"],
-        1
+        2
     );
     let wire = chat(&router, &id(), "bad400").await;
     assert!(wire.contains("event: error"));
@@ -239,9 +273,217 @@ async fn unsupported_stream_usage_falls_back_once_and_is_not_double_counted() {
     assert_eq!(seen.lock().unwrap().len(), 3);
     assert!(seen.lock().unwrap()[2].get("stream_options").is_none());
     let context = data(&router, "/v1/conversation").await;
-    assert_eq!(context["context"]["session_usage"]["requests"], 2);
+    assert_eq!(context["context"]["session_usage"]["requests"], 3);
     assert!(context["context"]["session_usage"]["total_tokens"].is_null());
+    assert!(
+        context["context"]["session_usage"]["effective"]["total_tokens"]
+            .as_u64()
+            .unwrap()
+            > 0
+    );
+    assert_eq!(
+        context["context"]["session_usage"]["reported"]["total_tokens"],
+        0
+    );
+    assert_eq!(
+        context["context"]["session_usage"]["estimated"]["total_tokens"],
+        3
+    );
     assert!(context["context"]["tokens_estimated"].as_bool().unwrap());
     server.abort();
+    fake.abort();
+}
+
+#[tokio::test]
+async fn local_model_usage_counts_physical_rpcs_once_including_cache_details() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let server = Router::new().route("/embed",post(|Json(body):Json<Value>|async move {
+        let count = body["texts"].as_array().unwrap().len();
+        let mut unit=vec![0.0_f32;1024]; unit[0]=1.0;
+        Json(json!({"embeddings":vec![unit;count],"usage":{"prompt_tokens":count*10,"completion_tokens":0,"total_tokens":count*10,"prompt_tokens_details":{"cached_tokens":5},"source":"model_tokenizer"}}))
+    })).route("/rerank",post(|Json(body):Json<Value>|async move {
+        Json(json!({"scores":vec![0.9;body["documents"].as_array().unwrap().len()],"usage":{"prompt_tokens":70,"completion_tokens":0,"total_tokens":70,"source":"model_tokenizer"}}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, server).await.unwrap();
+    });
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config(&temp, &base, &base), rx).await.unwrap();
+    let texts = vec!["hello".into(), "world".into(), "hello".into()];
+    let (a, b) = tokio::join!(
+        app.models.embed(&texts, false),
+        app.models.embed(&texts, false)
+    );
+    assert_eq!(a.unwrap().len(), 3);
+    assert_eq!(b.unwrap().len(), 3);
+    app.models.embed(&texts, false).await.unwrap();
+    let docs = vec!["one".into(), "two".into()];
+    app.models.rerank("query", &docs).await.unwrap();
+    app.models.rerank("query", &docs).await.unwrap();
+    let context = data(&api::router(app.clone()), "/v1/conversation").await;
+    let usage = &context["context"]["session_usage"];
+    assert_eq!(usage["requests"], 2);
+    assert_eq!(usage["input_tokens"], 90);
+    assert_eq!(usage["total_tokens"], 90);
+    assert_eq!(usage["cached_input_tokens"], 5);
+    assert_eq!(usage["reported"]["total_tokens"], 2);
+    assert_eq!(usage["estimated"]["total_tokens"], 0);
+    assert_eq!(usage["by_purpose"]["embedding"]["input_tokens"], 20);
+    assert_eq!(usage["by_purpose"]["reranker"]["input_tokens"], 70);
+    task.abort();
+}
+
+#[tokio::test]
+async fn dropped_inference_is_interrupted_without_waiting_for_restart() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let entered = Arc::new(tokio::sync::Notify::new());
+    let signal = entered.clone();
+    let server = Router::new().route(
+        "/embed",
+        post(move || {
+            let signal = signal.clone();
+            async move {
+                signal.notify_one();
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                Json(json!({"embeddings":[]}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, server).await.unwrap();
+    });
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config(&temp, &base, &base), rx).await.unwrap();
+    let models = app.models.clone();
+    let inference =
+        tokio::spawn(async move { models.embed(&["cancelled query".into()], true).await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
+    inference.abort();
+    let _ = inference.await;
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let status: String =
+                sqlx::query_scalar("SELECT status FROM model_requests WHERE purpose='embedding'")
+                    .fetch_one(&app.store.pool)
+                    .await
+                    .unwrap();
+            if status == "interrupted" {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let usage: String =
+        sqlx::query_scalar("SELECT usage FROM model_requests WHERE purpose='embedding'")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    let usage: Value = serde_json::from_str(&usage).unwrap();
+    assert!(usage["input_tokens"].is_null());
+    assert!(usage["estimated"]["input_tokens"].as_u64().unwrap() > 0);
+    task.abort();
+}
+
+#[tokio::test]
+#[ignore = "requires the owned isolated relay started with --thinking; real API usage and visible reasoning"]
+async fn real_provider_reasoning_usage_matches_raw_api_fields() {
+    let client = reqwest::Client::new();
+    let health: Value = client
+        .get("http://127.0.0.1:18091/health")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(health["provider"], "official-deepseek-test-relay");
+    assert_eq!(health["thinking"], true);
+    let before = health["requests"].as_array().unwrap().len();
+    let temp = tempfile::TempDir::new().unwrap();
+    let (models, fake) = common::fake_services().await;
+    let mut c = config(&temp, "http://127.0.0.1:18091/v1", &models);
+    c.llm.model = "mneme-eval-local".into();
+    c.llm.max_tokens = 1500;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c, rx).await.unwrap();
+    let router = api::router(app.clone());
+    let turn = id();
+    let wire = chat(&router, &turn, "计算37乘19，只给结果。").await;
+    assert!(
+        wire.contains("event: done") && wire.contains("event: reasoning"),
+        "missing actual thinking stream: {wire}"
+    );
+    let detail = data(&router, &format!("/v1/turns/{turn}")).await;
+    assert!(
+        detail["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["role"] == "assistant" && m["content"].as_str().unwrap().contains("703"))
+    );
+    let result = app
+        .llm
+        .complete_json(
+            "只返回JSON对象，不要Markdown。",
+            json!({"task":"返回对象，ok 字段为 true"}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result["ok"], true);
+    let after: Value = client
+        .get("http://127.0.0.1:18091/health")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let raw = &after["requests"].as_array().unwrap()[before..];
+    assert_eq!(raw.len(), 2);
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT usage FROM model_requests WHERE purpose IN ('chat','memory') ORDER BY seq",
+    )
+    .fetch_all(&app.store.pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 2);
+    let saved: Vec<Value> = rows
+        .iter()
+        .map(|s| serde_json::from_str(s).unwrap())
+        .collect();
+    for (request, ledger) in raw.iter().zip(&saved) {
+        let usage = &request["usage"];
+        assert_eq!(request["status"], 200);
+        assert_eq!(ledger["source"], "api");
+        for (actual, provider) in [
+            ("input_tokens", "prompt_tokens"),
+            ("output_tokens", "completion_tokens"),
+            ("total_tokens", "total_tokens"),
+        ] {
+            assert_eq!(ledger[actual], usage[provider]);
+        }
+        assert_eq!(
+            ledger["cached_input_tokens"],
+            usage["prompt_cache_hit_tokens"]
+        );
+        assert_eq!(
+            ledger["reasoning_tokens"],
+            usage["completion_tokens_details"]["reasoning_tokens"]
+        );
+        if ledger["reasoning_tokens"].is_null() {
+            assert!(ledger["estimated"]["reasoning_tokens"].as_u64().unwrap() > 0);
+        }
+    }
+    let path = std::env::var("MNEME_REASONING_OUTPUT")
+        .unwrap_or("artifacts/mneme-quality-reasoning.json".into());
+    std::fs::write(path,serde_json::to_string_pretty(&json!({"thinking":true,"provider_requests":raw,"ledger":saved,"thinking_stream_observed":true})).unwrap()).unwrap();
     fake.abort();
 }

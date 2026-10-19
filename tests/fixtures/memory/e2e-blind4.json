@@ -1,0 +1,423 @@
+{
+  "version": 1,
+  "notes": "independently authored sealed evaluation",
+  "profiles": [
+    {
+      "id": "blind-final-quality",
+      "split": "blind4",
+      "turns": [
+        {
+          "day": 1,
+          "category": "fact",
+          "say": "我养了一只叫团子的橘猫，是公的。",
+          "facts": [
+            {
+              "label": "cat_tuanzi_male",
+              "all": [
+                [
+                  "团子"
+                ],
+                [
+                  "公"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 3,
+          "category": "fact",
+          "say": "我平时用一台叫“青轴”的机械键盘写代码。",
+          "facts": [
+            {
+              "label": "keyboard_qingzhou",
+              "all": [
+                [
+                  "青轴"
+                ],
+                [
+                  "键盘"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 5,
+          "category": "fact",
+          "say": "我不喜欢用红轴键盘，太软了。",
+          "facts": [
+            {
+              "label": "dislike_red_switch",
+              "all": [
+                [
+                  "不"
+                ],
+                [
+                  "红轴"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 8,
+          "category": "fact",
+          "say": "我妹妹叫林小满，她在做插画师。",
+          "facts": [
+            {
+              "label": "sister_lin_xiaoman",
+              "all": [
+                [
+                  "妹妹"
+                ],
+                [
+                  "林小满"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 10,
+          "category": "fact",
+          "say": "林小满的搭档叫周野，是个做动画的。",
+          "facts": [
+            {
+              "label": "partner_zhou_ye",
+              "all": [
+                [
+                  "周野"
+                ],
+                [
+                  "动画"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 13,
+          "category": "fact",
+          "say": "我每周三晚上去练巴西柔术。",
+          "facts": [
+            {
+              "label": "bjj_wednesday",
+              "all": [
+                [
+                  "巴西柔术"
+                ],
+                [
+                  "周三"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 16,
+          "category": "fact",
+          "say": "我原来住城东，后来搬到了城西的梧桐里小区。",
+          "facts": [
+            {
+              "label": "moved_to_wutongli",
+              "all": [
+                [
+                  "梧桐里"
+                ],
+                [
+                  "城西"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 19,
+          "category": "fact",
+          "say": "我纠正一下，我练柔术是每周四晚上，不是周三。",
+          "facts": [
+            {
+              "label": "bjj_thursday",
+              "all": [
+                [
+                  "巴西柔术"
+                ],
+                [
+                  "周四"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 22,
+          "category": "fact",
+          "say": "我确认一下，我确实养着那只叫团子的公橘猫。",
+          "facts": [
+            {
+              "label": "cat_tuanzi_male",
+              "all": [
+                [
+                  "团子"
+                ],
+                [
+                  "公"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 25,
+          "category": "fact",
+          "say": "我最近对摄影挺感兴趣的，想学学看。",
+          "facts": []
+        },
+        {
+          "day": 28,
+          "category": "fact",
+          "say": "我妹妹林小满的搭档周野，他其实是我大学同学。",
+          "facts": [
+            {
+              "label": "zhou_ye_classmate",
+              "all": [
+                [
+                  "周野"
+                ],
+                [
+                  "大学同学"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 31,
+          "category": "fact",
+          "say": "我的血型是O型，这个别记下来。",
+          "facts": []
+        }
+      ],
+      "final": [
+        {
+          "label": "cat_tuanzi_male",
+          "all": [
+            [
+              "团子"
+            ],
+            [
+              "公"
+            ]
+          ]
+        },
+        {
+          "label": "keyboard_qingzhou",
+          "all": [
+            [
+              "青轴"
+            ],
+            [
+              "键盘"
+            ]
+          ]
+        },
+        {
+          "label": "dislike_red_switch",
+          "all": [
+            [
+              "不"
+            ],
+            [
+              "红轴"
+            ]
+          ]
+        },
+        {
+          "label": "sister_lin_xiaoman",
+          "all": [
+            [
+              "妹妹"
+            ],
+            [
+              "林小满"
+            ]
+          ]
+        },
+        {
+          "label": "partner_zhou_ye",
+          "all": [
+            [
+              "周野"
+            ],
+            [
+              "动画"
+            ]
+          ]
+        },
+        {
+          "label": "bjj_thursday",
+          "all": [
+            [
+              "巴西柔术"
+            ],
+            [
+              "周四"
+            ]
+          ]
+        },
+        {
+          "label": "moved_to_wutongli",
+          "all": [
+            [
+              "梧桐里"
+            ],
+            [
+              "城西"
+            ]
+          ]
+        },
+        {
+          "label": "zhou_ye_classmate",
+          "all": [
+            [
+              "周野"
+            ],
+            [
+              "大学同学"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我那只公猫叫什么名字？",
+          "relevant": [
+            "cat_tuanzi_male"
+          ],
+          "answer_all": [
+            [
+              "团子"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我现在住哪个小区？",
+          "relevant": [
+            "moved_to_wutongli"
+          ],
+          "answer_all": [
+            [
+              "梧桐里"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我每周哪天晚上去练巴西柔术？",
+          "relevant": [
+            "bjj_thursday"
+          ],
+          "answer_all": [
+            [
+              "周四"
+            ]
+          ],
+          "answer_forbidden": [
+            "周三"
+          ]
+        },
+        {
+          "say": "我妹妹的搭档是做什么的？",
+          "relevant": [
+            "partner_zhou_ye"
+          ],
+          "answer_all": [
+            [
+              "动画"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妹妹的搭档和我是什么关系？",
+          "relevant": [
+            "partner_zhou_ye",
+            "zhou_ye_classmate"
+          ],
+          "answer_all": [
+            [
+              "大学同学"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我用什么键盘写代码，又不喜欢哪种轴？",
+          "relevant": [
+            "keyboard_qingzhou",
+            "dislike_red_switch"
+          ],
+          "answer_all": [
+            [
+              "青轴"
+            ],
+            [
+              "红轴"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妹妹叫什么，她搭档又叫什么？",
+          "relevant": [
+            "sister_lin_xiaoman",
+            "partner_zhou_ye"
+          ],
+          "answer_all": [
+            [
+              "林小满"
+            ],
+            [
+              "周野"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我那只橘猫是公的还是母的？",
+          "relevant": [
+            "cat_tuanzi_male"
+          ],
+          "answer_all": [
+            [
+              "公"
+            ]
+          ],
+          "answer_forbidden": [
+            "母"
+          ]
+        },
+        {
+          "say": "我练柔术的场馆具体在哪个街道？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我是不是说过想学摄影？那我现在是不是专业摄影师了？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        },
+        {
+          "say": "你好呀，今天过得怎么样？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        }
+      ]
+    }
+  ]
+}

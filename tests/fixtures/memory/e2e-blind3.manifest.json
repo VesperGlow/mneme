@@ -1,0 +1,19 @@
+{
+  "sha256": "dd94caf105376da072dbe14b16e70eddf1f327e8e7feda62f49689f3a1b21110",
+  "author": "deepseek-flash separate authoring request",
+  "usage": {
+    "prompt_tokens": 544,
+    "completion_tokens": 1037,
+    "total_tokens": 1581,
+    "prompt_tokens_details": {
+      "cached_tokens": 384
+    },
+    "prompt_cache_hit_tokens": 384,
+    "prompt_cache_miss_tokens": 160
+  },
+  "prompt_sha256": "67a826ef45d58b98eba8b11fb2a2f8cf718d1b860caafa54a756ec4dccc3ee0d",
+  "request_prompt_sha256": "98e38a3f5f235519b4454d5dd90c949298f06f4addb514b75247aacd4fe54de0",
+  "turns": 12,
+  "queries": 10,
+  "rule": "No tuning on this corpus; report first run, including failures."
+}

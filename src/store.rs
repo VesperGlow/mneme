@@ -12,7 +12,10 @@ use std::{path::Path, sync::Arc, time::Duration};
 pub struct Store {
     pub pool: SqlitePool,
     pub memory_write_metrics: Arc<crate::telemetry::Metrics>,
-    pub(crate) extract_every_chars: usize,
+    pub(crate) extract_every_tokens: usize,
+    pub(crate) extract_max_delay_seconds: u64,
+    pub(crate) tokens: crate::tokens::Counter,
+    pub(crate) job_notify: Arc<tokio::sync::Notify>,
     _lock: Arc<std::fs::File>,
     embeddings: Arc<std::sync::Mutex<std::collections::HashMap<String, CachedEmbedding>>>,
 }
@@ -72,7 +75,10 @@ impl Store {
         Ok(Self {
             pool,
             memory_write_metrics: Default::default(),
-            extract_every_chars: 10_000,
+            extract_every_tokens: 2048,
+            job_notify: Default::default(),
+            extract_max_delay_seconds: 120,
+            tokens: Default::default(),
             _lock: Arc::new(lock),
             embeddings: Default::default(),
         })
@@ -358,6 +364,7 @@ impl Store {
         }
         self.schedule_extraction(&mut tx).await?;
         tx.commit().await?;
+        self.job_notify.notify_one();
         Ok(message_id)
     }
 
@@ -381,23 +388,27 @@ impl Store {
         Ok(())
     }
 
-    /// Count full conversation text, then enqueue one extraction for each completed interval.
+    /// Count full conversation tokens, then enqueue completed intervals or an aged partial batch.
     /// A single long turn stays whole. The cursor and its job commit with the reply.
     pub(crate) async fn schedule_extraction(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
         let through: i64 = sqlx::query_scalar("SELECT COALESCE((SELECT CAST(value AS INTEGER) FROM metadata WHERE key='memory.extraction.through_seq'),0)")
             .fetch_one(&mut **tx).await?;
-        let rows: Vec<(String,i64,i64)> = sqlx::query_as("SELECT u.id,u.seq,length(u.content)+length(a.content) FROM messages u JOIN turns t ON t.id=u.turn_id JOIN messages a ON a.turn_id=t.id AND a.role='assistant' WHERE u.role='user' AND t.status='complete' AND u.seq>? ORDER BY u.seq")
+        let rows: Vec<(String,i64,String,String,i64)> = sqlx::query_as("SELECT u.id,u.seq,u.content,a.content,t.completed_at FROM messages u JOIN turns t ON t.id=u.turn_id JOIN messages a ON a.turn_id=t.id AND a.role='assistant' WHERE u.role='user' AND t.status='complete' AND u.seq>? ORDER BY u.seq")
             .bind(through).fetch_all(&mut **tx).await?;
-        let mut chars = 0i64;
+        let mut tokens = 0usize;
         let mut sources = Vec::new();
-        for (message, seq, size) in rows {
-            chars += size;
+        let mut oldest = None;
+        let mut last_seq = through;
+        for (message, seq, user, assistant, completed) in rows {
+            tokens += self.tokens.count(&user) + self.tokens.count(&assistant);
+            oldest.get_or_insert(completed);
+            last_seq = seq;
             let processed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?) OR EXISTS(SELECT 1 FROM jobs WHERE kind='extract' AND payload=?)")
                 .bind(&message).bind(&message).fetch_one(&mut **tx).await?;
             if !processed {
                 sources.push(message);
             }
-            if chars >= self.extract_every_chars as i64 {
+            if tokens >= self.extract_every_tokens {
                 if !sources.is_empty() {
                     enqueue(
                         tx,
@@ -410,15 +421,40 @@ impl Store {
                 sqlx::query("INSERT INTO metadata(key,value) VALUES('memory.extraction.through_seq',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
                     .bind(seq.to_string()).execute(&mut **tx).await?;
                 sources.clear();
-                chars = 0;
+                tokens = 0;
+                oldest = None;
             }
+        }
+        if oldest.is_some_and(|at| now() - at >= self.extract_max_delay_seconds as i64) {
+            if !sources.is_empty() {
+                enqueue(
+                    tx,
+                    &format!("extract:batch:{last_seq}"),
+                    "extract",
+                    &json!({"message_ids":sources}).to_string(),
+                )
+                .await?;
+            }
+            sqlx::query("INSERT INTO metadata(key,value) VALUES('memory.extraction.through_seq',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                .bind(last_seq.to_string()).execute(&mut **tx).await?;
         }
         Ok(())
     }
 
-    pub async fn extraction_pending_chars(&self) -> Result<i64> {
-        Ok(sqlx::query_scalar("SELECT COALESCE(SUM(length(u.content)+length(a.content)),0) FROM messages u JOIN turns t ON t.id=u.turn_id JOIN messages a ON a.turn_id=t.id AND a.role='assistant' WHERE u.role='user' AND t.status='complete' AND u.seq>COALESCE((SELECT CAST(value AS INTEGER) FROM metadata WHERE key='memory.extraction.through_seq'),0)")
-            .fetch_one(&self.pool).await?)
+    pub(crate) async fn flush_due_extraction(&self) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        self.schedule_extraction(&mut tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    pub async fn extraction_pending_tokens(&self) -> Result<i64> {
+        let rows: Vec<(String,String)> = sqlx::query_as("SELECT u.content,a.content FROM messages u JOIN turns t ON t.id=u.turn_id JOIN messages a ON a.turn_id=t.id AND a.role='assistant' WHERE u.role='user' AND t.status='complete' AND u.seq>COALESCE((SELECT CAST(value AS INTEGER) FROM metadata WHERE key='memory.extraction.through_seq'),0)")
+            .fetch_all(&self.pool).await?;
+        Ok(rows
+            .iter()
+            .map(|(u, a)| self.tokens.count(u) + self.tokens.count(a))
+            .sum::<usize>() as i64)
     }
 
     pub async fn history(&self, session: &str, turns: i64) -> Result<Vec<Message>> {
@@ -524,7 +560,7 @@ impl Store {
         let start = std::time::Instant::now();
         let result = async {
             let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-            Self::apply_candidates_in(&mut tx, source, candidates).await?;
+            Self::apply_candidates_in(&mut tx, source, candidates, true).await?;
             sqlx::query("DELETE FROM jobs WHERE id=?")
                 .bind(job_id)
                 .execute(&mut *tx)
@@ -535,6 +571,17 @@ impl Store {
         .await;
         self.memory_write_metrics.record(start, result.is_ok());
         result
+    }
+
+    pub(crate) async fn apply_partial(
+        &self,
+        source: &Message,
+        candidates: MemoryRecords,
+    ) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        Self::apply_candidates_in(&mut tx, source, candidates, false).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     pub(crate) async fn apply_batch(
@@ -557,7 +604,7 @@ impl Store {
             let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
             for (source, candidates) in records {
                 if retry_sources.contains(&source.id) {
-                    ensure!(candidates.is_empty(), "cannot retry committed source");
+                    Self::apply_candidates_in(&mut tx, &source, candidates, false).await?;
                     // No receipt for an entirely rejected source. Persist its
                     // bounded single-source retry together with this batch ack.
                     enqueue(
@@ -568,7 +615,7 @@ impl Store {
                     )
                     .await?;
                 } else {
-                    Self::apply_candidates_in(&mut tx, &source, candidates).await?;
+                    Self::apply_candidates_in(&mut tx, &source, candidates, true).await?;
                 }
             }
             sqlx::query("DELETE FROM jobs WHERE id=?")
@@ -587,6 +634,7 @@ impl Store {
         tx: &mut Transaction<'_, Sqlite>,
         source: &Message,
         candidates: Vec<(Candidate, Vec<f32>, Option<i64>)>,
+        mark_processed: bool,
     ) -> Result<()> {
         let processed: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)",
@@ -635,7 +683,58 @@ impl Store {
                 .await?;
             return Ok(());
         }
-        for (candidate, embedding, valid_until) in candidates {
+        'candidates: for (mut candidate, embedding, valid_until) in candidates {
+            if let Some(slot) = sqlx::query_scalar::<_, String>(
+                "SELECT slot FROM memory_slot_aliases WHERE alias=?",
+            )
+            .bind(&candidate.key)
+            .fetch_optional(&mut **tx)
+            .await?
+            {
+                candidate.key = slot;
+            }
+            candidate.key = candidate.storage_key();
+            let mut superseded = Vec::new();
+            if candidate.relation == FactRelation::Replace {
+                for target in candidate.supersedes.iter().take(8) {
+                    let (column, value) = target
+                        .strip_prefix("slot:")
+                        .map(|s| ("slot", s))
+                        .unwrap_or(("id", target));
+                    if let Some(old) = sqlx::query_as::<_, Memory>(&format!(
+                        "SELECT * FROM memories WHERE {column}=? ORDER BY source_seq DESC LIMIT 1"
+                    ))
+                    .bind(value)
+                    .fetch_optional(&mut **tx)
+                    .await?
+                    {
+                        let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM forget_barriers WHERE slot=? AND (through_seq>=? OR (? IS NOT NULL AND through_qq>=?)))")
+                            .bind(&old.slot).bind(source_seq).bind(source_qq).bind(source_qq).fetch_one(&mut **tx).await?;
+                        if blocked || old.source_seq > source_seq {
+                            continue 'candidates;
+                        }
+                        if old.status != "active" {
+                            if let Some(next) = old.superseded_by.as_deref() {
+                                let later: Option<i64> = sqlx::query_scalar(
+                                    "SELECT source_seq FROM memories WHERE id=?",
+                                )
+                                .bind(next)
+                                .fetch_optional(&mut **tx)
+                                .await?;
+                                if later.is_some_and(|seq| seq > source_seq) {
+                                    continue 'candidates;
+                                }
+                            }
+                            anyhow::bail!(
+                                "reconciliation target changed; retry against current facts"
+                            );
+                        }
+                        superseded.push(old);
+                    } else {
+                        continue 'candidates;
+                    }
+                }
+            }
             let barrier: Option<(i64, i64)> =
                 sqlx::query_as("SELECT through_seq,through_qq FROM forget_barriers WHERE slot=?")
                     .bind(&candidate.key)
@@ -681,6 +780,16 @@ impl Store {
                     .cloned()
             });
             let (memory_id, revision) = if let Some(memory) = reinforce {
+                if candidate.key != memory.slot {
+                    // Flatten aliases when two formerly independent slots merge.
+                    sqlx::query("UPDATE memory_slot_aliases SET slot=? WHERE slot=?")
+                        .bind(&memory.slot)
+                        .bind(&candidate.key)
+                        .execute(&mut **tx)
+                        .await?;
+                    sqlx::query("INSERT INTO memory_slot_aliases(alias,slot) VALUES(?,?) ON CONFLICT(alias) DO UPDATE SET slot=excluded.slot")
+                        .bind(&candidate.key).bind(&memory.slot).execute(&mut **tx).await?;
+                }
                 // Content deduplication can point to a different slot. The slot being
                 // corrected still has to lose its old value, in this same transaction.
                 if let Some(old) = current.as_ref().filter(|old| old.id != memory.id) {
@@ -694,8 +803,19 @@ impl Store {
                     )
                     .await?;
                 }
-                sqlx::query("UPDATE memories SET importance=MAX(importance,?),confidence=MAX(confidence,?),updated_at=?,source_seq=?,valid_until=?,revision=revision+1 WHERE id=?")
-                    .bind(candidate.importance).bind(candidate.confidence).bind(source.created_at).bind(source_seq).bind(valid_until).bind(&memory.id).execute(&mut **tx).await?;
+                let already_observed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_sources WHERE memory_id=? AND message_id=?)")
+                    .bind(&memory.id).bind(&source.id).fetch_one(&mut **tx).await?;
+                if already_observed {
+                    continue;
+                }
+                let mut entities = candidate.entities.clone();
+                for entity in serde_json::from_str::<Vec<String>>(&memory.entities)? {
+                    if entities.len() < 8 && !entities.contains(&entity) {
+                        entities.push(entity);
+                    }
+                }
+                sqlx::query("UPDATE memories SET importance=MAX(importance,?),confidence=MAX(confidence,?),updated_at=?,source_seq=?,valid_until=?,entities=?,revision=revision+1 WHERE id=?")
+                    .bind(candidate.importance).bind(candidate.confidence).bind(source.created_at).bind(source_seq).bind(valid_until.or(memory.valid_until.filter(|end|*end > source.created_at))).bind(serde_json::to_string(&entities)?).bind(&memory.id).execute(&mut **tx).await?;
                 (memory.id, memory.revision + 1)
             } else {
                 let new_id = id();
@@ -717,6 +837,19 @@ impl Store {
                     .execute(&mut **tx).await?;
                 (new_id, 1)
             };
+            for old in superseded.into_iter().filter(|m| m.id != memory_id) {
+                let changed = sqlx::query("UPDATE memories SET status='superseded',superseded_by=?,revision=revision+1 WHERE id=? AND status='active' AND revision=?")
+                    .bind(&memory_id).bind(&old.id).bind(old.revision).execute(&mut **tx).await?.rows_affected();
+                if changed > 0 {
+                    enqueue(
+                        tx,
+                        &format!("project:{}:{}", old.id, old.revision + 1),
+                        "project",
+                        &old.id,
+                    )
+                    .await?;
+                }
+            }
             sqlx::query("INSERT OR IGNORE INTO memory_sources(memory_id,message_id,quote,observed_at) VALUES(?,?,?,?)")
                 .bind(&memory_id).bind(&source.id).bind(&candidate.source_quote).bind(source.created_at).execute(&mut **tx).await?;
             enqueue(
@@ -727,10 +860,12 @@ impl Store {
             )
             .await?;
         }
-        sqlx::query("INSERT OR IGNORE INTO extracted_messages(message_id) VALUES(?)")
-            .bind(&source.id)
-            .execute(&mut **tx)
-            .await?;
+        if mark_processed {
+            sqlx::query("INSERT OR IGNORE INTO extracted_messages(message_id) VALUES(?)")
+                .bind(&source.id)
+                .execute(&mut **tx)
+                .await?;
+        }
         Ok(())
     }
 

@@ -1,6 +1,7 @@
 //! Real local causal model -> durable worker -> real embedding/Neo4j -> recall -> real answer.
 //! Only scripts/memory-e2e.py may start this ignored suite, with disposable graph marker.
 use axum::{Json, Router, body::Body, response::IntoResponse, routing::post};
+use futures_util::StreamExt;
 use mneme::{App, chat, config::Config, domain::*, memory, store::BeginTurn};
 use serde_json::{Value, json};
 use std::{
@@ -27,6 +28,20 @@ fn labels<'a>(text: &str, facts: &'a [Value]) -> HashSet<&'a str> {
         .filter(|f| matches(text, f))
         .map(|f| f["label"].as_str().unwrap())
         .collect()
+}
+fn contains_forbidden(text: &str, value: &Value) -> bool {
+    match value {
+        Value::String(word) => text.contains(word),
+        Value::Array(items) => items.iter().any(|v| contains_forbidden(text, v)),
+        _ => false,
+    }
+}
+
+#[test]
+fn forbidden_gold_accepts_flat_or_nested_alternative_lists() {
+    assert!(contains_forbidden("星期三", &json!([["周三", "星期三"]])));
+    assert!(contains_forbidden("周三", &json!(["周三"])));
+    assert!(!contains_forbidden("周四", &json!([["周三", "星期三"]])));
 }
 async fn drain(app: &App) {
     tokio::time::timeout(Duration::from_secs(180), async {
@@ -80,7 +95,7 @@ async fn setup_threshold(run: &str, dir: &tempfile::TempDir, base: &str, thresho
     c.models.base_url = base.into();
     c.neo4j.base_url = base.into();
     c.neo4j_password = "mneme-memory-eval-only".into();
-    c.memory.extract_every_chars = threshold;
+    c.memory.extract_every_tokens = threshold;
     c.memory.poll_seconds = 1;
     c.memory.max_attempts = 1;
     let (_, rx) = tokio::sync::watch::channel(false);
@@ -131,15 +146,31 @@ async fn proxy() -> (String, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>
             let response = req.send().await.unwrap();
             let status = response.status();
             if body["stream"] == true {
+                let path = path.to_owned();
+                let stream = async_stream::stream! {
+                    let mut upstream = response.bytes_stream();
+                    let mut captured = Vec::new();
+                    while let Some(chunk) = upstream.next().await {
+                        match chunk {
+                            Ok(bytes) => {captured.extend_from_slice(&bytes);yield Ok::<_,reqwest::Error>(bytes);},
+                            Err(error) => {yield Err(error);break;}
+                        }
+                    }
+                    let frames: Vec<Value> = String::from_utf8_lossy(&captured).lines()
+                        .filter_map(|line|line.strip_prefix("data: "))
+                        .filter_map(|line|serde_json::from_str::<Value>(line).ok())
+                        .filter_map(|v|v.get("usage").filter(|u|u.is_object()).cloned()).collect();
+                    log.lock().await.push(json!({"endpoint":path,"request":body,"stream":true,"usage":frames.last(),"usage_frames":frames,"status":status.as_u16(),"ms":at.elapsed().as_secs_f64()*1000.0}));
+                };
                 (
                     status,
                     [("content-type", "text/event-stream")],
-                    Body::from_stream(response.bytes_stream()),
+                    Body::from_stream(stream),
                 )
                     .into_response()
             } else {
                 let bytes = response.bytes().await.unwrap();
-                log.lock().await.push(json!({"endpoint":path,"request":if path=="/chat/completions"{body}else{Value::Null},"response":if path=="/chat/completions"{serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null)}else{Value::Null},"status":status.as_u16(),"ms":at.elapsed().as_secs_f64()*1000.0}));
+                log.lock().await.push(json!({"endpoint":path,"request":if path=="/chat/completions"{body}else{Value::Null},"response":if path=="/chat/completions"{serde_json::from_slice::<Value>(&bytes).unwrap_or(Value::Null)}else{Value::Null},"usage":serde_json::from_slice::<Value>(&bytes).ok().map(|v|v["usage"].clone()),"status":status.as_u16(),"ms":at.elapsed().as_secs_f64()*1000.0}));
                 (
                     status,
                     [("content-type", "application/json")],
@@ -166,7 +197,17 @@ async fn real_local_e2e() {
     let run = std::env::var("MNEME_EVAL_RUN").expect("isolated services required");
     let output = std::env::var("MNEME_EVAL_OUTPUT").unwrap();
     let split = std::env::var("MNEME_E2E_SPLIT").unwrap_or("all".into());
-    let data: Value = serde_json::from_str(if split == "confirm" {
+    let mut data: Value = serde_json::from_str(if split == "blind5" {
+        include_str!("fixtures/memory/e2e-blind5.json")
+    } else if split == "blind4" {
+        include_str!("fixtures/memory/e2e-blind4.json")
+    } else if split == "blind3" {
+        include_str!("fixtures/memory/e2e-blind3.json")
+    } else if split == "blind2" {
+        include_str!("fixtures/memory/e2e-blind2.json")
+    } else if split == "blind" {
+        include_str!("fixtures/memory/e2e-blind.json")
+    } else if split == "confirm" {
         include_str!("fixtures/memory/e2e-confirm.json")
     } else if split == "unseen" {
         include_str!("fixtures/memory/e2e-unseen.json")
@@ -174,20 +215,53 @@ async fn real_local_e2e() {
         include_str!("fixtures/memory/e2e.json")
     })
     .unwrap();
+    if split == "full" || split == "combined" || split == "core" || split == "quality" {
+        for raw in [
+            include_str!("fixtures/memory/e2e-unseen.json"),
+            include_str!("fixtures/memory/e2e-confirm.json"),
+            if split == "combined" || split == "quality" {
+                include_str!("fixtures/memory/e2e-blind3.json")
+            } else if split == "core" {
+                "{\"profiles\":[]}"
+            } else {
+                include_str!("fixtures/memory/e2e-blind.json")
+            },
+        ] {
+            let extra: Value = serde_json::from_str(raw).unwrap();
+            data["profiles"]
+                .as_array_mut()
+                .unwrap()
+                .extend(extra["profiles"].as_array().unwrap().clone());
+        }
+        if split == "quality" {
+            for raw in [
+                include_str!("fixtures/memory/e2e-blind4.json"),
+                include_str!("fixtures/memory/e2e-blind5.json"),
+            ] {
+                let extra: Value = serde_json::from_str(raw).unwrap();
+                data["profiles"]
+                    .as_array_mut()
+                    .unwrap()
+                    .extend(extra["profiles"].as_array().unwrap().clone());
+            }
+        }
+    }
     let (base, calls, proxy) = proxy().await;
     let mut results = Vec::new();
-    for p in data["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|p| split == "all" || p["split"] == split)
-    {
+    for p in data["profiles"].as_array().unwrap().iter().filter(|p| {
+        split == "all"
+            || split == "full"
+            || split == "combined"
+            || split == "core"
+            || p["split"] == split
+    }) {
         let temp = tempfile::TempDir::new().unwrap();
         let mut app = setup(&run, &temp, &base).await;
         let (stop, rx) = tokio::sync::watch::channel(false);
         app.shutdown = rx;
         let worker = tokio::spawn(memory::worker(app.clone()));
         let session = app.store.conversation().await.unwrap();
+        let profile_call_start = calls.lock().await.len();
         let mut turns = Vec::new();
         let mut history = Vec::new();
         for (i, t) in p["turns"].as_array().unwrap().iter().enumerate() {
@@ -243,7 +317,7 @@ async fn real_local_e2e() {
                 "active_state":active_state,
                 "exact":tp==facts.len() && fp==0,"jobs":jobs,"extraction_and_projection_ms":total_ms,"context_ms":context_ms,"conversation_generation_ms":chat_ms,"assistant":answer,
                 "sqlite_transaction_ms":if write_after.requests>write_before.requests {Some(write_after.last_ms)}else{None},
-                "model_requests":model_after.requests-model_before.requests,"model_last_ms":model_after.last_ms,"llm_calls":records});
+                "request_usage":app.store.turn_model_requests(&source.turn_id).await.unwrap(),"model_requests":model_after.requests-model_before.requests,"model_last_ms":model_after.last_ms,"llm_calls":records});
             println!(
                 "E2E_TURN {}",
                 json!({"profile":p["id"],"index":i,"exact":row["exact"],"writes":row["writes"],"ms":total_ms})
@@ -318,11 +392,7 @@ async fn real_local_e2e() {
                     .unwrap()
                     .iter()
                     .any(|w| answer.contains(w.as_str().unwrap()))
-            }) && !q["answer_forbidden"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .any(|w| answer.contains(w.as_str().unwrap()))
+            }) && !contains_forbidden(&answer, &q["answer_forbidden"])
                 && !answer.starts_with("EVALUATION_ERROR");
             let row = json!({"gold":q,"selected":selected,"selected_memories":recalled.memories.iter().map(|r|json!({"id":r.memory.id,"content":r.memory.content})).collect::<Vec<_>>(),
                 "tp":selected.intersection(&expected).count(),"precision_tp":relevant_entries,"fp":irrelevant,"fn":expected.difference(&selected).count(),"exact":expected.is_subset(&selected) && irrelevant==0,
@@ -351,13 +421,99 @@ async fn real_local_e2e() {
             .iter()
             .map(|m| json!({"id":m.id,"slot":m.slot,"content":m.content,"revision":m.revision}))
             .collect();
-        results.push(json!({"id":p["id"],"split":p["split"],"turns":turns,"queries":queries,"final_memories":memories,"final_tp":final_tp,"final_fp":final_fp,"final_expected":facts.len()}));
+        results.push(json!({"id":p["id"],"split":p["split"],"turns":turns,"queries":queries,"final_memories":memories,"final_tp":final_tp,"final_fp":final_fp,"final_expected":facts.len(),"all_calls":calls.lock().await[profile_call_start..].to_vec(),"all_requests":ledger(&app).await}));
         std::fs::write(
             &output,
             serde_json::to_string_pretty(&json!({"run":run,"profiles":results})).unwrap(),
         )
         .unwrap();
     }
+    proxy.abort();
+}
+
+async fn ledger(app: &App) -> Vec<Value> {
+    let rows: Vec<(String, Option<String>, String, String, String, String)> = sqlx::query_as(
+        "SELECT id,turn_id,purpose,context,usage,status FROM model_requests ORDER BY seq",
+    )
+    .fetch_all(&app.store.pool)
+    .await
+    .unwrap();
+    rows.into_iter().map(|(id,turn,purpose,context,usage,status)|json!({"id":id,"turn_id":turn,"purpose":purpose,"context":serde_json::from_str::<Value>(&context).unwrap(),"usage":serde_json::from_str::<Value>(&usage).unwrap(),"status":status})).collect()
+}
+
+#[tokio::test]
+#[ignore = "real authenticated API/SSE + automatic extraction + native models + disposable Neo4j"]
+async fn real_local_api() {
+    use tower::ServiceExt;
+    let run = std::env::var("MNEME_EVAL_RUN").unwrap();
+    let output = std::env::var("MNEME_EVAL_OUTPUT").unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, calls, proxy) = proxy().await;
+    let mut app = setup_threshold(&run, &temp, &base, 1).await;
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    app.shutdown = rx;
+    let worker = tokio::spawn(memory::worker(app.clone()));
+    let router = mneme::api::router(app.clone());
+    let mut turns = Vec::new();
+    for text in [
+        "我主要使用 Haskell 开发后端，已经用了很多年。",
+        "我不使用 OCaml 作为主力开发语言。",
+        "Haskell 是我吃饭的本事吗？",
+        "现在我改为主要使用 OCaml 开发后端了。",
+    ] {
+        let turn = id();
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/v1/chat")
+            .header("authorization", format!("Bearer {}", app.config.api_token))
+            .header("content-type", "application/json")
+            .body(Body::from(
+                json!({"request_id":turn,"message":text}).to_string(),
+            ))
+            .unwrap();
+        let response = router.clone().oneshot(req).await.unwrap();
+        assert!(response.status().is_success());
+        let bytes = axum::body::to_bytes(response.into_body(), 2_097_152)
+            .await
+            .unwrap();
+        let wire = String::from_utf8(bytes.to_vec()).unwrap();
+        assert!(wire.contains("event: done"), "{wire}");
+        drain(&app).await;
+        let state: Vec<_> = app
+            .store
+            .active_memories(100)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| json!({"slot":m.slot,"content":m.content,"id":m.id}))
+            .collect();
+        if turns.len() == 1 {
+            assert!(
+                state
+                    .iter()
+                    .any(|m| m["content"].as_str().unwrap().contains("Haskell"))
+            );
+            assert!(
+                state
+                    .iter()
+                    .any(|m| m["content"].as_str().unwrap().contains("OCaml"))
+            );
+        }
+        turns.push(json!({"turn_id":turn,"input":text,"wire":wire,"state":state}));
+        std::fs::write(&output,serde_json::to_string_pretty(&json!({"turns":turns,"all_calls":calls.lock().await.clone(),"all_requests":ledger(&app).await})).unwrap()).unwrap();
+    }
+    let active = app.store.active_memories(100).await.unwrap();
+    assert!(active.iter().any(|m| m.content.contains("OCaml")
+        && !m.content.contains("不用")
+        && !m.content.contains("不使用")));
+    assert!(
+        active
+            .iter()
+            .all(|m| !m.content.contains("Haskell") || m.content.contains("不再")),
+        "old primary language survived: {active:?}"
+    );
+    stop.send(true).unwrap();
+    worker.await.unwrap();
     proxy.abort();
 }
 
@@ -370,12 +526,13 @@ async fn real_local_batch() {
     let data: Value = serde_json::from_str(include_str!("fixtures/memory/e2e.json")).unwrap();
     let (base, calls, proxy) = proxy().await;
     let mut rows = Vec::new();
-    for p in data["profiles"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .filter(|p| split == "all" || p["split"] == split)
-    {
+    for p in data["profiles"].as_array().unwrap().iter().filter(|p| {
+        split == "all"
+            || split == "full"
+            || split == "combined"
+            || split == "core"
+            || p["split"] == split
+    }) {
         let temp = tempfile::TempDir::new().unwrap();
         let mut app = setup_threshold(&run, &temp, &base, 200).await;
         let session = app.store.conversation().await.unwrap();
@@ -470,6 +627,168 @@ async fn real_local_batch() {
             .await
             .unwrap();
         std::fs::write(&output, serde_json::to_string_pretty(&rows).unwrap()).unwrap();
+    }
+    proxy.abort();
+}
+
+#[tokio::test]
+#[ignore = "actual API unknown-personal-fact guard; scripts/memory-e2e.py --test real_local_unknown"]
+async fn real_local_unknown() {
+    let run = std::env::var("MNEME_EVAL_RUN").unwrap();
+    let output = std::env::var("MNEME_EVAL_OUTPUT").unwrap();
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, _, proxy) = proxy().await;
+    let app = setup(&run, &temp, &base).await;
+    let session = app.store.conversation().await.unwrap();
+    let mut rows = Vec::new();
+    for question in [
+        "我现在的工作地点和岗位是什么？",
+        "我如今住在哪座城市？",
+        "你知道我亲属的姓名吗？",
+    ] {
+        let source = Message {
+            id: id(),
+            session_id: session.clone(),
+            turn_id: id(),
+            role: "user".into(),
+            content: question.into(),
+            created_at: now(),
+        };
+        let (answer, _, ms) = generate(&app, &source, vec![], &[]).await;
+        let unknown = [
+            "不知",
+            "不清楚",
+            "不知道",
+            "没有",
+            "没法",
+            "无法",
+            "不能",
+            "未",
+        ]
+        .iter()
+        .any(|w| answer.contains(w));
+        rows.push(json!({"question":question,"answer":answer,"unknown":unknown,"ms":ms}));
+        std::fs::write(&output, serde_json::to_string_pretty(&rows).unwrap()).unwrap();
+        assert!(
+            unknown && !answer.starts_with("EVALUATION_ERROR"),
+            "unsupported personal claim: {answer}"
+        );
+    }
+    proxy.abort();
+}
+
+#[tokio::test]
+#[ignore = "paired retrieval calibration on frozen extracted text; scripts/memory-e2e.py --test real_recall_replay"]
+async fn real_recall_replay() {
+    let run = std::env::var("MNEME_EVAL_RUN").unwrap();
+    let output = std::env::var("MNEME_EVAL_OUTPUT").unwrap();
+    let source_path = std::env::var("MNEME_REPLAY_SOURCE")
+        .unwrap_or("artifacts/mneme-2026-10-19-accepted-core/results.json".into());
+    let source: Value = serde_json::from_slice(&std::fs::read(&source_path).unwrap()).unwrap();
+    let (base, _, proxy) = proxy().await;
+    let mut variants = vec![
+        json!({"threshold":0.6,"profiles":[]}),
+        json!({"threshold":0.3,"profiles":[]}),
+    ];
+    for profile in source["profiles"].as_array().unwrap() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let app = setup(&run, &temp, &base).await;
+        let session = app.store.conversation().await.unwrap();
+        let memories = profile["final_memories"].as_array().unwrap();
+        let docs: Vec<_> = memories
+            .iter()
+            .map(|m| m["content"].as_str().unwrap().to_owned())
+            .collect();
+        let vectors = app.models.embed(&docs, false).await.unwrap();
+        for (m, vector) in memories.iter().zip(vectors) {
+            let text = m["content"].as_str().unwrap();
+            let mut entities = Vec::new();
+            for turn in profile["turns"].as_array().unwrap() {
+                for call in turn["llm_calls"].as_array().unwrap() {
+                    if call["endpoint"] != "/chat/completions" {
+                        continue;
+                    }
+                    if let Some(raw) = call
+                        .pointer("/response/choices/0/message/content")
+                        .and_then(Value::as_str)
+                        && let Ok(parsed) = serde_json::from_str::<Value>(raw)
+                    {
+                        for fact in parsed["memories"].as_array().into_iter().flatten() {
+                            if fact["content"]
+                                .as_str()
+                                .is_some_and(|s| content_hash(s) == content_hash(text))
+                            {
+                                for entity in fact["entities"]
+                                    .as_array()
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(Value::as_str)
+                                {
+                                    if entities.len() < 8 && !entities.iter().any(|e| e == entity) {
+                                        entities.push(entity.to_owned());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            let BeginTurn::Started(user) =
+                app.store.begin_turn(&session, &id(), text).await.unwrap()
+            else {
+                panic!()
+            };
+            app.store.complete_turn(&user, "replay seed").await.unwrap();
+            let candidate = Candidate {
+                key: m["slot"].as_str().unwrap().into(),
+                content: text.into(),
+                kind: "fact".into(),
+                importance: 0.8,
+                confidence: 0.95,
+                entities,
+                source_quote: text.into(),
+                valid_until: None,
+                sensitive: false,
+                equivalent_to: None,
+                attribute_of: None,
+                relation: Default::default(),
+                supersedes: Vec::new(),
+            };
+            app.store
+                .apply_candidates(&user, vec![(candidate, vector, None)], "seed")
+                .await
+                .unwrap();
+        }
+        let stored = app.store.active_memories(100).await.unwrap();
+        for memory in &stored {
+            app.graph.project(memory).await.unwrap();
+        }
+        for variant in &mut variants {
+            let mut configured = app.clone();
+            let mut config = (*app.config).clone();
+            config.memory.rerank_rescue_score = variant["threshold"].as_f64().unwrap();
+            configured.config = Arc::new(config);
+            let mut queries = Vec::new();
+            for q in profile["queries"].as_array().unwrap() {
+                let at = Instant::now();
+                let result = memory::debug_recall(&configured, q["gold"]["say"].as_str().unwrap())
+                    .await
+                    .unwrap();
+                queries.push(json!({"gold":q["gold"],"selected_memories":result.memories.iter().map(|r|json!({"id":r.memory.id,"content":r.memory.content})).collect::<Vec<_>>(),"trace":result.trace,"recall_ms":at.elapsed().as_secs_f64()*1000.0,"degraded":result.degraded,"answer":"","answer_ok":false,"context_ms":0,"generation_ms":0}));
+            }
+            let mut replay = profile.clone();
+            replay["queries"] = json!(queries);
+            variant["profiles"].as_array_mut().unwrap().push(replay);
+        }
+        let ids: Vec<_> = stored.iter().map(|m| &m.id).collect();
+        app.graph
+            .query(
+                "MATCH (m:Memory) WHERE m.id IN $ids DETACH DELETE m",
+                json!({"ids":ids}),
+            )
+            .await
+            .unwrap();
+        std::fs::write(&output,serde_json::to_string_pretty(&json!({"source":source_path,"mode":"retrieval_only_paired_replay","note":"Same frozen text and reconstructed entities; common importance/confidence/age; shared warm caches. No generation or paid API calls. Only retrieval metrics are applicable.","variants":variants})).unwrap()).unwrap();
     }
     proxy.abort();
 }

@@ -39,7 +39,7 @@ class ConfigureTest(unittest.TestCase):
             self.assertEqual(first['MNEME_LLM_MODEL'], 'auto')
             self.assertEqual(first['MNEME_LLM_CONTEXT_TOKENS'], '100000')
             self.assertEqual(first['MNEME_LLM_HISTORY_TURNS'], '1000')
-            self.assertEqual(first['MNEME_MEMORY_EXTRACT_CHARS'], '10000')
+            self.assertEqual(first['MNEME_MEMORY_EXTRACT_TOKENS'], '2048')
             self.assertGreaterEqual(len(first['MNEME_API_TOKEN']), 32)
             self.assertGreaterEqual(len(first['MNEME_CONSOLE_PASSWORD']), 10)
             self.assertNotEqual(first['MNEME_CONSOLE_PASSWORD'], first['MNEME_API_TOKEN'])

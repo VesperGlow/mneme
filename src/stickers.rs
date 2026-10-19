@@ -135,7 +135,7 @@ fn check_budget(app: &App, metadata: &Metadata, replacing: Option<&str>) -> ApiR
         sticker.enabled = true;
     }
     if catalog.stickers.len() > 50
-        || crate::tokens::count(&catalog.prompt()) > (app.config.llm.context_tokens / 4).min(6000)
+        || app.tokens.count(&catalog.prompt()) > (app.config.llm.context_tokens / 4).min(6000)
     {
         return Err(ApiError(StatusCode::CONFLICT, "sticker_catalog_full"));
     }

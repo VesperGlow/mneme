@@ -25,7 +25,12 @@ def summarize(directory):
     gold=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e.json').read_text())
     unseen=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-unseen.json').read_text())
     confirm=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-confirm.json').read_text())
-    by_id={p['id']:p for p in gold['profiles']+unseen['profiles']+confirm['profiles']}
+    blind=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-blind.json').read_text())
+    blind2=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-blind2.json').read_text())
+    blind3=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-blind3.json').read_text())
+    blind4=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-blind4.json').read_text())
+    blind5=json.loads((Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-blind5.json').read_text())
+    by_id={p['id']:p for p in gold['profiles']+unseen['profiles']+confirm['profiles']+blind['profiles']+blind2['profiles']+blind3['profiles']+blind4['profiles']+blind5['profiles']}
     composition_path=Path(__file__).resolve().parents[1]/'tests/fixtures/memory/e2e-compositions.json'
     compositions=json.loads(composition_path.read_text())
     def matches(text,fact):

@@ -118,11 +118,11 @@ class QueueTests(unittest.IsolatedAsyncioTestCase):
         gate = threading.Event()
         calls = []
         class FakeEngine:
-            def embed(self, texts, query):
+            def embed(self, texts, query, with_usage=False):
                 calls.extend(texts)
                 if texts == ["block"]:
                     gate.wait(3)
-                return [[1.0] for _ in texts]
+                return {"embeddings": [[1.0] for _ in texts]} if with_usage else [[1.0] for _ in texts]
         self.module.Engine = FakeEngine
         server = uvicorn.Server(uvicorn.Config(self.module.app, host="127.0.0.1", port=0,
                                                log_level="error", lifespan="on"))

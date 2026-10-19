@@ -73,15 +73,19 @@ def main():
     parser.add_argument("--require-quality", action="store_true", help="Return failure when measured gold quality thresholds are missed")
     parser.add_argument("--generation-model", choices=MODELS, default="qwen3-0.6b")
     parser.add_argument("--deepseek-relay", action="store_true", help="Use only the owned official-provider test relay, with its shared budget")
-    parser.add_argument("--split", choices=("dev", "heldout", "unseen", "confirm", "all"), default="all")
+    parser.add_argument("--split", choices=("dev", "heldout", "unseen", "confirm", "blind", "blind2", "blind3", "blind4", "blind5", "combined", "core", "quality", "full", "all"), default="all")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--models-memory", default="4g")
+    parser.add_argument("--models-source", type=Path, default=ROOT/'services/models', help="Read-only model service source for a checksum-recorded baseline comparison")
     parser.add_argument("--cpu-dtype", choices=("float32","bfloat16"), default="float32")
     parser.add_argument("--rerank-dtype", choices=("float32","bfloat16"), default="float32")
     parser.add_argument("--frozen-test-binary", type=Path, help="Optional checksum-verified pre-fix evaluator; never a production binary")
-    parser.add_argument("--test", default="real_local_e2e", choices=("real_local_e2e", "real_local_load", "real_local_batch"))
+    parser.add_argument("--test", default="real_local_e2e", choices=("real_local_e2e", "real_local_api", "real_local_load", "real_local_batch", "real_local_unknown", "real_recall_replay"))
     args = parser.parse_args()
-    if args.split in ('unseen','confirm') and (args.test!='real_local_e2e' or args.frozen_test_binary):
+    args.models_source=args.models_source.resolve()
+    if not all((args.models_source/name).is_file() for name in ('app.py','engine.py','artifacts.py')):
+        parser.error('model source must contain app.py, engine.py and artifacts.py')
+    if args.split in ('unseen','confirm') and args.test!='real_local_e2e':
         parser.error('novel-topic splits are separate post-fix quality suites')
     binary = None if args.deepseek_relay else prepare(args.download_free_model, args.generation_model)
     if args.prepare_only:
@@ -136,6 +140,7 @@ def main():
     meta['prejudge']=False
     meta['cpu_dtype']=args.cpu_dtype
     meta['rerank_dtype']=args.rerank_dtype
+    meta['model_service_source']={p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in args.models_source.glob('*.py')}
     try:
         glog = (out / "generation.log").open("w")
         if not relay:
@@ -168,7 +173,7 @@ def main():
             "--memory="+args.models_memory, "--cpus=3", "-p", "127.0.0.1:18090:8090", "-e", "HF_HUB_OFFLINE=1",
             "-e", "MNEME_CPU_THREADS=2", "-e", "MNEME_CPU_DTYPE="+args.cpu_dtype,
             "-e", "MNEME_CPU_RERANK_DTYPE="+args.rerank_dtype, "-e", "MNEME_BUNDLED_MODEL_CACHE=/models/hub",
-            "-v", str(ROOT/'services/models')+":/app:ro", "-v", "mneme-model-cache:/models:ro",
+            "-v", str(args.models_source)+":/app:ro", "-v", "mneme-model-cache:/models:ro",
             "localhost/mneme-models:bundled-qa", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8090", "--workers", "1", "--no-access-log", capture_output=True)
         containers.append(models)
         meta['models'] = base.ready("http://127.0.0.1:18090/health", models, 180)

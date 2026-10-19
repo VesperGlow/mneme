@@ -1,0 +1,569 @@
+{
+  "version": 1,
+  "notes": "independently authored sealed evaluation",
+  "profiles": [
+    {
+      "id": "blind-independent",
+      "split": "blind",
+      "turns": [
+        {
+          "day": 2,
+          "category": "fact",
+          "say": "我养了一只叫团子的橘猫，是只公猫。",
+          "facts": [
+            {
+              "label": "pet_cat_name_gender",
+              "all": [
+                [
+                  "团子"
+                ],
+                [
+                  "橘猫",
+                  "橘色的猫"
+                ],
+                [
+                  "公猫",
+                  "公的",
+                  "雄性"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 5,
+          "category": "fact",
+          "say": "我不住在杭州，我住在南京。",
+          "facts": [
+            {
+              "label": "city_nanjing",
+              "all": [
+                [
+                  "南京"
+                ],
+                [
+                  "不住",
+                  "不在",
+                  "不是住"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 9,
+          "category": "fact",
+          "say": "我姐姐叫林晓，她在做建筑设计。",
+          "facts": [
+            {
+              "label": "sister_linxiao_architect",
+              "all": [
+                [
+                  "姐姐"
+                ],
+                [
+                  "林晓"
+                ],
+                [
+                  "建筑设计",
+                  "建筑"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 13,
+          "category": "fact",
+          "say": "林晓的丈夫叫周航，是个儿科医生。",
+          "facts": [
+            {
+              "label": "brother_in_law_zhouhang_pediatrician",
+              "all": [
+                [
+                  "周航"
+                ],
+                [
+                  "林晓"
+                ],
+                [
+                  "丈夫",
+                  "老公"
+                ],
+                [
+                  "儿科医生",
+                  "儿科"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 18,
+          "category": "fact",
+          "say": "我每周三晚上去学陶艺。",
+          "facts": [
+            {
+              "label": "pottery_wednesday",
+              "all": [
+                [
+                  "陶艺",
+                  "做陶"
+                ],
+                [
+                  "周三",
+                  "星期三"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 22,
+          "category": "fact",
+          "say": "我原来学的是会计，后来改学统计了。",
+          "facts": [
+            {
+              "label": "major_statistics",
+              "all": [
+                [
+                  "统计",
+                  "统计学"
+                ],
+                [
+                  "改学",
+                  "转成",
+                  "后来学"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 27,
+          "category": "fact",
+          "say": "更正一下，我每周四晚上去学陶艺，不是周三。",
+          "facts": [
+            {
+              "label": "pottery_thursday",
+              "all": [
+                [
+                  "陶艺",
+                  "做陶"
+                ],
+                [
+                  "周四",
+                  "星期四"
+                ],
+                [
+                  "不是周三",
+                  "不是星期三"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 31,
+          "category": "fact",
+          "say": "对，我确实每周四晚上去学陶艺，这个没变。",
+          "facts": [
+            {
+              "label": "pottery_thursday",
+              "all": [
+                [
+                  "陶艺",
+                  "做陶"
+                ],
+                [
+                  "周四",
+                  "星期四"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 35,
+          "category": "fact",
+          "say": "我最近在考虑要不要搬到苏州去，但这只是想想，还没定。",
+          "facts": []
+        },
+        {
+          "day": 39,
+          "category": "fact",
+          "say": "我平时骑一辆蓝色的公路自行车通勤。",
+          "facts": [
+            {
+              "label": "commute_blue_road_bike",
+              "all": [
+                [
+                  "蓝色",
+                  "蓝的"
+                ],
+                [
+                  "公路自行车",
+                  "公路车"
+                ],
+                [
+                  "通勤",
+                  "上下班"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 43,
+          "category": "fact",
+          "say": "我妹妹叫苏晴，她养了一只叫豆豆的柯基。",
+          "facts": [
+            {
+              "label": "sister_suqing_corgi_doudou",
+              "all": [
+                [
+                  "妹妹"
+                ],
+                [
+                  "苏晴"
+                ],
+                [
+                  "柯基"
+                ],
+                [
+                  "豆豆"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 47,
+          "category": "fact",
+          "say": "这件事别记下来：我上个月体检结果有点小问题，不想存进记忆里。",
+          "facts": []
+        }
+      ],
+      "final": [
+        {
+          "label": "pet_cat_name_gender",
+          "all": [
+            [
+              "团子"
+            ],
+            [
+              "橘猫",
+              "橘色的猫"
+            ],
+            [
+              "公猫",
+              "公的",
+              "雄性"
+            ]
+          ]
+        },
+        {
+          "label": "city_nanjing",
+          "all": [
+            [
+              "南京"
+            ],
+            [
+              "不住",
+              "不在",
+              "不是住"
+            ]
+          ]
+        },
+        {
+          "label": "sister_linxiao_architect",
+          "all": [
+            [
+              "姐姐"
+            ],
+            [
+              "林晓"
+            ],
+            [
+              "建筑设计",
+              "建筑"
+            ]
+          ]
+        },
+        {
+          "label": "brother_in_law_zhouhang_pediatrician",
+          "all": [
+            [
+              "周航"
+            ],
+            [
+              "林晓"
+            ],
+            [
+              "丈夫",
+              "老公"
+            ],
+            [
+              "儿科医生",
+              "儿科"
+            ]
+          ]
+        },
+        {
+          "label": "pottery_thursday",
+          "all": [
+            [
+              "陶艺",
+              "做陶"
+            ],
+            [
+              "周四",
+              "星期四"
+            ]
+          ]
+        },
+        {
+          "label": "major_statistics",
+          "all": [
+            [
+              "统计",
+              "统计学"
+            ],
+            [
+              "改学",
+              "转成",
+              "后来学"
+            ]
+          ]
+        },
+        {
+          "label": "commute_blue_road_bike",
+          "all": [
+            [
+              "蓝色",
+              "蓝的"
+            ],
+            [
+              "公路自行车",
+              "公路车"
+            ],
+            [
+              "通勤",
+              "上下班"
+            ]
+          ]
+        },
+        {
+          "label": "sister_suqing_corgi_doudou",
+          "all": [
+            [
+              "妹妹"
+            ],
+            [
+              "苏晴"
+            ],
+            [
+              "柯基"
+            ],
+            [
+              "豆豆"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我养的猫叫什么，是什么品种和性别？",
+          "relevant": [
+            "pet_cat_name_gender"
+          ],
+          "answer_all": [
+            [
+              "团子"
+            ],
+            [
+              "橘猫",
+              "橘色的猫"
+            ],
+            [
+              "公猫",
+              "公的",
+              "雄性"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我姐姐林晓的丈夫是做什么工作的？",
+          "relevant": [
+            "sister_linxiao_architect",
+            "brother_in_law_zhouhang_pediatrician"
+          ],
+          "answer_all": [
+            [
+              "周航"
+            ],
+            [
+              "儿科医生",
+              "儿科"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妹妹苏晴养的那只柯基叫什么名字？",
+          "relevant": [
+            "sister_suqing_corgi_doudou"
+          ],
+          "answer_all": [
+            [
+              "豆豆"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我每周哪天晚上去学做陶？",
+          "relevant": [
+            "pottery_thursday"
+          ],
+          "answer_all": [
+            [
+              "周四",
+              "星期四"
+            ]
+          ],
+          "answer_forbidden": [
+            [
+              "周三",
+              "星期三"
+            ]
+          ]
+        },
+        {
+          "say": "我大学后来读的是什么专业？",
+          "relevant": [
+            "major_statistics"
+          ],
+          "answer_all": [
+            [
+              "统计",
+              "统计学"
+            ]
+          ],
+          "answer_forbidden": [
+            [
+              "会计"
+            ]
+          ]
+        },
+        {
+          "say": "我上下班骑的是什么车？",
+          "relevant": [
+            "commute_blue_road_bike"
+          ],
+          "answer_all": [
+            [
+              "蓝色",
+              "蓝的"
+            ],
+            [
+              "公路自行车",
+              "公路车"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我现在住在哪个城市？",
+          "relevant": [
+            "city_nanjing"
+          ],
+          "answer_all": [
+            [
+              "南京"
+            ]
+          ],
+          "answer_forbidden": [
+            [
+              "杭州"
+            ]
+          ]
+        },
+        {
+          "say": "我姐姐林晓是做什么工作的，她丈夫叫什么？",
+          "relevant": [
+            "sister_linxiao_architect",
+            "brother_in_law_zhouhang_pediatrician"
+          ],
+          "answer_all": [
+            [
+              "建筑设计",
+              "建筑"
+            ],
+            [
+              "周航"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我那只橘猫的性别，还有我妹妹养的狗是什么品种？",
+          "relevant": [
+            "pet_cat_name_gender",
+            "sister_suqing_corgi_doudou"
+          ],
+          "answer_all": [
+            [
+              "公猫",
+              "公的",
+              "雄性"
+            ],
+            [
+              "柯基"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我体检结果具体是什么问题？",
+          "relevant": [],
+          "answer_all": [
+            [
+              "不知道",
+              "没有记录",
+              "没有保存",
+              "无法确定"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我是不是已经决定搬到苏州了？",
+          "relevant": [],
+          "answer_all": [
+            [
+              "没有",
+              "还没",
+              "只是考虑",
+              "没定",
+              "不确定"
+            ]
+          ],
+          "answer_forbidden": [
+            [
+              "已经搬",
+              "已决定搬"
+            ]
+          ]
+        },
+        {
+          "say": "你好呀，今天过得怎么样？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        }
+      ]
+    }
+  ]
+}

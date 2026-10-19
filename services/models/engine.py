@@ -59,33 +59,61 @@ class Engine:
         LOG.info("CPU embedding and reranker ready")
 
     @torch.inference_mode()
-    def embed(self, texts, query=False):
+    def embed(self, texts, query=False, with_usage=False):
         result = []
+        counts = {}
+        prior = set(self.cache)
         # Two small documents at a time keep peak CPU attention memory bounded.
         missing = [text for text in dict.fromkeys(texts) if (query, text) not in self.cache]
         for start in range(0, len(missing), 2):
             items = missing[start:start + 2]
             inputs = [f"Instruct: {INSTRUCTION}\nQuery: {text}" if query else text for text in items]
             batch = self.embed_tokenizer(inputs, padding=True, truncation=True, max_length=512, return_tensors="pt")
+            counts.update(zip(items, batch["attention_mask"].sum(dim=1).tolist()))
             hidden = self.embed_model(**batch).last_hidden_state
             # Left padding guarantees that the final position is the last real token.
             vectors = F.normalize(hidden[:, -1, :].float(), p=2, dim=1).tolist()
             for text, vector in zip(items, vectors):
-                self.cache[(query, text)] = vector
+                self.cache[(query, text)] = (vector, counts[text])
         for text in texts:
             key = (query, text)
             self.cache.move_to_end(key)
-            result.append(self.cache[key])
+            result.append(self.cache[key][0])
+        tokens, cached = 0, 0
+        for text in texts:
+            key = (query, text)
+            count = self.cache[key][1]
+            tokens += count
+            if key in prior:
+                cached += count
+            prior.add(key)
         while len(self.cache) > 256:
             self.cache.popitem(last=False)
+        if with_usage:
+            return {"embeddings": result, "model": EMBED_MODEL, "usage": {
+                "prompt_tokens": tokens, "completion_tokens": 0, "total_tokens": tokens,
+                "prompt_tokens_details": {"cached_tokens": cached},
+                "tokenizer": EMBED_MODEL, "source": "model_tokenizer", "max_length": 512}}
         return result
 
     @torch.inference_mode()
-    def rerank(self, query, documents):
-        scores = []
-        for start in range(0, len(documents), 4):
-            pairs = [[query, document] for document in documents[start:start + 4]]
-            batch = self.rerank_tokenizer(pairs, padding=True, truncation=True, max_length=512, return_tensors="pt")
+    def rerank(self, query, documents, with_usage=False):
+        scores = [0.0] * len(documents)
+        pairs = [[query, document] for document in documents]
+        encoded = self.rerank_tokenizer(pairs, padding=False, truncation=True, max_length=512)
+        tokens = sum(sum(mask) for mask in encoded['attention_mask'])
+        # Bucket by actual truncated token length. Padding a short pair to a
+        # long path's shape wastes quadratic attention work on the CPU.
+        order = sorted(range(len(documents)), key=lambda i: len(encoded['input_ids'][i]))
+        for start in range(0, len(order), 4):
+            indices = order[start:start + 4]
+            batch = self.rerank_tokenizer.pad([{k: v[i] for k, v in encoded.items()} for i in indices],
+                                               padding=True, return_tensors="pt")
             logits = self.rerank_model(**batch, return_dict=True).logits.view(-1).float()
-            scores.extend(torch.sigmoid(logits).tolist())
+            for index, score in zip(indices, torch.sigmoid(logits).tolist()):
+                scores[index] = score
+        if with_usage:
+            return {"scores": scores, "model": RERANK_MODEL, "usage": {
+                "prompt_tokens": tokens, "completion_tokens": 0, "total_tokens": tokens,
+                "tokenizer": RERANK_MODEL, "source": "model_tokenizer", "max_length": 512}}
         return scores

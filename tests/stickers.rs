@@ -142,6 +142,8 @@ async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
 }
 fn config(temp: &tempfile::TempDir, base: &str, services: &str) -> Config {
     let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    c.memory.verify_recall = false;
     c.api_token = TOKEN.into();
     c.llm_key = "fixture".into();
     c.neo4j_password = "fixture".into();
@@ -525,10 +527,17 @@ async fn automatic_understanding_resumes_after_restart_and_can_retry_without_ove
         "SELECT EXISTS(SELECT 1 FROM stickers WHERE analysis_status='complete')",
     )
     .await;
-    assert_eq!(
-        app.stickers.read().unwrap().stickers[0].name,
-        "自动识别的抱抱"
-    );
+    // SQLite commits before the worker refreshes its in-memory prompt catalog.
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if app.stickers.read().unwrap().stickers[0].name == "自动识别的抱抱" {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
     assert!(app.stickers.read().unwrap().prompt().contains("安慰和陪伴"));
     assert_eq!(fake.vision_calls.load(Ordering::SeqCst), 1);
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM model_requests WHERE purpose='sticker' AND json_extract(usage,'$.total_tokens')=1040").fetch_one(&app.store.pool).await.unwrap(), 1);

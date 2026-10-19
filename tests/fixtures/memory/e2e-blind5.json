@@ -1,0 +1,429 @@
+{
+  "version": 1,
+  "notes": "independently authored sealed evaluation",
+  "profiles": [
+    {
+      "id": "blind-final-sealed",
+      "split": "blind5",
+      "turns": [
+        {
+          "day": 1,
+          "category": "fact",
+          "say": "我养了一只叫墨点的小型犬，是柯基。",
+          "facts": [
+            {
+              "label": "pet_dog_breed",
+              "all": [
+                [
+                  "柯基"
+                ],
+                [
+                  "墨点",
+                  "狗"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 3,
+          "category": "fact",
+          "say": "我平时用一台叫“青轴”的机械键盘写代码。",
+          "facts": [
+            {
+              "label": "keyboard_name",
+              "all": [
+                [
+                  "青轴"
+                ],
+                [
+                  "键盘"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 5,
+          "category": "fact",
+          "say": "我不喜欢用触控板，觉得效率太低。",
+          "facts": [
+            {
+              "label": "dislike_touchpad",
+              "all": [
+                [
+                  "不",
+                  "不喜欢",
+                  "讨厌"
+                ],
+                [
+                  "触控板"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 8,
+          "category": "fact",
+          "say": "我妹妹叫林小满，她在一家花店上班。",
+          "facts": [
+            {
+              "label": "sister_name",
+              "all": [
+                [
+                  "妹妹",
+                  "姐妹"
+                ],
+                [
+                  "林小满"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 10,
+          "category": "fact",
+          "say": "林小满的生日是四月十二号。",
+          "facts": [
+            {
+              "label": "sister_birthday",
+              "all": [
+                [
+                  "林小满",
+                  "妹妹"
+                ],
+                [
+                  "四月十二",
+                  "4月12",
+                  "4-12"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 14,
+          "category": "fact",
+          "say": "我原来那台键盘叫“青轴”，现在换成“红轴”了。",
+          "facts": [
+            {
+              "label": "keyboard_name",
+              "all": [
+                [
+                  "红轴"
+                ],
+                [
+                  "键盘"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 17,
+          "category": "fact",
+          "say": "对，我确认一下，我现在用的键盘就是红轴。",
+          "facts": [
+            {
+              "label": "keyboard_name",
+              "all": [
+                [
+                  "红轴"
+                ],
+                [
+                  "键盘"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 20,
+          "category": "fact",
+          "say": "我住在城东的梧桐里小区。",
+          "facts": [
+            {
+              "label": "residence",
+              "all": [
+                [
+                  "梧桐里"
+                ],
+                [
+                  "小区",
+                  "住"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 23,
+          "category": "fact",
+          "say": "我每天早上会喝一杯手冲咖啡。",
+          "facts": [
+            {
+              "label": "morning_coffee",
+              "all": [
+                [
+                  "早上",
+                  "每天"
+                ],
+                [
+                  "手冲",
+                  "咖啡"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 26,
+          "category": "fact",
+          "say": "如果明天不下雨，我打算去爬山。",
+          "facts": []
+        },
+        {
+          "day": 29,
+          "category": "fact",
+          "say": "我的职业是软件工程师。",
+          "facts": [
+            {
+              "label": "occupation",
+              "all": [
+                [
+                  "软件工程师"
+                ],
+                [
+                  "职业",
+                  "工作"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 32,
+          "category": "fact",
+          "say": "请不要记录我的住址信息。",
+          "facts": []
+        }
+      ],
+      "final": [
+        {
+          "label": "pet_dog_breed",
+          "all": [
+            [
+              "柯基"
+            ],
+            [
+              "墨点",
+              "狗"
+            ]
+          ]
+        },
+        {
+          "label": "keyboard_name",
+          "all": [
+            [
+              "红轴"
+            ],
+            [
+              "键盘"
+            ]
+          ]
+        },
+        {
+          "label": "dislike_touchpad",
+          "all": [
+            [
+              "不",
+              "不喜欢",
+              "讨厌"
+            ],
+            [
+              "触控板"
+            ]
+          ]
+        },
+        {
+          "label": "sister_name",
+          "all": [
+            [
+              "妹妹",
+              "姐妹"
+            ],
+            [
+              "林小满"
+            ]
+          ]
+        },
+        {
+          "label": "sister_birthday",
+          "all": [
+            [
+              "林小满",
+              "妹妹"
+            ],
+            [
+              "四月十二",
+              "4月12",
+              "4-12"
+            ]
+          ]
+        },
+        {
+          "label": "morning_coffee",
+          "all": [
+            [
+              "早上",
+              "每天"
+            ],
+            [
+              "手冲",
+              "咖啡"
+            ]
+          ]
+        },
+        {
+          "label": "occupation",
+          "all": [
+            [
+              "软件工程师"
+            ],
+            [
+              "职业",
+              "工作"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我妹妹林小满的生日是哪天？",
+          "relevant": [
+            "sister_name",
+            "sister_birthday"
+          ],
+          "answer_all": [
+            [
+              "四月十二",
+              "4月12",
+              "4-12"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我现在用的键盘是什么轴？",
+          "relevant": [
+            "keyboard_name"
+          ],
+          "answer_all": [
+            [
+              "红轴"
+            ]
+          ],
+          "answer_forbidden": [
+            [
+              "青轴"
+            ]
+          ]
+        },
+        {
+          "say": "我早上一般喝什么？",
+          "relevant": [
+            "morning_coffee"
+          ],
+          "answer_all": [
+            [
+              "手冲",
+              "咖啡"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我是不是很讨厌用触控板？",
+          "relevant": [
+            "dislike_touchpad"
+          ],
+          "answer_all": [
+            [
+              "不",
+              "不喜欢",
+              "讨厌"
+            ],
+            [
+              "触控板"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我养的那只柯基叫什么名字？",
+          "relevant": [
+            "pet_dog_breed"
+          ],
+          "answer_all": [
+            [
+              "墨点"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妹妹在哪家花店上班？",
+          "relevant": [
+            "sister_name"
+          ],
+          "answer_all": [
+            [
+              "花店"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我平时用什么牌子的显示器？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        },
+        {
+          "say": "如果明天不下雨，我打算去爬山，这件事你记成事实了吗？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        },
+        {
+          "say": "你好呀，今天过得怎么样？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妹妹林小满的生日和我早上喝咖啡的习惯，能一起告诉我吗？",
+          "relevant": [
+            "sister_name",
+            "sister_birthday",
+            "morning_coffee"
+          ],
+          "answer_all": [
+            [
+              "四月十二",
+              "4月12",
+              "4-12"
+            ],
+            [
+              "手冲",
+              "咖啡"
+            ]
+          ],
+          "answer_forbidden": []
+        }
+      ]
+    }
+  ]
+}

@@ -97,10 +97,14 @@ pub struct LlmConfig {
     pub legacy_context_chars: Option<usize>,
     /// Legacy configuration retained for compatibility; compaction uses token budgets.
     pub history_turns: i64,
-    #[serde(default = "default_summary_chars")]
-    pub summary_chars: usize,
+    #[serde(default = "default_summary_tokens", alias = "summary_chars")]
+    pub summary_tokens: usize,
+    /// Optional local Hugging Face tokenizer.json, required for exact text
+    /// estimates of models outside tiktoken's supported vocabulary mappings.
+    #[serde(default)]
+    pub tokenizer_path: Option<String>,
 }
-fn default_summary_chars() -> usize {
+fn default_summary_tokens() -> usize {
     2000
 }
 fn default_context_tokens() -> usize {
@@ -141,11 +145,14 @@ pub struct Neo4jConfig {
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryConfig {
-    #[serde(default = "default_extract_chars")]
-    pub extract_every_chars: usize,
+    #[serde(default = "default_extract_tokens", alias = "extract_every_chars")]
+    pub extract_every_tokens: usize,
+    #[serde(default = "default_extract_delay")]
+    pub extract_max_delay_seconds: u64,
     pub candidate_limit: usize,
     pub recall_limit: usize,
-    pub context_chars: usize,
+    #[serde(alias = "context_chars")]
+    pub context_tokens: usize,
     pub minimum_importance: f64,
     pub minimum_confidence: f64,
     pub half_life_days: f64,
@@ -161,13 +168,27 @@ pub struct MemoryConfig {
     /// turning unrelated ANN neighbours into personal context.
     #[serde(default = "default_vector_min_score")]
     pub vector_min_score: f64,
+    /// Strong independent cross-encoder evidence can rescue paraphrases below
+    /// the bi-encoder cosine threshold. It never bypasses reranking.
+    #[serde(default = "default_rerank_rescue_score")]
+    pub rerank_rescue_score: f64,
+    /// Retry an unanswered question once with a query-only semantic rewrite.
+    #[serde(default = "default_semantic_rewrite")]
+    pub semantic_rewrite: bool,
+    #[serde(default = "default_reconcile_updates")]
+    pub reconcile_updates: bool,
+    #[serde(default = "default_semantic_rewrite")]
+    pub verify_recall: bool,
     /// Reject semantically unrelated source quotes before persisting candidates.
     #[serde(default = "default_evidence_min_score")]
     pub evidence_min_score: f64,
     pub allow_sensitive: bool,
 }
-fn default_extract_chars() -> usize {
-    10_000
+fn default_extract_tokens() -> usize {
+    2048
+}
+fn default_extract_delay() -> u64 {
+    120
 }
 fn default_evidence_min_score() -> f64 {
     0.5
@@ -177,6 +198,15 @@ fn default_rerank_relative_min() -> f64 {
 }
 fn default_vector_min_score() -> f64 {
     0.4
+}
+fn default_rerank_rescue_score() -> f64 {
+    0.6
+}
+fn default_semantic_rewrite() -> bool {
+    false
+}
+fn default_reconcile_updates() -> bool {
+    true
 }
 #[derive(Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -272,10 +302,18 @@ impl Config {
         if let Ok(value) = env::var("MNEME_LLM_HISTORY_TURNS") {
             config.llm.history_turns = value.parse().context("invalid MNEME_LLM_HISTORY_TURNS")?;
         }
-        if let Ok(value) = env::var("MNEME_MEMORY_EXTRACT_CHARS") {
-            config.memory.extract_every_chars = value
+        if let Ok(value) = env::var("MNEME_LLM_TOKENIZER_PATH") {
+            config.llm.tokenizer_path = Some(value);
+        }
+        if let Ok(value) = env::var("MNEME_MEMORY_EXTRACT_TOKENS") {
+            config.memory.extract_every_tokens = value
                 .parse()
-                .context("invalid MNEME_MEMORY_EXTRACT_CHARS")?;
+                .context("invalid MNEME_MEMORY_EXTRACT_TOKENS")?;
+        }
+        if let Ok(value) = env::var("MNEME_MEMORY_EXTRACT_MAX_DELAY_SECONDS") {
+            config.memory.extract_max_delay_seconds = value
+                .parse()
+                .context("invalid MNEME_MEMORY_EXTRACT_MAX_DELAY_SECONDS")?;
         }
         if config.llm.model.starts_with("replace-") {
             config.llm.model = "auto".into();
@@ -294,7 +332,8 @@ impl Config {
 
     pub fn validate(&self) -> Result<()> {
         ensure!(
-            (1..=100_000).contains(&self.memory.extract_every_chars),
+            (1..=100_000).contains(&self.memory.extract_every_tokens)
+                && (1..=86400).contains(&self.memory.extract_max_delay_seconds),
             "invalid memory extraction interval"
         );
         ensure!(
@@ -308,8 +347,8 @@ impl Config {
             "console password must be 10..128 characters"
         );
         ensure!(
-            (500..=4000).contains(&self.llm.summary_chars),
-            "summary_chars must be 500..4000"
+            (500..=4000).contains(&self.llm.summary_tokens),
+            "summary_tokens must be 500..4000"
         );
         if self.tools.enabled {
             ensure!(
@@ -444,6 +483,7 @@ impl Config {
             self.memory.forget_below,
             self.memory.rerank_min_score,
             self.memory.vector_min_score,
+            self.memory.rerank_rescue_score,
             self.memory.evidence_min_score,
             self.memory.rerank_relative_min,
         ] {
@@ -472,7 +512,7 @@ impl Config {
             "invalid model limits"
         );
         ensure!(
-            self.memory.context_chars > 0 && self.memory.context_chars <= 16000,
+            self.memory.context_tokens > 0 && self.memory.context_tokens <= 16000,
             "invalid memory context limit"
         );
         let persona_chars = self.persona.name.chars().count()
@@ -486,7 +526,11 @@ impl Config {
         );
         ensure!(
             self.llm.context_tokens
-                >= crate::tokens::count(&serde_json::to_string(&self.persona)?)
+                >= crate::tokens::Counter::new(
+                    &self.llm.model,
+                    self.llm.tokenizer_path.as_deref()
+                )?
+                .count(&serde_json::to_string(&self.persona)?)
                     + self.llm.max_tokens as usize
                     + 1000,
             "context_tokens must fit the persona, reply reserve, and message overhead"

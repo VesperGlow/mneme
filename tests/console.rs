@@ -17,6 +17,8 @@ use tower::ServiceExt;
 const TOKEN: &str = "console-test-token-01234567890123456789";
 fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    config.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    config.memory.verify_recall = false;
     config.api_token = TOKEN.into();
     config.llm_key = "fixture".into();
     config.neo4j_password = "fixture".into();
@@ -26,7 +28,7 @@ fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     config.llm.model = "fixture-model".into();
     config.llm.base_url = base.into();
     config.memory.poll_seconds = 1;
-    config.memory.extract_every_chars = 1;
+    config.memory.extract_every_tokens = 1;
     config.llm.context_tokens = 16000;
     config.llm.history_turns = 16;
     config.validate().unwrap();
@@ -260,6 +262,9 @@ async fn manual_changes_defeat_stale_extractors_and_embedding_writes() {
         valid_until: None,
         sensitive: false,
         equivalent_to: None,
+        attribute_of: None,
+        relation: Default::default(),
+        supersedes: Vec::new(),
     };
     app.store
         .apply_candidates(&user, vec![(original.clone(), vec![1.0], None)], "initial")

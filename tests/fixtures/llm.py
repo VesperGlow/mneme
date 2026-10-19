@@ -69,9 +69,11 @@ class Handler(BaseHTTPRequestHandler):
             if memories and "targets" in payload:
                 memories[0]["source_id"] = target["id"]
             result = {"memories": memories}
-            if "max_chars" in payload:
+            if "targets" in payload:
+                result["processed_source_ids"] = [t["id"] for t in targets]
+            if "max_tokens" in payload:
                 text = payload.get("previous_summary", "") + "。".join(m["content"] for m in payload["messages"] if m["role"] == "user")
-                result = {"summary": text[:payload["max_chars"]] or "继续此前的话题。"}
+                result = {"summary": text[:payload["max_tokens"]] or "继续此前的话题。"}
             data = json.dumps({"choices": [{"message": {"content": json.dumps(result, ensure_ascii=False)},
                                             "finish_reason": "stop"}]}).encode()
             self.send_header("Content-Type", "application/json")

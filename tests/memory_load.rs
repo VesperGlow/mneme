@@ -75,6 +75,8 @@ async fn isolated_load_matrix() {
     for size in [100, 1000, 10000] {
         let temp = tempfile::TempDir::new().unwrap();
         let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+        c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+        c.memory.verify_recall = false;
         c.database = temp.path().join("eval.db").to_str().unwrap().into();
         c.llm.model = "fixture".into();
         c.llm.base_url = base.clone();
@@ -212,6 +214,8 @@ async fn isolated_write_matrix() {
     for size in [100, 1000, 10000] {
         let temp = tempfile::TempDir::new().unwrap();
         let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+        c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+        c.memory.verify_recall = false;
         c.database = temp.path().join("db").to_str().unwrap().into();
         c.llm.model = "fixture".into();
         c.api_token = "memory-evaluation-only-01234567890123456789".into();
@@ -219,7 +223,7 @@ async fn isolated_write_matrix() {
         c.neo4j_password = "fixture-password".into();
         c.models.base_url = base.clone();
         c.llm.base_url = base.clone();
-        c.memory.extract_every_chars = 100000;
+        c.memory.extract_every_tokens = 100000;
         let (_stop, rx) = tokio::sync::watch::channel(false);
         let app = App::new(c, rx).await.unwrap();
         let mut tx = app.store.pool.begin().await.unwrap();
@@ -263,6 +267,9 @@ async fn isolated_write_matrix() {
                     valid_until: None,
                     sensitive: false,
                     equivalent_to: None,
+                    attribute_of: None,
+                    relation: Default::default(),
+                    supersedes: Vec::new(),
                 };
                 memory::validate_candidate(&candidate, &source).unwrap();
                 expected.insert(candidate.key.clone(), candidate.content.clone());

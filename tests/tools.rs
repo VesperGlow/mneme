@@ -80,6 +80,8 @@ async fn services(mode: &'static str) -> (String, Arc<Mutex<Seen>>, tokio::task:
 }
 fn config(temp: &tempfile::TempDir, base: &str, models: &str) -> Config {
     let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    config.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    config.memory.verify_recall = false;
     config.api_token = API_TOKEN.into();
     config.llm_key = "fixture-llm-key".into();
     config.neo4j_password = "fixture".into();
@@ -199,9 +201,9 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
             .to_string()
             .contains("fixture reasoning")
     );
-    assert_eq!(history["model_requests"].as_array().unwrap().len(), 4);
+    assert_eq!(history["model_requests"].as_array().unwrap().len(), 5);
     let (_, context) = request(&router, "GET", "/v1/conversation", json!({})).await;
-    assert_eq!(context["context"]["session_usage"]["requests"], 4);
+    assert_eq!(context["context"]["session_usage"]["requests"], 5);
     assert_eq!(context["context"]["session_usage"]["input_tokens"], 492);
     assert_eq!(context["context"]["session_usage"]["output_tokens"], 180);
     assert_eq!(context["context"]["session_usage"]["reasoning_tokens"], 40);

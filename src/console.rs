@@ -95,14 +95,9 @@ async fn transcript(State(app): State<App>) -> ApiResult<Json<Value>> {
         })
         .collect();
     let requests = app.store.request_history(turns.iter().copied()).await?;
-    let requests: Vec<_> = requests
-        .into_iter()
-        .filter(|r| {
-            r.purpose == "chat" && r.turn_id.as_deref().is_some_and(|id| turns.contains(id))
-        })
-        .collect();
+    let turn_usage = crate::usage::by_turn(&requests);
     Ok(Json(
-        json!({"messages":messages,"assets":assets,"stickers":stickers,"tool_calls":calls,"model_requests":requests,"conversation":conversation}),
+        json!({"messages":messages,"assets":assets,"stickers":stickers,"tool_calls":calls,"model_requests":requests,"turn_usage":turn_usage,"conversation":conversation}),
     ))
 }
 

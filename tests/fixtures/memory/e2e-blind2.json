@@ -1,0 +1,434 @@
+{
+  "version": 1,
+  "notes": "independently authored sealed evaluation",
+  "profiles": [
+    {
+      "id": "blind-second",
+      "split": "blind2",
+      "turns": [
+        {
+          "day": 2,
+          "category": "fact",
+          "say": "我养了一只叫团子的橘猫，是去年领养的。",
+          "facts": [
+            {
+              "label": "pet_cat_name",
+              "all": [
+                [
+                  "团子"
+                ],
+                [
+                  "橘猫",
+                  "猫"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 5,
+          "category": "fact",
+          "say": "我对芒果过敏，吃了会起疹子。",
+          "facts": [
+            {
+              "label": "allergy_mango",
+              "all": [
+                [
+                  "芒果"
+                ],
+                [
+                  "过敏"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 9,
+          "category": "fact",
+          "say": "我妹妹叫林晓，她在做平面设计。",
+          "facts": [
+            {
+              "label": "sister_name",
+              "all": [
+                [
+                  "妹妹"
+                ],
+                [
+                  "林晓"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 12,
+          "category": "fact",
+          "say": "林晓的丈夫叫周航，是个牙医。",
+          "facts": [
+            {
+              "label": "sister_husband",
+              "all": [
+                [
+                  "周航"
+                ],
+                [
+                  "牙医",
+                  "牙科医生"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 16,
+          "category": "fact",
+          "say": "我每周三晚上去练羽毛球。",
+          "facts": [
+            {
+              "label": "badminton_schedule",
+              "all": [
+                [
+                  "周三",
+                  "星期三"
+                ],
+                [
+                  "羽毛球"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 20,
+          "category": "fact",
+          "say": "我现在的手机号尾号是4821。",
+          "facts": [
+            {
+              "label": "phone_tail_old",
+              "all": [
+                [
+                  "4821"
+                ],
+                [
+                  "尾号",
+                  "手机号"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 24,
+          "category": "fact",
+          "say": "更正一下，我手机号尾号其实是7390，之前说错了。",
+          "facts": [
+            {
+              "label": "phone_tail_new",
+              "all": [
+                [
+                  "7390"
+                ],
+                [
+                  "尾号",
+                  "手机号"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 28,
+          "category": "fact",
+          "say": "确认一下，我每周三晚上练羽毛球这件事没变。",
+          "facts": [
+            {
+              "label": "badminton_schedule",
+              "all": [
+                [
+                  "周三",
+                  "星期三"
+                ],
+                [
+                  "羽毛球"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 31,
+          "category": "fact",
+          "say": "我不吃香菜，闻到味道就受不了。",
+          "facts": [
+            {
+              "label": "dislike_cilantro",
+              "all": [
+                [
+                  "香菜"
+                ],
+                [
+                  "不吃",
+                  "受不了",
+                  "不喜欢"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 35,
+          "category": "fact",
+          "say": "我妹妹林晓的丈夫周航，他其实是在做口腔正畸的牙医。",
+          "facts": [
+            {
+              "label": "sister_husband",
+              "all": [
+                [
+                  "周航"
+                ],
+                [
+                  "牙医",
+                  "牙科医生"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 40,
+          "category": "hypothetical",
+          "say": "假如我以后搬到海边住，你觉得我该养什么植物？",
+          "facts": []
+        },
+        {
+          "day": 44,
+          "category": "no_save",
+          "say": "这段别记下来：我随口说想学潜水，只是随便想想。",
+          "facts": []
+        }
+      ],
+      "final": [
+        {
+          "label": "pet_cat_name",
+          "all": [
+            [
+              "团子"
+            ],
+            [
+              "橘猫",
+              "猫"
+            ]
+          ]
+        },
+        {
+          "label": "allergy_mango",
+          "all": [
+            [
+              "芒果"
+            ],
+            [
+              "过敏"
+            ]
+          ]
+        },
+        {
+          "label": "sister_name",
+          "all": [
+            [
+              "妹妹"
+            ],
+            [
+              "林晓"
+            ]
+          ]
+        },
+        {
+          "label": "sister_husband",
+          "all": [
+            [
+              "周航"
+            ],
+            [
+              "牙医",
+              "牙科医生"
+            ]
+          ]
+        },
+        {
+          "label": "badminton_schedule",
+          "all": [
+            [
+              "周三",
+              "星期三"
+            ],
+            [
+              "羽毛球"
+            ]
+          ]
+        },
+        {
+          "label": "phone_tail_new",
+          "all": [
+            [
+              "7390"
+            ],
+            [
+              "尾号",
+              "手机号"
+            ]
+          ]
+        },
+        {
+          "label": "dislike_cilantro",
+          "all": [
+            [
+              "香菜"
+            ],
+            [
+              "不吃",
+              "受不了",
+              "不喜欢"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我妹妹的丈夫是做什么工作的？",
+          "relevant": [
+            "sister_husband"
+          ],
+          "answer_all": [
+            [
+              "牙医",
+              "牙科医生"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妹妹林晓的丈夫叫什么名字？",
+          "relevant": [
+            "sister_name",
+            "sister_husband"
+          ],
+          "answer_all": [
+            [
+              "周航"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我家的猫叫什么？",
+          "relevant": [
+            "pet_cat_name"
+          ],
+          "answer_all": [
+            [
+              "团子"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我对哪种水果过敏？",
+          "relevant": [
+            "allergy_mango"
+          ],
+          "answer_all": [
+            [
+              "芒果"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我手机号最后四位现在是多少？",
+          "relevant": [
+            "phone_tail_new"
+          ],
+          "answer_all": [
+            [
+              "7390"
+            ]
+          ],
+          "answer_forbidden": [
+            [
+              "4821"
+            ]
+          ]
+        },
+        {
+          "say": "我平时哪天晚上打羽毛球？",
+          "relevant": [
+            "badminton_schedule"
+          ],
+          "answer_all": [
+            [
+              "周三",
+              "星期三"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我妹妹叫什么名字，她丈夫叫什么？",
+          "relevant": [
+            "sister_name",
+            "sister_husband"
+          ],
+          "answer_all": [
+            [
+              "林晓"
+            ],
+            [
+              "周航"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我吃香菜吗？",
+          "relevant": [
+            "dislike_cilantro"
+          ],
+          "answer_all": [
+            [
+              "不吃",
+              "受不了",
+              "不喜欢"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我打算学潜水吗？",
+          "relevant": [],
+          "answer_all": [
+            [
+              "不知道",
+              "没有记录",
+              "无法确定",
+              "不清楚"
+            ]
+          ],
+          "answer_forbidden": [
+            [
+              "打算学",
+              "要学",
+              "计划学"
+            ]
+          ]
+        },
+        {
+          "say": "你好呀，今天过得怎么样？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        }
+      ]
+    }
+  ]
+}

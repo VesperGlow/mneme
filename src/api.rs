@@ -185,8 +185,13 @@ async fn history(State(app): State<App>, Path(session): Path<String>) -> ApiResu
         return Err(ApiError(StatusCode::NOT_FOUND, "session_not_found"));
     }
     let history = app.store.history(&session, 100).await?;
+    let requests = app
+        .store
+        .request_history(history.iter().map(|m| m.turn_id.as_str()))
+        .await?;
+    let turn_usage = crate::usage::by_turn(&requests);
     Ok(Json(
-        json!({"messages":history,"assets":crate::assets::history_metadata(&app,&session).await?,"stickers":crate::stickers::history_metadata(&app,&session).await?,"tool_calls":crate::tools::logs(&app,Some(&session)).await?,"model_requests":app.store.request_history(history.iter().map(|m|m.turn_id.as_str())).await?}),
+        json!({"messages":history,"assets":crate::assets::history_metadata(&app,&session).await?,"stickers":crate::stickers::history_metadata(&app,&session).await?,"tool_calls":crate::tools::logs(&app,Some(&session)).await?,"model_requests":requests,"turn_usage":turn_usage}),
     ))
 }
 
@@ -275,6 +280,11 @@ async fn chat(
                     json!({"request_id":request.id,"usage":request.usage,"status":request.status}),
                 );
             }
+            let _ = emit(
+                &output,
+                "turn_usage",
+                json!({"turn_id":input.request_id,"usage":crate::usage::aggregate(&requests)}),
+            );
             let _ = emit(
                 &output,
                 "media",

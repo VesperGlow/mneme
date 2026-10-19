@@ -16,6 +16,8 @@ const PASSWORD: &str = " 我的 WebUI 密码 12345 ";
 
 fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    config.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    config.memory.verify_recall = false;
     config.api_token = TOKEN.into();
     config.llm_key = "fixture".into();
     config.neo4j_password = "fixture".into();
@@ -25,7 +27,7 @@ fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     config.llm.model = "fixture-model".into();
     config.llm.base_url = base.into();
     config.memory.poll_seconds = 1;
-    config.memory.extract_every_chars = 1;
+    config.memory.extract_every_tokens = 1;
     config.llm.context_tokens = 16000;
     config.llm.history_turns = 16;
     config
@@ -832,11 +834,11 @@ fn legacy_config_gets_continuity_defaults_and_rejects_invalid_limits() {
         .split("[console]")
         .next()
         .unwrap()
-        .replace("summary_chars = 2000", "")
+        .replace("summary_tokens = 2000", "")
         .replace("context_tokens = 100000", "context_chars = 16000");
     let after = text.split("[models]").nth(1).unwrap();
     let legacy: Config = toml::from_str(&format!("{before}\n[models]{after}")).unwrap();
-    assert_eq!(legacy.llm.summary_chars, 2000);
+    assert_eq!(legacy.llm.summary_tokens, 2000);
     assert_eq!(legacy.llm.context_tokens, 100_000);
     assert_eq!(legacy.llm.legacy_context_chars, Some(16_000));
     assert_eq!(legacy.console.session_days, 30);
@@ -847,9 +849,9 @@ fn legacy_config_gets_continuity_defaults_and_rejects_invalid_limits() {
     c.console.session_days = 0;
     assert!(c.validate().is_err());
     c.console.session_days = 30;
-    c.llm.summary_chars = 100;
+    c.llm.summary_tokens = 100;
     assert!(c.validate().is_err());
-    c.llm.summary_chars = 2000;
+    c.llm.summary_tokens = 2000;
     c.console.password = "short".into();
     assert!(c.validate().is_err());
 }

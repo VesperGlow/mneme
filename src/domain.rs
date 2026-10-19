@@ -91,6 +91,33 @@ pub struct Candidate {
     pub sensitive: bool,
     /// Only accepted for an existing memory in the extraction context with the same slot.
     pub equivalent_to: Option<String>,
+    /// Explicit same subject/property identity, independently of its current value.
+    #[serde(default)]
+    pub attribute_of: Option<String>,
+    /// Topic/property identity alone does not establish a contradiction.
+    #[serde(default)]
+    pub relation: FactRelation,
+    #[serde(default)]
+    pub supersedes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FactRelation {
+    #[default]
+    Replace,
+    Confirm,
+    Coexist,
+}
+impl Candidate {
+    pub fn storage_key(&self) -> String {
+        if self.relation != FactRelation::Coexist {
+            return self.key.clone();
+        }
+        let suffix = format!(".assertion_{}", &content_hash(&self.content)[..12]);
+        let base = self.key.split(".assertion_").next().unwrap();
+        format!("{}{}", &base[..base.len().min(100 - suffix.len())], suffix)
+    }
 }
 
 #[derive(Debug, Clone, FromRow)]

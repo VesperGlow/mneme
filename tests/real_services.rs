@@ -7,6 +7,8 @@ use serde_json::json;
 async fn real_chinese_models_and_neo4j_projection() {
     let temp = tempfile::TempDir::new().unwrap();
     let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    config.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    config.memory.verify_recall = false;
     config.llm.model = "fixture-model".into();
     config.api_token = "smoke-test-token-01234567890123456789".into();
     config.llm_key = "unused".into();
@@ -55,6 +57,9 @@ async fn real_chinese_models_and_neo4j_projection() {
             valid_until: None,
             sensitive: false,
             equivalent_to: None,
+            attribute_of: None,
+            relation: Default::default(),
+            supersedes: Vec::new(),
         };
         app.store
             .apply_candidates(

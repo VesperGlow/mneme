@@ -97,6 +97,7 @@ def main():
     parser.add_argument('--budget-cny', type=float, required=True)
     parser.add_argument('--ledger', type=Path, required=True)
     parser.add_argument('--resume', action='store_true', help='Continue the SAME budget, conservatively charging unfinished reservations')
+    parser.add_argument('--thinking', action='store_true', help='Enable bounded low-effort thinking for the dedicated real usage test only')
     args = parser.parse_args()
     if not 0 < args.budget_cny <= 5:
         parser.error('This authorized evaluation is capped at 5 CNY')
@@ -146,7 +147,7 @@ def main():
             if self.path not in ('/health', '/metrics'):
                 return self.reply(404, {})
             with budget.lock:
-                self.reply(200, budget.snapshot())
+                self.reply(200, {**budget.snapshot(), 'thinking':args.thinking})
 
         def do_POST(self):
             if self.path != '/v1/chat/completions':
@@ -165,7 +166,9 @@ def main():
             except (ValueError, KeyError, TypeError, AssertionError):
                 return self.reply(400, {'error': 'outside authorized text-only test protocol'})
             body['model'] = MODEL
-            body['thinking'] = {'type': 'disabled'}
+            body['thinking'] = {'type': 'enabled' if args.thinking else 'disabled'}
+            if args.thinking:
+                body['reasoning_effort'] = 'low'
             if body.get('stream'):
                 body['stream_options'] = {'include_usage': True}
             amount = budget.reserve(body)
@@ -207,7 +210,7 @@ def main():
             finally:
                 budget.finish(amount, status, usage, began)
 
-    print('Authorized isolated relay ready on 127.0.0.1:18091; cap 5 CNY', flush=True)
+    print(f'Authorized isolated relay ready on 127.0.0.1:18091; cap {args.budget_cny:g} CNY; thinking={args.thinking}', flush=True)
     server = ThreadingHTTPServer(('127.0.0.1', 18091), Handler)
     try:
         server.serve_forever()

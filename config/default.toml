@@ -14,7 +14,9 @@ context_tokens = 100000
 json_schema = false
 # 兼容旧配置；自动压缩由 context_tokens 预算触发，不再按轮数触发。
 history_turns = 1000
-summary_chars = 2000
+summary_tokens = 2000
+# 非 OpenAI 模型建议配置对应的本地 tokenizer.json；默认回退会明确标记估算。
+# tokenizer_path = "/config/tokenizer.json"
 
 [console]
 # 使用时续期；Cookie 和服务端会话均跨刷新、浏览器关闭与服务重启保留。
@@ -35,11 +37,12 @@ username = "neo4j"
 # 密码从 MNEME_NEO4J_PASSWORD 读取。
 
 [memory]
-# 累计新增的完整用户/助手原文达到此字符数时，批量提取用户事实。
-extract_every_chars = 10000
+# 累计完整用户/助手原文 Token；较小批次最迟在等待时限后异步提取。
+extract_every_tokens = 2048
+extract_max_delay_seconds = 120
 candidate_limit = 32
 recall_limit = 6
-context_chars = 4000
+context_tokens = 4000
 minimum_importance = 0.4
 minimum_confidence = 0.7
 half_life_days = 180.0
@@ -50,8 +53,14 @@ retrieval_timeout_seconds = 8
 rerank_min_score = 0.1
 # 精排同时保留最高相关分数的 80% 以上；0 可关闭相对门槛。
 rerank_relative_min = 0.8
-# 注入前同时验证查询与记忆的 cosine；保留精排门槛，避免通用问题召回私人事实。
+# cosine 不足的改写仅可由强精排证据补救；所有候选均通过精排。
 vector_min_score = 0.4
+rerank_rescue_score = 0.6
+# 仅有向量与精排绝对分数支持、但未通过最终门槛的问题，允许一次无记忆输入的语义改写。
+semantic_rewrite = false
+# 覆盖属性键之前单独判断矛盾/共存；语义答案证据核验与 CPU 精排并行。
+reconcile_updates = true
+verify_recall = false
 # 引用存在还不足以证明事实；拒绝事实与原话完全不相关的候选。不能替代否定/假设判定。
 evidence_min_score = 0.5
 allow_sensitive = false

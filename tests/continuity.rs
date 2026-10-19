@@ -16,6 +16,9 @@ use tower::ServiceExt;
 const TOKEN: &str = "continuity-test-token-01234567890123456789";
 fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     let mut c: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+    c.memory.reconcile_updates = false; // This fixture does not implement semantic adjudication.
+    c.memory.verify_recall = false;
+    c.memory.semantic_rewrite = false;
     c.database = temp.path().join("db").to_string_lossy().into();
     c.api_token = TOKEN.into();
     c.llm_key = "fixture".into();
@@ -25,9 +28,9 @@ fn config(temp: &tempfile::TempDir, base: &str) -> Config {
     c.neo4j.base_url = base.into();
     c.llm.model = "fixture-model".into();
     c.llm.history_turns = 2;
-    c.llm.summary_chars = 500;
+    c.llm.summary_tokens = 500;
     c.memory.poll_seconds = 1;
-    c.memory.extract_every_chars = 1;
+    c.memory.extract_every_tokens = 1;
     c
 }
 async fn request(router: &Router, method: &str, path: &str, body: Value) -> (StatusCode, String) {
@@ -300,12 +303,71 @@ async fn token_limit_compacts_before_turn_limit_and_failed_summary_keeps_waterma
 }
 
 #[tokio::test]
-async fn global_context_batches_every_ten_thousand_characters_across_transports_and_restart() {
+async fn extraction_uses_bpe_tokens_and_flushes_short_turns_after_restart() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, fake) = common::fake_services().await;
+    let mut c = config(&temp, &base);
+    c.memory.extract_every_tokens = 500;
+    c.memory.extract_max_delay_seconds = 120;
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(c.clone(), rx.clone()).await.unwrap();
+    let session = app.store.conversation().await.unwrap();
+    let text = format!("我住在成都 {}", "a".repeat(1000));
+    assert!(text.chars().count() > 500);
+    assert!(app.tokens.count(&text) < 500);
+    let BeginTurn::Started(source) = app.store.begin_turn(&session, &id(), &text).await.unwrap()
+    else {
+        panic!()
+    };
+    app.store.complete_turn(&source, "收到").await.unwrap();
+    assert_eq!(app.store.job_stats().await.unwrap()["pending"], 0);
+    let pending = app.store.extraction_pending_tokens().await.unwrap();
+    assert!(pending > 0 && pending < 500);
+    sqlx::query("UPDATE turns SET completed_at=? WHERE id=?")
+        .bind(now() - 121)
+        .bind(&source.turn_id)
+        .execute(&app.store.pool)
+        .await
+        .unwrap();
+    app.store.pool.close().await;
+    drop(app);
+    let app = App::new(c, rx).await.unwrap();
+    assert_eq!(
+        app.store.extraction_pending_tokens().await.unwrap(),
+        pending
+    );
+    let worker = tokio::spawn(mneme::memory::worker(app.clone()));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            assert_eq!(app.store.job_stats().await.unwrap()["dead"], 0);
+            if !app.store.active_memories(10).await.unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(app.store.extraction_pending_tokens().await.unwrap(), 0);
+    assert_eq!(
+        app.store
+            .sources(&app.store.active_memories(1).await.unwrap()[0].id)
+            .await
+            .unwrap()[0]["message_id"],
+        source.id
+    );
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    fake.abort();
+}
+
+#[tokio::test]
+async fn global_context_batches_by_tokens_across_transports_and_restart() {
     let temp = tempfile::TempDir::new().unwrap();
     let (base, fake) = common::fake_services().await;
     let mut c = config(&temp, &base);
     c.llm.history_turns = 1000;
-    c.memory.extract_every_chars = 10_000;
+    c.memory.extract_every_tokens = 10_000;
     assert_eq!(c.llm.context_tokens, 100_000);
     c.validate().unwrap();
     let (stop, rx) = tokio::sync::watch::channel(false);
@@ -348,12 +410,18 @@ async fn global_context_batches_every_ten_thousand_characters_across_transports_
         BeginTurn::Busy
     ));
     app.store.complete_turn(&qq_user, "已记住").await.unwrap();
-    assert_eq!(app.store.extraction_pending_chars().await.unwrap(), 4003);
+    assert_eq!(
+        app.store.extraction_pending_tokens().await.unwrap(),
+        (app.tokens.count(&text) + app.tokens.count("已记住")) as i64
+    );
     assert_eq!(app.store.job_stats().await.unwrap()["pending"], 0);
     app.store.pool.close().await;
     drop(app);
     let app = App::new(c, rx).await.unwrap();
-    assert_eq!(app.store.extraction_pending_chars().await.unwrap(), 4003);
+    assert_eq!(
+        app.store.extraction_pending_tokens().await.unwrap(),
+        (app.tokens.count(&text) + app.tokens.count("已记住")) as i64
+    );
     let BeginTurn::Started(web) = app
         .store
         .begin_turn(&session, &id(), &"乙".repeat(4000))
@@ -363,10 +431,10 @@ async fn global_context_batches_every_ten_thousand_characters_across_transports_
         panic!()
     };
     app.store
-        .complete_turn(&web, &"答".repeat(1997))
+        .complete_turn(&web, &"答".repeat(1998))
         .await
         .unwrap();
-    assert_eq!(app.store.extraction_pending_chars().await.unwrap(), 0);
+    assert_eq!(app.store.extraction_pending_tokens().await.unwrap(), 0);
     let jobs: Vec<(String, String)> =
         sqlx::query_as("SELECT id,payload FROM jobs WHERE kind='extract'")
             .fetch_all(&app.store.pool)
@@ -455,7 +523,7 @@ async fn hundred_thousand_context_does_not_compact_at_sixteen_turns() {
     let (base, fake) = common::fake_services().await;
     let mut c = config(&temp, &base);
     c.llm.history_turns = 1000;
-    c.memory.extract_every_chars = 10_000;
+    c.memory.extract_every_tokens = 10_000;
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(c, rx).await.unwrap();
     let router = api::router(app.clone());
@@ -536,7 +604,7 @@ async fn legacy_turn_limit_does_not_trigger_compaction_or_memory_extraction() {
     let (base, fake) = common::fake_services().await;
     let mut c = config(&temp, &base);
     c.llm.history_turns = 1;
-    c.memory.extract_every_chars = 100_000;
+    c.memory.extract_every_tokens = 100_000;
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(c, rx).await.unwrap();
     let router = api::router(app.clone());
@@ -559,7 +627,7 @@ async fn compaction_does_not_advance_the_memory_watermark_or_enqueue_extraction(
     let (base, fake) = common::fake_services().await;
     let mut c = config(&temp, &base);
     c.llm.context_tokens = 12000;
-    c.memory.extract_every_chars = 100_000;
+    c.memory.extract_every_tokens = 100_000;
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(c, rx).await.unwrap();
     let router = api::router(app.clone());
@@ -570,13 +638,13 @@ async fn compaction_does_not_advance_the_memory_watermark_or_enqueue_extraction(
                 .contains("event: done")
         );
     }
-    let before = app.store.extraction_pending_chars().await.unwrap();
+    let before = app.store.extraction_pending_tokens().await.unwrap();
     let wire = chat(&router, &"字".repeat(4000)).await;
     assert!(
         wire.contains("event: compaction") && wire.contains("event: done"),
         "{wire}"
     );
-    assert!(app.store.extraction_pending_chars().await.unwrap() > before);
+    assert!(app.store.extraction_pending_tokens().await.unwrap() > before);
     assert_eq!(app.store.job_stats().await.unwrap()["pending"], 0);
     let context = data(&router, "/v1/conversation").await;
     assert!(

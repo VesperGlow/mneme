@@ -11,6 +11,9 @@ async fn main() -> anyhow::Result<()> {
     config.console.password = "console-fixture-password".into();
     config.llm.history_turns = 2;
     config.llm.model = "fixture-model".into();
+    config.memory.reconcile_updates = false;
+    config.memory.verify_recall = false;
+    config.memory.semantic_rewrite = false;
     config.api_token = "console-test-token-01234567890123456789".into();
     config.llm_key = "fixture-only".into();
     config.neo4j_password = "fixture-only".into();

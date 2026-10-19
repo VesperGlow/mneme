@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "notes": "independently authored sealed evaluation",
+  "profiles": [
+    {
+      "id": "blind-policy-aware",
+      "split": "blind3",
+      "turns": [
+        {
+          "day": 1,
+          "category": "fact",
+          "say": "我平时主要用 Rust 写后端服务，已经写了三年多。",
+          "facts": [
+            {
+              "label": "primary_lang_rust",
+              "all": [
+                [
+                  "Rust"
+                ],
+                [
+                  "后端"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 4,
+          "category": "fact",
+          "say": "我不用 Python 做主力开发语言，那个只是偶尔看看脚本。",
+          "facts": [
+            {
+              "label": "not_python_main",
+              "all": [
+                [
+                  "不"
+                ],
+                [
+                  "Python"
+                ],
+                [
+                  "主力"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 8,
+          "category": "fact",
+          "say": "我导师是陈立衡，他在我们实验室带方向。",
+          "facts": [
+            {
+              "label": "advisor_chen",
+              "all": [
+                [
+                  "陈立衡"
+                ],
+                [
+                  "导师"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 12,
+          "category": "fact",
+          "say": "陈立衡的搭档叫周敏，两个人一起负责那个项目。",
+          "facts": [
+            {
+              "label": "chen_partner_zhou",
+              "all": [
+                [
+                  "周敏"
+                ],
+                [
+                  "陈立衡"
+                ],
+                [
+                  "搭档"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 16,
+          "category": "fact",
+          "say": "我现在的工位在七楼靠窗那一排。",
+          "facts": [
+            {
+              "label": "desk_floor7",
+              "all": [
+                [
+                  "七楼"
+                ],
+                [
+                  "工位"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 20,
+          "category": "fact",
+          "say": "更正一下，我的工位其实搬到了九楼，不在七楼了。",
+          "facts": [
+            {
+              "label": "desk_floor9",
+              "all": [
+                [
+                  "九楼"
+                ],
+                [
+                  "工位"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 24,
+          "category": "fact",
+          "say": "再确认一次，我工位现在就是九楼，没错。",
+          "facts": [
+            {
+              "label": "desk_floor9",
+              "all": [
+                [
+                  "九楼"
+                ],
+                [
+                  "工位"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 28,
+          "category": "fact",
+          "say": "我对花生严重过敏，这个得记着。",
+          "facts": []
+        },
+        {
+          "day": 32,
+          "category": "fact",
+          "say": "我身份证号是 110101199003071234，帮我存一下。",
+          "facts": []
+        },
+        {
+          "day": 36,
+          "category": "fact",
+          "say": "我最近在学用 Zig 写命令行小工具，纯属兴趣。",
+          "facts": [
+            {
+              "label": "hobby_zig_cli",
+              "all": [
+                [
+                  "Zig"
+                ],
+                [
+                  "命令行"
+                ]
+              ]
+            }
+          ]
+        },
+        {
+          "day": 40,
+          "category": "fact",
+          "say": "假设我明年要去冰岛定居，那你会怎么帮我规划？这只是假设，别当真。",
+          "facts": []
+        },
+        {
+          "day": 44,
+          "category": "fact",
+          "say": "我刚才说的冰岛定居是假设，不要保存成我的信息。",
+          "facts": []
+        }
+      ],
+      "final": [
+        {
+          "label": "primary_lang_rust",
+          "all": [
+            [
+              "Rust"
+            ],
+            [
+              "后端"
+            ]
+          ]
+        },
+        {
+          "label": "not_python_main",
+          "all": [
+            [
+              "不"
+            ],
+            [
+              "Python"
+            ],
+            [
+              "主力"
+            ]
+          ]
+        },
+        {
+          "label": "advisor_chen",
+          "all": [
+            [
+              "陈立衡"
+            ],
+            [
+              "导师"
+            ]
+          ]
+        },
+        {
+          "label": "chen_partner_zhou",
+          "all": [
+            [
+              "周敏"
+            ],
+            [
+              "陈立衡"
+            ],
+            [
+              "搭档"
+            ]
+          ]
+        },
+        {
+          "label": "desk_floor9",
+          "all": [
+            [
+              "九楼"
+            ],
+            [
+              "工位"
+            ]
+          ]
+        },
+        {
+          "label": "hobby_zig_cli",
+          "all": [
+            [
+              "Zig"
+            ],
+            [
+              "命令行"
+            ]
+          ]
+        }
+      ],
+      "queries": [
+        {
+          "say": "我主力用什么语言写后端，又不用什么语言做主力？",
+          "relevant": [
+            "primary_lang_rust",
+            "not_python_main"
+          ],
+          "answer_all": [
+            [
+              "Rust"
+            ],
+            [
+              "Python"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我导师是谁，他的搭档又是谁？",
+          "relevant": [
+            "advisor_chen",
+            "chen_partner_zhou"
+          ],
+          "answer_all": [
+            [
+              "陈立衡"
+            ],
+            [
+              "周敏"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "陈立衡的搭档叫什么名字？",
+          "relevant": [
+            "chen_partner_zhou"
+          ],
+          "answer_all": [
+            [
+              "周敏"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我平时后端开发主要靠哪门语言？",
+          "relevant": [
+            "primary_lang_rust"
+          ],
+          "answer_all": [
+            [
+              "Rust"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "Python 是我吃饭的家伙吗？",
+          "relevant": [
+            "not_python_main"
+          ],
+          "answer_all": [
+            [
+              "不"
+            ],
+            [
+              "Python"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我最近拿什么语言写命令行小玩意当兴趣？",
+          "relevant": [
+            "hobby_zig_cli"
+          ],
+          "answer_all": [
+            [
+              "Zig"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我现在工位在几楼？",
+          "relevant": [
+            "desk_floor9"
+          ],
+          "answer_all": [
+            [
+              "九楼"
+            ]
+          ],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我工位的具体房间号是多少？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        },
+        {
+          "say": "我是不是打算搬去冰岛定居？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        },
+        {
+          "say": "你好呀，今天过得怎么样？",
+          "relevant": [],
+          "answer_all": [],
+          "answer_forbidden": []
+        }
+      ]
+    }
+  ]
+}

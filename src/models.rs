@@ -41,6 +41,8 @@ pub struct Models {
     client: reqwest::Client,
     base: String,
     dimensions: usize,
+    store: Option<crate::store::Store>,
+    turn: Option<String>,
     embedding_cache: RequestCache<Vec<Vec<f32>>>,
     reranking_cache: RequestCache<Vec<f64>>,
     pub embed_metrics: std::sync::Arc<crate::telemetry::Metrics>,
@@ -71,11 +73,93 @@ impl Models {
                 .build()?,
             base: config.models.base_url.trim_end_matches('/').into(),
             dimensions: config.models.dimensions,
+            store: None,
+            turn: None,
             embedding_cache: Default::default(),
             reranking_cache: Default::default(),
             embed_metrics: Default::default(),
             rerank_metrics: Default::default(),
         })
+    }
+    pub(crate) fn tracked(mut self, store: crate::store::Store) -> Self {
+        self.store = Some(store);
+        self
+    }
+    pub(crate) fn for_turn(&self, turn: &str) -> Self {
+        let mut scoped = self.clone();
+        scoped.turn = Some(turn.into());
+        scoped
+    }
+    async fn infer(
+        &self,
+        endpoint: &str,
+        body: serde_json::Value,
+        input: usize,
+    ) -> Result<serde_json::Value> {
+        let counter = crate::tokens::Counter::default();
+        let mut usage = crate::usage::TokenUsage::default();
+        usage.estimate_input(input, &counter);
+        let purpose = if endpoint == "embed" {
+            "embedding"
+        } else {
+            "reranker"
+        };
+        let model = if endpoint == "embed" {
+            "Qwen/Qwen3-Embedding-0.6B"
+        } else {
+            "Alibaba-NLP/gte-multilingual-reranker-base"
+        };
+        let id = if let Some(store) = &self.store {
+            let id = store
+                .start_model_request(
+                    self.turn.as_deref(),
+                    purpose,
+                    model,
+                    &crate::usage::ContextTokens {
+                        current: input,
+                        ..Default::default()
+                    },
+                )
+                .await?;
+            store
+                .update_model_request(&id, &usage, "", "running")
+                .await?;
+            Some(id)
+        } else {
+            None
+        };
+        let guard = crate::usage::RequestGuard::new(self.store.clone(), id.as_deref());
+        let result = async {
+            let response = self
+                .client
+                .post(format!("{}/{endpoint}", self.base))
+                .json(&body)
+                .send()
+                .await?
+                .error_for_status()?;
+            Ok::<serde_json::Value, anyhow::Error>(serde_json::from_slice(
+                &bounded_body(response, 2_097_152).await?,
+            )?)
+        }
+        .await;
+        if let Ok(value) = &result {
+            usage.update(value);
+            // Embedding and classification have no generated text output.
+            usage.estimate_output(0, Some(0), true);
+            usage.estimated.output_is_lower_bound = false;
+        }
+        if let (Some(store), Some(id)) = (&self.store, id) {
+            store
+                .update_model_request(
+                    &id,
+                    &usage,
+                    "",
+                    if result.is_ok() { "complete" } else { "failed" },
+                )
+                .await?;
+        }
+        guard.finish();
+        result
     }
     pub async fn health(&self) -> bool {
         self.client
@@ -136,14 +220,14 @@ impl Models {
             .clone())
     }
     async fn embed_batch_uncached(&self, texts: &[String], query: bool) -> Result<Vec<Vec<f32>>> {
-        let response = self
-            .client
-            .post(format!("{}/embed", self.base))
-            .json(&json!({"texts":texts,"query":query}))
-            .send()
-            .await?
-            .error_for_status()?;
-        let value: Embeddings = serde_json::from_slice(&bounded_body(response, 2_097_152).await?)?;
+        let input = texts
+            .iter()
+            .map(|t| crate::tokens::count(t) + if query { 32 } else { 0 })
+            .sum();
+        let value: Embeddings = serde_json::from_value(
+            self.infer("embed", json!({"texts":texts,"query":query}), input)
+                .await?,
+        )?;
         ensure!(
             value.embeddings.len() == texts.len(),
             "embedding batch size mismatch"
@@ -179,14 +263,18 @@ impl Models {
             .clone())
     }
     async fn rerank_uncached(&self, query: &str, documents: &[String]) -> Result<Vec<f64>> {
-        let response = self
-            .client
-            .post(format!("{}/rerank", self.base))
-            .json(&json!({"query":query,"documents":documents}))
-            .send()
-            .await?
-            .error_for_status()?;
-        let value: Scores = serde_json::from_slice(&bounded_body(response, 65_536).await?)?;
+        let input = documents
+            .iter()
+            .map(|d| crate::tokens::count(query) + crate::tokens::count(d) + 3)
+            .sum();
+        let value: Scores = serde_json::from_value(
+            self.infer(
+                "rerank",
+                json!({"query":query,"documents":documents}),
+                input,
+            )
+            .await?,
+        )?;
         ensure!(
             value.scores.len() == documents.len()
                 && value

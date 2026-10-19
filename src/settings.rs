@@ -404,6 +404,7 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         "DELETE FROM memory_revisions",
         "DELETE FROM suppressed_sources",
         "DELETE FROM memories",
+        "DELETE FROM memory_slot_aliases",
         "DELETE FROM forget_barriers",
         "DELETE FROM content_barriers",
         "DELETE FROM conversation_context",

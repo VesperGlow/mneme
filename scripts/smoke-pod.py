@@ -110,7 +110,7 @@ with tempfile.TemporaryDirectory(prefix="mneme-e2e-") as temp:
     env = Path(temp) / "app.env"
     env.write_text(f"MNEME_API_TOKEN={TOKEN}\nMNEME_LLM_API_KEY=fixture-only\n"
                    "MNEME_LLM_BASE_URL=http://127.0.0.1:18000/v1\nMNEME_LLM_MODEL=fixture\n"
-                   "MNEME_NEO4J_PASSWORD=mneme-e2e-only-password\nMNEME_MEMORY_EXTRACT_CHARS=1\n"
+                   "MNEME_NEO4J_PASSWORD=mneme-e2e-only-password\nMNEME_MEMORY_EXTRACT_TOKENS=1\n"
                    f"MNEME_QQ_APP_ID=12345678\nMNEME_QQ_APP_SECRET={QQ_SECRET}\nMNEME_QQ_LISTEN=0.0.0.0:8081\n")
     env.chmod(0o600)
     created = False
