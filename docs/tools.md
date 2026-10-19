@@ -75,7 +75,7 @@ Console 新增「对话」及「工具记录」。对话页支持新建/继续�
 
 每轮最多 4 张 PNG/JPEG/WebP，每张最多 8 MiB、解码不超过 2000 万像素。工具服务使用 Sharp 验证图片、纠正旋转、移除元数据、缩至最长 2048 像素并转为 JPEG；不接收 SVG。截图和上传图片保存在 SQLite `assets` 中，总额最多 256 MiB。未关联消息或工具记录的上传图片 24 小时后由定期维护清理；已关联图片随会话保留，重置 Agent 时一并删除。
 
-API 把图片作为 `image_url` 的 data URL 发给当前多模态 LLM。工具消息本身保持文本格式，截图作为后续 user 图片消息附加。`view_image(asset_id)` 可读取当前会话中既有上传图片或截图，拒绝跨会话读取。模型无需下载访问 Token，也不经浏览器联网读取上传图片。后续对话会得到历史图片标识，可按需重新查看。上传图片和截图的理解质量取决于所配置的提供商；当前不自动探测模型视觉能力。QQ 维持原来的文本接入，图片上传入口为 WebUI/HTTP API。
+API 把图片作为 `image_url` 的 data URL 发给当前多模态 LLM。工具消息本身保持文本格式，截图作为后续 user 图片消息附加。`view_image(asset_id)` 可读取当前会话中既有上传图片或截图，拒绝跨会话读取。模型无需下载访问 Token，也不经浏览器联网读取上传图片。后续对话会得到历史图片标识，可按需重新查看。上传图片和截图的理解质量取决于所配置的提供商；当前不自动探测模型视觉能力。QQ 支持图文和纯图片消息，沿用同一规范化与视觉输入链路；也可以发送自定义表情包及当前对话中已有的上传图片 / 截图，见 [QQ 图片说明](qq.md#图片与自定义表情包)。
 
 ## 接口
 
@@ -88,7 +88,9 @@ API 把图片作为 `image_url` 的 data URL 发给当前多模态 LLM。工具�
 | POST | /v1/execute | `{"session_id":"UUID","arguments":{"action":"search","query":"Debian 官网"}}` |
 | DELETE | /v1/sessions/{id} | 释放浏览器上下文 |
 | POST | /v1/reset | 关闭全部浏览器上下文 |
-| POST | /v1/images/normalize | application/octet-stream 图片，返回规范化 JPEG |
+| POST | /v1/images/normalize | application/octet-stream 图片，返回规范化 JPEG；GIF 使用首帧 |
+| POST | /v1/stickers/normalize | 原始图片，返回最长 512 像素的表情素材，保留透明和动画 |
+| POST | /v1/images/fetch | `{"url":"公网附件地址"}`，验证每次解析与重定向，限 8 MiB / 15 秒，返回规范化 JPEG |
 
 以下接口由 mneme-api 暴露，使用原 API Token 或 Console 密码会话：
 

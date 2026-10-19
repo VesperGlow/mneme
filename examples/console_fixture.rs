@@ -23,6 +23,11 @@ async fn main() -> anyhow::Result<()> {
         config.qq.app_id = "12345678".into();
         config.qq.app_secret = "console-qq-fixture-only".into();
     }
+    if let Ok(base) = std::env::var("MNEME_TOOLS_UI_URL") {
+        config.tools.enabled = true;
+        config.tools.base_url = base;
+        config.tools.token = "console-tools-fixture-token-0123456789".into();
+    }
     config.validate()?;
     let (stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(config, rx).await?;

@@ -45,6 +45,14 @@ WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件�
 
 服务端先暂停新任务领取，最多等待当前请求、生成与后台任务 3 秒；仍繁忙时返回 409 `agent_busy`，不清空任何数据。成功后旧记忆立即停止召回，Neo4j 清理通过持久化标记交给后台执行；图谱离线或服务重启后继续重试，清理完成前不投影新记忆。SQLite 逻辑记录已删除，但此功能不代表磁盘安全擦除，也不会删除已有备份或外部服务的数据。
 
+## 自定义表情包
+
+进入 **Agent → 自定义表情包**，可批量上传自己的 PNG、JPEG、WebP 或 GIF，填写名字（最多 40 字）和使用场景 / 情绪标签（最多 120 字），例如“抱抱：安慰、鼓励，表达陪伴”。支持搜索、编辑、单张启停、删除和全局开关。网页、QQ、API 共用同一份素材，Agent 按语境选用，每轮最多一张；不额外调用模型生成图片。
+
+上传需启用并运行工具服务，每张原图最多 8 MiB。服务验证解码、移除元数据并缩至最长 512 像素，保留透明背景和 GIF / WebP 动画（最多 100 帧、总解码 4000 万像素）；处理后每张不超过 2 MiB。最多 50 张，目录描述还受当前上下文预算限制，总图片存储上限 64 MiB。表情库保存在 SQLite 中，重启和重置 Agent 对话后保留；删除库中表情后，已发送的历史图片仍可查看。历史引用在回复事务中提交，关闭页面和重放请求不会重复选择或发送。
+
+SSE `delta` 只含可见文本，提交成功后 `media` 事件返回 `stickers: [{image_id,name}]` 和 `images: [asset_id]`；重放也返回同一份媒体。历史接口包含 `stickers`，轮次查询包含 `media`。图片地址仍要求登录 Cookie 或 API Token。
+
 ## 编辑、删除与索引一致性
 
 新增和编辑先在一个 SQLite 事务内提交内容、修订快照和持久化投影任务。模型离线时仍可保存，页面显示“等待后台更新”；工作队列负责生成文档向量并更新 Neo4j 全文、向量和实体关系。内容没有变化时复用原向量。成功同步后记录 `indexed_revision`，不会用旧任务把新版本误标为已同步。
@@ -78,6 +86,11 @@ WebUI 修改的性格保存在 SQLite 的 metadata 中，优先于配置文件�
 | POST | `/v1/console/logout` | 撤销当前密码会话 |
 | GET | `/v1/console/settings` | persona、default_persona、password_configured、graph_cleanup_pending；不返回密码哈希或密钥 |
 | PUT | `/v1/console/persona` | `{"name":"…","description":"…","style":"…","boundaries":"…","output_format":"…"}`；output_format 可省略，默认为空 |
+| GET / POST | `/v1/stickers` | 获取全局表情库 / 上传原始图片；上传用 query 的 name、description、enabled 描述素材 |
+| PUT | `/v1/stickers/{id}` | 保存 name、description、enabled |
+| DELETE | `/v1/stickers/{id}` | 移除素材，保留历史图片 |
+| PUT | `/v1/stickers/settings` | `{"enabled":true}`，设置全局开关 |
+| GET | `/v1/sticker-images/{id}` | 读取受鉴权保护的表情图片 |
 | PUT | `/v1/console/password` | `{"current_password":"…","new_password":"…"}`；new_password 必须为 10–128 字符；API Token 可免当前密码用于恢复 |
 | POST | `/v1/admin/reset` | `{"confirmation":"RESET","reset_persona":false}`，返回删除条数和图谱清理排队状态 |
 

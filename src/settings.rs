@@ -394,6 +394,7 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
     for statement in [
         "DELETE FROM model_requests",
         "DELETE FROM tool_calls",
+        "DELETE FROM message_stickers",
         "DELETE FROM message_assets",
         "DELETE FROM assets",
         "DELETE FROM jobs",
@@ -420,6 +421,7 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
             .await
             .map_err(anyhow::Error::from)?;
     }
+    crate::stickers::cleanup(&mut tx).await?;
     if input.reset_persona {
         sqlx::query("DELETE FROM metadata WHERE key=?")
             .bind(PERSONA)

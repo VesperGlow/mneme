@@ -317,6 +317,16 @@ impl Store {
     }
 
     pub async fn complete_turn(&self, user: &Message, content: &str) -> Result<String> {
+        self.complete_turn_with_media(user, content, &[], &[]).await
+    }
+
+    pub(crate) async fn complete_turn_with_media(
+        &self,
+        user: &Message,
+        content: &str,
+        stickers: &[String],
+        images: &[String],
+    ) -> Result<String> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let changed = sqlx::query(
             "UPDATE turns SET status='complete',completed_at=? WHERE id=? AND status='generating'",
@@ -335,6 +345,17 @@ impl Store {
             .bind(&user.turn_id)
             .execute(&mut *tx)
             .await?;
+        for sticker in stickers {
+            let added = sqlx::query("INSERT INTO message_stickers(message_id,image_id,name) SELECT ?,image_id,name FROM stickers WHERE id=? AND enabled=1 AND COALESCE((SELECT value FROM metadata WHERE key='agent.stickers.enabled'),'true')='true' ON CONFLICT(message_id) DO NOTHING")
+                .bind(&message_id).bind(sticker).execute(&mut *tx).await?.rows_affected();
+            if added > 0 {
+                break;
+            }
+        }
+        for (position, image) in images.iter().take(4).enumerate() {
+            sqlx::query("INSERT OR IGNORE INTO message_assets(message_id,asset_id,position) SELECT ?,id,? FROM assets WHERE id=? AND session_id=?")
+                .bind(&message_id).bind(position as i64).bind(image).bind(&user.session_id).execute(&mut *tx).await?;
+        }
         self.schedule_extraction(&mut tx).await?;
         tx.commit().await?;
         Ok(message_id)

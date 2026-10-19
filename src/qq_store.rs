@@ -71,12 +71,24 @@ impl Store {
     /// The first private message starts the personal session in the same transaction as its inbox.
     /// Keep an existing owner across upgrades, and acknowledge only after committing the event.
     pub async fn qq_accept(&self, app_id: &str, message: Incoming) -> Result<Acceptance> {
+        self.qq_accept_with_images(app_id, message, &[]).await
+    }
+    pub async fn qq_accept_with_images(
+        &self,
+        app_id: &str,
+        message: Incoming,
+        images: &[String],
+    ) -> Result<Acceptance> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let owner: Option<String> = sqlx::query_scalar("SELECT value FROM metadata WHERE key=?")
             .bind(key(app_id, "owner"))
             .fetch_optional(&mut *tx)
             .await?;
-        let text = message.content.trim();
+        let text = if message.content.trim().is_empty() && !images.is_empty() {
+            "请查看我发送的图片。"
+        } else {
+            message.content.trim()
+        };
         if let Some(owner) = owner {
             if owner != message.sender {
                 return Ok(Acceptance::OtherAccount);
@@ -112,17 +124,18 @@ impl Store {
             .bind(app_id).bind(&message.sender).bind(&session).execute(&mut *tx).await?;
         let reply: Option<String> = match text {
                 "/新会话" => Some("QQ、网页和 API 始终延续同一段对话，无需开启新会话。".into()),
-                "/帮助" => Some("直接发送文字即可聊天。\nQQ、网页和 API 共用同一份持续上下文。\n记忆管理与遗忘请使用本机 Mneme Console。".into()),
+                "/帮助" => Some("直接发送文字或图片即可聊天。\nQQ、网页和 API 共用同一份持续上下文。\n记忆管理与遗忘请使用本机 Mneme Console。".into()),
                 // Do not put an obsolete pairing code in history or send it to the LLM.
                 _ if text == "/绑定" || text.starts_with("/绑定 ") => Some("无需绑定，直接发送文字即可聊天。".into()),
-                _ if text.is_empty() => Some("目前支持文字对话，请发送文字内容。".into()),
+                _ if images.len() > 4 => Some("每条消息最多支持 4 张图片，请分开发送。".into()),
+                _ if text.is_empty() => Some("请发送文字或 PNG、JPEG、WebP、GIF 图片。".into()),
                 _ if text.chars().count() > 4000 => Some("单条消息请控制在 4000 字以内。".into()),
                 _ => None,
             };
-        sqlx::query("INSERT INTO qq_inbox(id,app_id,message_id,user_openid,content,session_id,reply,available_at,expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO qq_inbox(id,app_id,message_id,user_openid,content,session_id,reply,available_at,expires_at,created_at,image_urls) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
             .bind(request).bind(app_id).bind(message.message_id).bind(message.sender)
             .bind(if reply.is_some(){""}else{text}).bind(session).bind(reply)
-            .bind(now()).bind(message.expires_at).bind(now()).execute(&mut *tx).await?;
+            .bind(now()).bind(message.expires_at).bind(now()).bind(serde_json::to_string(images)?).execute(&mut *tx).await?;
         tx.commit().await?;
         Ok(Acceptance::Queued)
     }

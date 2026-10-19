@@ -1,0 +1,49 @@
+// Run against console_fixture with MNEME_TOOLS_UI_URL pointing to a local tools service.
+const { chromium } = require('playwright-core');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const sharp = require('../services/tools/node_modules/sharp');
+(async () => {
+  const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
+  try {
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+    const page = await context.newPage(); const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.goto('http://127.0.0.1:18080/console/#agent');
+    await page.locator('#password').fill('console-fixture-password'); await page.getByRole('button', { name: '解锁控制台' }).click();
+    await page.locator('#add-sticker').waitFor();
+    await page.getByRole('button', { name: '添加表情包', exact: true }).click();
+    const png = await sharp({ create: { width: 160, height: 160, channels: 4, background: '#d9e7ca' } }).png().toBuffer();
+    const gif = await sharp(Buffer.from([255, 0, 0, 255, 0, 255, 0, 255]), { raw: { width: 1, height: 2, channels: 4, pageHeight: 1 } }).gif({ delay: [100, 200] }).toBuffer();
+    await page.locator('#sticker-files').setInputFiles([{ name: '抱抱.png', mimeType: 'image/png', buffer: png }, { name: '开心.gif', mimeType: 'image/gif', buffer: gif }]);
+    await page.locator('[name=sticker_description]').nth(0).fill('安慰、鼓励，表达陪伴');
+    await page.locator('[name=sticker_description]').nth(1).fill('开心、庆祝');
+    await page.getByRole('button', { name: '上传表情包', exact: true }).click();
+    await page.locator('#editor').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.querySelectorAll('.sticker-card').length === 2);
+    await page.locator('#sticker-search').fill('安慰'); assert.equal(await page.locator('.sticker-card').count(), 1);
+    await page.locator('[data-sticker-edit]').click();
+    await page.locator('[name=sticker_name]').fill('<b>抱抱</b>');
+    await page.getByRole('button', { name: '保存表情包', exact: true }).click(); await page.locator('#editor').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.querySelector('.sticker-caption strong')?.textContent === '<b>抱抱</b>' || [...document.querySelectorAll('.sticker-caption strong')].some(el => el.textContent === '<b>抱抱</b>'));
+    assert.equal(await page.locator('.sticker-caption b').count(), 0);
+    await page.reload(); await page.locator('#sticker-grid img').first().waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('#sticker-grid img')].every(img => img.complete && img.naturalWidth > 0));
+    fs.mkdirSync('artifacts', { recursive: true }); await page.screenshot({ path: 'artifacts/console-stickers-desktop.png', fullPage: true });
+    await page.getByRole('link', { name: '对话', exact: true }).click(); await page.locator('#chat-message').fill('__sticker_chat__'); await page.locator('#send-chat').click();
+    await page.locator('.chat-sticker').waitFor(); await page.waitForFunction(() => document.querySelector('.chat-sticker')?.naturalWidth > 0);
+    assert(!(await page.locator('#chat-messages').innerText()).includes('[[sticker:'));
+    await page.reload(); await page.locator('.chat-sticker').waitFor(); await page.screenshot({ path: 'artifacts/console-sticker-chat.png', fullPage: true });
+    await page.setViewportSize({ width: 390, height: 844 }); await page.goto('http://127.0.0.1:18080/console/#agent'); await page.locator('#sticker-grid').waitFor();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: 'artifacts/console-stickers-mobile.png', fullPage: true });
+    const toggle = page.waitForResponse(response => response.url().endsWith('/v1/stickers/settings') && response.request().method() === 'PUT');
+    await page.locator('#stickers-enabled').uncheck(); assert.equal((await toggle).status(), 200);
+    await page.reload(); await page.locator('#stickers-enabled').waitFor(); assert.equal(await page.locator('#stickers-enabled').isChecked(), false);
+    const card = page.locator('.sticker-card').filter({ hasText: '<b>抱抱</b>' }); await card.locator('[data-sticker-delete]').click();
+    await page.getByRole('button', { name: '确认删除', exact: true }).click(); await page.locator('#confirm').waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.querySelectorAll('.sticker-card').length === 1);
+    assert.deepEqual(errors, []);
+    console.log('PASS: custom PNG/GIF batch upload, metadata editing, search, escaped names, persisted global switch, generated chat sticker, history reload, mobile layout and deletion.');
+  } finally { await browser.close(); }
+})().catch(error => { console.error(error); process.exit(1); });

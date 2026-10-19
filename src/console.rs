@@ -77,6 +77,8 @@ async fn transcript(State(app): State<App>) -> ApiResult<Json<Value>> {
             .map_err(anyhow::Error::from)?;
         assets = rows.into_iter().map(|(id,message_id,kind,width,height)|json!({"id":id,"message_id":message_id,"kind":kind,"width":width,"height":height})).collect();
     }
+    let stickers: Vec<(String, String, String)> = sqlx::query_as("SELECT ms.message_id,ms.image_id,ms.name FROM message_stickers ms JOIN messages m ON m.id=ms.message_id WHERE m.id IN (SELECT id FROM messages ORDER BY seq DESC LIMIT 200)").fetch_all(&app.store.pool).await.map_err(anyhow::Error::from)?;
+    let stickers: Vec<_> = stickers.into_iter().map(|(message_id,image_id,name)| json!({"message_id":message_id,"image_id":image_id,"name":name})).collect();
     let turns: std::collections::HashSet<_> = messages
         .iter()
         .map(|m| m.message.turn_id.as_str())
@@ -100,7 +102,7 @@ async fn transcript(State(app): State<App>) -> ApiResult<Json<Value>> {
         })
         .collect();
     Ok(Json(
-        json!({"messages":messages,"assets":assets,"tool_calls":calls,"model_requests":requests,"conversation":conversation}),
+        json!({"messages":messages,"assets":assets,"stickers":stickers,"tool_calls":calls,"model_requests":requests,"conversation":conversation}),
     ))
 }
 

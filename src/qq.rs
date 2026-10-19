@@ -16,6 +16,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     routing::{get, post},
 };
+use base64::{Engine, engine::general_purpose::STANDARD};
 use ed25519_dalek::{Signature, Signer, SigningKey};
 use serde_json::{Value, json};
 use std::{
@@ -153,6 +154,39 @@ impl Client {
         text: &str,
         sequence: usize,
     ) -> std::result::Result<(), bool> {
+        self.media_request(
+            item,
+            "messages",
+            json!({"msg_type":0,"content":text,"msg_id":item.message_id,"msg_seq":sequence+1}),
+        )
+        .await
+        .map(|_| ())
+    }
+    async fn send_image(
+        &self,
+        item: &Delivery,
+        bytes: &[u8],
+        sequence: usize,
+    ) -> std::result::Result<(), bool> {
+        let upload = self
+            .media_request(
+                item,
+                "files",
+                json!({"file_type":1,"file_data":STANDARD.encode(bytes),"srv_send_msg":false}),
+            )
+            .await?;
+        let info = upload["file_info"]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() <= 60000)
+            .ok_or(false)?;
+        self.media_request(item, "messages", json!({"msg_type":7,"media":{"file_info":info},"msg_id":item.message_id,"msg_seq":sequence+1})).await.map(|_| ())
+    }
+    async fn media_request(
+        &self,
+        item: &Delivery,
+        endpoint: &str,
+        body: Value,
+    ) -> std::result::Result<Value, bool> {
         for attempt in 0..2 {
             let token = self.access_token().await.map_err(|error| {
                 crate::diagnostics::warn("qq.token", &error);
@@ -161,11 +195,20 @@ impl Client {
             if now() >= item.expires_at {
                 return Err(true);
             }
-            let response = self.http().post(format!("{}/v2/users/{}/messages",self.config.api_base.trim_end_matches('/'),item.user_openid))
-                .header(header::AUTHORIZATION,format!("QQBot {token}"))
-                .header("X-Union-Appid",&self.config.app_id)
-                .json(&json!({"msg_type":0,"content":text,"msg_id":item.message_id,"msg_seq":sequence+1}))
-                .send().await.map_err(|error| {
+            let response = self
+                .http()
+                .post(format!(
+                    "{}/v2/users/{}/{}",
+                    self.config.api_base.trim_end_matches('/'),
+                    item.user_openid,
+                    endpoint
+                ))
+                .header(header::AUTHORIZATION, format!("QQBot {token}"))
+                .header("X-Union-Appid", &self.config.app_id)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|error| {
                     crate::diagnostics::warn("qq.send", &error.into());
                     false
                 })?;
@@ -200,7 +243,7 @@ impl Client {
                 );
                 return Err(false);
             }
-            return Ok(());
+            return Ok(data);
         }
         Err(false)
     }
@@ -337,7 +380,7 @@ async fn webhook(
                     if expires_at > now() {
                         match app
                             .store
-                            .qq_accept(
+                            .qq_accept_with_images(
                                 &config.app_id,
                                 Incoming {
                                     message_id: message_id.into(),
@@ -345,6 +388,7 @@ async fn webhook(
                                     content: data["content"].as_str().unwrap_or("").into(),
                                     expires_at,
                                 },
+                                &attachment_urls(data),
                             )
                             .await
                         {
@@ -365,6 +409,56 @@ async fn webhook(
         }
         _ => Err(ApiError(StatusCode::BAD_REQUEST, "unsupported_qq_opcode")),
     }
+}
+
+fn attachment_urls(data: &Value) -> Vec<String> {
+    data["attachments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|a| {
+            matches!(
+                a["content_type"].as_str(),
+                Some("image/png" | "image/jpeg" | "image/webp" | "image/gif")
+            )
+        })
+        .take(5)
+        .map(|a| {
+            let raw = a["url"].as_str().unwrap_or("");
+            if raw.starts_with("//") {
+                format!("https:{raw}")
+            } else {
+                raw.into()
+            }
+        })
+        .collect()
+}
+async fn incoming_images(app: &App, item: &Delivery) -> Result<Vec<String>> {
+    let (urls, saved): (String, String) =
+        sqlx::query_as("SELECT image_urls,image_assets FROM qq_inbox WHERE id=?")
+            .bind(&item.id)
+            .fetch_one(&app.store.pool)
+            .await?;
+    let saved: Vec<String> = serde_json::from_str(&saved)?;
+    let urls: Vec<String> = serde_json::from_str(&urls)?;
+    if urls.is_empty() || !saved.is_empty() {
+        return Ok(saved);
+    }
+    let tools = app
+        .tools
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("tools disabled"))?;
+    let mut assets = Vec::new();
+    for url in urls {
+        let normalized = tools.fetch_image(&url).await?;
+        assets.push(crate::assets::save(app, &item.session_id, &normalized, "upload").await?);
+    }
+    sqlx::query("UPDATE qq_inbox SET image_assets=? WHERE id=?")
+        .bind(serde_json::to_string(&assets)?)
+        .bind(&item.id)
+        .execute(&app.store.pool)
+        .await?;
+    Ok(assets)
 }
 
 fn chunks(reply: &str) -> Vec<String> {
@@ -397,30 +491,35 @@ async fn process(
         if now() >= item.expires_at {
             return Ok(Err(true));
         }
-        let reply = match app
-            .store
-            .begin_turn(&item.session_id, &item.id, &item.content)
-            .await?
-        {
-            BeginTurn::Started(user) => {
-                tracing::info!(delivery=%item.id, "QQ reply generation started");
-                let (output, receiver) = mpsc::channel(1);
-                drop(receiver);
-                match crate::chat::generate(app, &user, &output).await {
-                    Ok(reply) => reply,
-                    Err(error) => {
-                        crate::diagnostics::warn("qq.generate", &error);
-                        tracing::warn!(delivery=%item.id, "QQ reply generation failed");
-                        app.store.fail_turn(&user, "generation_failed").await?;
-                        "这次回复没有完成，请稍后重新发送消息。".into()
+        let images = incoming_images(app, item).await;
+        let reply = if let Ok(images) = images {
+            match app
+                .store
+                .begin_turn_with_assets(&item.session_id, &item.id, &item.content, &images)
+                .await?
+            {
+                BeginTurn::Started(user) => {
+                    tracing::info!(delivery=%item.id, "QQ reply generation started");
+                    let (output, receiver) = mpsc::channel(1);
+                    drop(receiver);
+                    match crate::chat::generate(app, &user, &output).await {
+                        Ok(reply) => reply,
+                        Err(error) => {
+                            crate::diagnostics::warn("qq.generate", &error);
+                            tracing::warn!(delivery=%item.id, "QQ reply generation failed");
+                            app.store.fail_turn(&user, "generation_failed").await?;
+                            "这次回复没有完成，请稍后重新发送消息。".into()
+                        }
                     }
                 }
+                BeginTurn::Existing { status, content } if status == "complete" => {
+                    content.unwrap_or_default()
+                }
+                BeginTurn::Busy => return Ok(Err(false)),
+                _ => "上次回复被中断，请重新发送消息。我已经保存的对话和记忆仍在。".into(),
             }
-            BeginTurn::Existing { status, content } if status == "complete" => {
-                content.unwrap_or_default()
-            }
-            BeginTurn::Busy => return Ok(Err(false)),
-            _ => "上次回复被中断，请重新发送消息。我已经保存的对话和记忆仍在。".into(),
+        } else {
+            "图片暂时未能读取。请确认已启用工具服务后重新发送（每条最多 4 张，每张不超过 8 MiB）；文字内容可以单独发送。".into()
         };
         drop(permit);
         app.store.qq_reply(&item.id, &reply).await?;
@@ -439,6 +538,23 @@ async fn process(
             return Ok(Err(permanent));
         }
         app.store.qq_chunk(&item.id, index as i64 + 1).await?;
+    }
+    let text_parts = chunks(&reply).len();
+    let images: Vec<Vec<u8>> = sqlx::query_scalar("SELECT data FROM (SELECT si.data,0 AS position FROM message_stickers ms JOIN sticker_images si ON si.id=ms.image_id JOIN messages m ON m.id=ms.message_id WHERE m.turn_id=? AND m.role='assistant' UNION ALL SELECT a.data,ma.position+1 AS position FROM message_assets ma JOIN assets a ON a.id=ma.asset_id JOIN messages m ON m.id=ma.message_id WHERE m.turn_id=? AND m.role='assistant') ORDER BY position LIMIT 5")
+        .bind(&item.id).bind(&item.id).fetch_all(&app.store.pool).await?;
+    for (index, bytes) in images
+        .iter()
+        .take(5usize.saturating_sub(text_parts))
+        .enumerate()
+    {
+        let sequence = text_parts + index;
+        if (sequence as i64) < item.next_chunk {
+            continue;
+        }
+        if let Err(permanent) = client.send_image(item, bytes, sequence).await {
+            return Ok(Err(permanent));
+        }
+        app.store.qq_chunk(&item.id, sequence as i64 + 1).await?;
     }
     app.store.qq_sent(&item.id).await?;
     Ok(Ok(()))

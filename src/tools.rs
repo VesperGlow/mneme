@@ -84,10 +84,27 @@ impl Client {
         .await?;
         Ok(())
     }
+    pub async fn fetch_image(&self, url: &str) -> Result<ImageData> {
+        Ok(serde_json::from_value(
+            self.request(
+                reqwest::Method::POST,
+                "/v1/images/fetch",
+                Some(json!({"url":url})),
+            )
+            .await?,
+        )?)
+    }
     pub async fn normalize(&self, bytes: Vec<u8>) -> Result<ImageData> {
+        self.normalize_kind(bytes, false).await
+    }
+    pub async fn normalize_kind(&self, bytes: Vec<u8>, sticker: bool) -> Result<ImageData> {
         let response = self
             .http
-            .post(format!("{}/v1/images/normalize", self.url))
+            .post(format!(
+                "{}/v1/{}/normalize",
+                self.url,
+                if sticker { "stickers" } else { "images" }
+            ))
             .bearer_auth(&self.token)
             .header("content-type", "application/octet-stream")
             .body(bytes)

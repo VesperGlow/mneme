@@ -493,6 +493,7 @@ impl Llm {
         let mut events = response.bytes_stream().eventsource();
         let mut content = String::new();
         let mut guard = ToolTextGuard::default();
+        let mut media_guard = crate::stickers::MediaTextGuard::default();
         let mut calls = std::collections::BTreeMap::<usize, ToolCall>::new();
         let mut finish = String::new();
         let mut total_bytes = 0usize;
@@ -508,8 +509,12 @@ impl Llm {
                     let tail = guard.finish();
                     if !tail.is_empty() {
                         content.push_str(&tail);
-                        emit(output, "delta", json!({"content":tail}))?;
+                        emit(output, "delta", json!({"content":media_guard.push(&tail)}))?;
                     }
+                }
+                let tail = media_guard.finish();
+                if !tail.is_empty() {
+                    emit(output, "delta", json!({"content":tail}))?;
                 }
                 ensure!(!finish.is_empty(), "unfinished completion");
                 if calls.is_empty() {
@@ -577,7 +582,10 @@ impl Llm {
                 };
                 if !visible.is_empty() {
                     content.push_str(&visible);
-                    emit(output, "delta", json!({"content":visible}))?;
+                    let visible = media_guard.push(&visible);
+                    if !visible.is_empty() {
+                        emit(output, "delta", json!({"content":visible}))?;
+                    }
                 }
             }
             for delta in reasoning_deltas(&chunk["choices"][0]["delta"]) {

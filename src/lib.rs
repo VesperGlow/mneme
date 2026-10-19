@@ -14,6 +14,7 @@ pub mod models;
 pub mod qq;
 pub mod qq_store;
 pub mod settings;
+pub mod stickers;
 pub mod store;
 pub mod telemetry;
 pub mod tokens;
@@ -36,6 +37,7 @@ pub struct App {
     pub started_at: std::time::Instant,
     pub status_cache: Arc<tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>>,
     pub qq: Option<qq::Client>,
+    pub stickers: Arc<std::sync::RwLock<stickers::Catalog>>,
     pub persona: Arc<std::sync::RwLock<config::Persona>>,
     pub console_security: Arc<tokio::sync::Mutex<settings::ConsoleSecurity>>,
     pub maintenance: Arc<tokio::sync::RwLock<()>>,
@@ -94,6 +96,7 @@ impl App {
                 None
             },
             generation_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            stickers: Arc::new(std::sync::RwLock::new(stickers::load(&store).await?)),
             persona: Arc::new(std::sync::RwLock::new(persona)),
             console_security: Arc::new(tokio::sync::Mutex::new(security)),
             maintenance: Default::default(),

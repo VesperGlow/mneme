@@ -54,6 +54,7 @@ pub fn router(app: App) -> Router {
         .merge(crate::settings::protected_routes())
         .merge(crate::tools::routes())
         .merge(crate::assets::routes())
+        .merge(crate::stickers::routes())
         .merge(crate::qq::protected_routes())
         .route("/v1/memories/search", post(search))
         .route("/v1/admin/jobs/retry", post(retry_jobs))
@@ -185,7 +186,7 @@ async fn history(State(app): State<App>, Path(session): Path<String>) -> ApiResu
     }
     let history = app.store.history(&session, 100).await?;
     Ok(Json(
-        json!({"messages":history,"assets":crate::assets::history_metadata(&app,&session).await?,"tool_calls":crate::tools::logs(&app,Some(&session)).await?,"model_requests":app.store.request_history(history.iter().map(|m|m.turn_id.as_str())).await?}),
+        json!({"messages":history,"assets":crate::assets::history_metadata(&app,&session).await?,"stickers":crate::stickers::history_metadata(&app,&session).await?,"tool_calls":crate::tools::logs(&app,Some(&session)).await?,"model_requests":app.store.request_history(history.iter().map(|m|m.turn_id.as_str())).await?}),
     ))
 }
 
@@ -276,6 +277,11 @@ async fn chat(
             }
             let _ = emit(
                 &output,
+                "media",
+                crate::stickers::turn_media(&app, &input.request_id).await?,
+            );
+            let _ = emit(
+                &output,
                 "done",
                 json!({"turn_id":input.request_id,"persisted":true,"replayed":true}),
             );
@@ -339,7 +345,7 @@ async fn turn(State(app): State<App>, Path(id): Path<String>) -> ApiResult<Json<
         .bind(&id).fetch_all(&app.store.pool).await.map_err(anyhow::Error::from)?;
     let requests = app.store.turn_model_requests(&id).await?;
     Ok(Json(
-        json!({"id":id,"session_id":session,"status":status,"error":error,"messages":messages,"usage":crate::usage::aggregate(&requests),"model_requests":requests}),
+        json!({"id":id,"session_id":session,"status":status,"error":error,"messages":messages,"media":crate::stickers::turn_media(&app,&id).await?,"usage":crate::usage::aggregate(&requests),"model_requests":requests}),
     ))
 }
 async fn list_memories(

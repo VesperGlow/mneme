@@ -95,6 +95,8 @@ python3 scripts/chat.py
 
 可在 Console 的 **Agent 页** 中修改名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话立即生效，重启后保留。输出格式可填写回复结构、Markdown 等要求，留空表示不额外约束。初始人格来自 `~/.config/mneme/config.toml` 的 `[persona]`；WebUI 保存的设置优先于文件，可用“填入配置文件默认值”后保存来恢复。人格指令每轮重新加入，不依赖可能被裁剪的历史消息。
 
+Agent 页还可批量上传自己的 PNG、JPEG、WebP、GIF 表情包，按名字与情绪 / 使用场景管理、搜索和启停。表情库全局共享，网页、QQ 和 API 回复均可按语境选用，重启和重置对话后保留。QQ 同时支持接收图文 / 纯图片并交给现有多模态模型理解，也能回复表情包、已有图片和工具截图。上传与 QQ 看图需运行工具服务；配置与限制见 [Console 表情包说明](docs/console.md#自定义表情包) 和 [QQ 图片说明](docs/qq.md#图片与自定义表情包)。
+
 ## Mneme Console
 
 打开 **http://127.0.0.1:8080/console/**，使用独立密码登录内置管理后台。安装生成的初始密码保存在 `~/.config/mneme/console-password`，也可通过 `MNEME_CONSOLE_PASSWORD` 初始化；已有 WebUI 密码保持不变。支持流式聊天、图片上传、浏览器工具状态与调用记录、带统计与搜索的记忆库、记忆增删改查、来源与历史版本、混合检索调试、系统状态及独立 **Agent 页**；适配桌面与移动端。Agent 页管理性格、QQ 接入、上下文与重置；设置页修改 WebUI 密码。聊天为默认入口，导航和账号操作位于左侧，手机通过菜单展开。页面和资源由 Axum 直接提供，不增加容器或运行依赖。登录使用 HttpOnly、SameSite=Strict 的持久 Cookie，服务端仅保存会话凭证哈希；默认有效期 30 天，使用时续期，刷新、关闭浏览器或服务重启后仍可继续。主动退出、密码变更或过期后需要重新登录。`[console].session_days` 可设为 1–365 天，HTTPS 部署设置 `secure_cookie=true`。对话页显示 QQ 和网页的最近 200 条消息及来源，自动更新记录并保留输入草稿。使用及升级说明见 [docs/console.md](docs/console.md)。

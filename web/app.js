@@ -51,6 +51,8 @@
   }
   const send = (path, data, method = 'POST') => api(path, { method, body: JSON.stringify(data) });
   function errorText(error) {
+    const stickerErrors = { invalid_sticker: '名字须为 1–40 字，使用场景最多 120 字。', invalid_sticker_image: '图片未能处理，请检查格式、动图帧数与工具服务；处理后的图片须小于 2 MiB。', sticker_catalog_full: '表情库已达到数量或上下文容量上限，请精简使用场景或删除部分表情。', sticker_storage_full: '表情图片存储已达到 64 MiB 上限。', sticker_not_found: '表情包已被删除，请刷新列表。', tools_disabled: '请先启用工具服务，再上传表情包。' };
+    if (stickerErrors[error.code]) return stickerErrors[error.code];
     if (error.code === 'duplicate_memory') return '已有相同内容的有效记忆，请编辑已有记录。';
     if (error.code === 'memory_changed_reload') return '这条记忆已发生变化，请关闭窗口后重新打开，核对最新版本。';
     if (error.code === 'invalid_persona') return '请填写名字（最多 80 字）；性格各项合计最多 6000 字，并须符合当前上下文容量。';
@@ -316,7 +318,7 @@
     }).join('');
   }
   function transcriptMarkup(history) {
-    return history.messages.map(message => `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small>${message.role === 'assistant' ? reasoningMarkup(history, message) : ''}<div class="${message.role === 'assistant' ? 'answer-body' : 'prewrap'}">${message.role === 'assistant' ? answerMarkup(message.content) : esc(message.content)}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">查看上传图片</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || `<div class="chat-welcome"><img src="/console/icon.svg" alt=""><h2>今天，想聊些什么？</h2><p>从这一刻开始，延续每一段交流。</p></div>`;
+    return history.messages.map(message => `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small>${message.role === 'assistant' ? reasoningMarkup(history, message) : ''}<div class="${message.role === 'assistant' ? 'answer-body' : 'prewrap'}">${message.role === 'assistant' ? answerMarkup(message.content) : esc(message.content)}</div><div class="chat-stickers">${(history.stickers || []).filter(s => s.message_id === message.id).map(s => `<img class="chat-sticker" src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy">`).join('')}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">${message.role === 'assistant' ? '查看回复图片' : '查看上传图片'}</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || `<div class="chat-welcome"><img src="/console/icon.svg" alt=""><h2>今天，想聊些什么？</h2><p>从这一刻开始，延续每一段交流。</p></div>`;
   }
   async function chatPage(epoch) {
     const [tools, history] = await Promise.all([api('/v1/console/tools'), api('/v1/console/messages')]); if (epoch !== state.epoch) return;
@@ -443,14 +445,75 @@
   function qqCard(qq) {
     return `<section class="panel job-card spaced"><div class="between"><div><h2>QQ 机器人</h2><p class="subheading">${qq.enabled ? `AppID ${esc(qq.app_id)} · 个人单聊` : '在 .env 填写 QQ AppID 和 AppSecret 后启用'}</p></div><span class="badge ${qq.has_session ? 'green' : 'amber'}">${qq.has_session ? '个人会话已建立' : qq.bound ? '等待新会话' : qq.enabled ? '等待首条私聊' : '未启用'}</span></div>${qq.enabled ? `<p class="hint spaced">直接私聊即可开始，无需绑定码。首次私聊自动建立个人会话，重启后继续使用。</p><div class="spaced"><small>待处理 ${fmt(qq.queue.pending)} · 运行中 ${fmt(qq.queue.running)} · 已发送 ${fmt(qq.queue.sent)} · 失败 ${fmt(qq.queue.dead)}</small></div>` : ''}</section>`;
   }
+  async function stickerPanel(epoch) {
+    const data = await api('/v1/stickers'); if (epoch !== state.epoch) return;
+    const panel = $('#sticker-panel');
+    panel.innerHTML = `<div class="panel-head between"><div><h2>自定义表情包</h2><p class="subheading">你收藏的表情，让每次回应多一点默契。</p></div><button class="btn primary" id="add-sticker" ${data.upload_available ? '' : 'disabled'}>${icon('plus')}添加表情包</button></div><div class="sticker-body"><label class="check-label"><input type="checkbox" id="stickers-enabled" ${data.enabled ? 'checked' : ''}>允许 Agent 在回复中使用表情包</label><p class="hint">网页、QQ 和 API 共用这份表情库。根据名字与使用场景选择，每轮最多一张。重启和重置对话后保留。</p>${!data.upload_available ? '<div class="notice warn">启用工具服务后即可上传图片；已有表情包仍可使用。</div>' : ''}<div class="sticker-toolbar"><label class="search-field">${icon('search')}<input id="sticker-search" placeholder="搜索名字或使用场景" aria-label="搜索表情包"></label><small id="sticker-count"></small></div><div id="sticker-grid" class="sticker-grid"></div><div class="error-inline" id="stickers-error" role="alert"></div><p class="hint">支持 PNG、JPEG、WebP 和 GIF 动图，原图最多 8 MiB。最多 ${data.limit} 张；自动缩至 512 像素并移除元数据。</p></div>`;
+    const render = () => {
+      const q = $('#sticker-search').value.trim().toLocaleLowerCase();
+      const visible = data.stickers.filter(s => `${s.name} ${s.description}`.toLocaleLowerCase().includes(q));
+      $('#sticker-count').textContent = `${data.stickers.length} / ${data.limit} 张`;
+      $('#sticker-grid').innerHTML = visible.map(s => `<article class="sticker-card${s.enabled ? '' : ' is-disabled'}"><div class="sticker-preview"><img src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy"></div><div class="sticker-caption"><strong>${esc(s.name)}</strong><span class="badge ${s.enabled ? 'green' : ''}">${s.enabled ? '已启用' : '已停用'}</span></div><p>${esc(s.description || '添加使用场景，帮助 Agent 选对表情。')}</p><div class="sticker-actions"><button class="btn small" data-sticker-edit="${esc(s.id)}" aria-label="编辑 ${esc(s.name)}">${icon('edit')}编辑</button><button class="icon-btn" data-sticker-delete="${esc(s.id)}" aria-label="删除 ${esc(s.name)}">${icon('trash')}</button></div></article>`).join('') || `<div class="sticker-empty">${icon('spark')}<strong>${q ? '没有找到表情包' : '把你的表情收藏放在这里'}</strong><p>${q ? '试试其他名字或使用场景。' : '上传喜欢的表情，告诉 Agent 什么时候用它。'}</p></div>`;
+      $$('[data-sticker-edit]', panel).forEach(button => { button.onclick = () => editSticker(data.stickers.find(s => s.id === button.dataset.stickerEdit), epoch); });
+      $$('[data-sticker-delete]', panel).forEach(button => { button.onclick = () => {
+        const sticker = data.stickers.find(s => s.id === button.dataset.stickerDelete);
+        const dialog = openDialog('confirm', `<header class="dialog-head"><h2>删除表情包？</h2><button class="icon-btn" data-close="confirm" aria-label="关闭">${icon('close')}</button></header><div class="dialog-body"><p>将“${esc(sticker.name)}”从表情库移除，已发送的历史图片会保留。</p><div class="error-inline" role="alert"></div></div><footer class="dialog-footer"><button class="btn" data-close="confirm">取消</button><button class="btn danger" id="confirm-sticker-delete">确认删除</button></footer>`);
+        $('#confirm-sticker-delete', dialog).onclick = async event => {
+          const button = event.currentTarget; button.disabled = true;
+          try { await api(`/v1/stickers/${sticker.id}`, { method: 'DELETE' }); closeDialog('confirm'); await stickerPanel(epoch); toast('表情包已删除。'); }
+          catch (error) { if (error.name !== 'AbortError') $('.error-inline', dialog).textContent = errorText(error); button.disabled = false; }
+        };
+      }; });
+    };
+    render(); $('#sticker-search').oninput = render;
+    $('#add-sticker').onclick = () => editSticker(null, epoch);
+    $('#stickers-enabled').onchange = async event => {
+      const input = event.target; input.disabled = true; $('#stickers-error').textContent = '';
+      try { await send('/v1/stickers/settings', { enabled: input.checked }, 'PUT'); toast(input.checked ? '已开启全局表情包。' : '已暂停使用表情包。'); }
+      catch (error) { input.checked = !input.checked; if (error.name !== 'AbortError' && epoch === state.epoch) $('#stickers-error').textContent = errorText(error); }
+      finally { input.disabled = false; }
+    };
+  }
+  function editSticker(sticker, epoch) {
+    const dialog = openDialog('editor', `<form id="sticker-form"><header class="dialog-head"><div><div class="eyebrow">YOUR EXPRESSIONS</div><h2>${sticker ? '编辑表情包' : '添加你的表情包'}</h2></div><button type="button" class="icon-btn" data-close="editor" aria-label="关闭">${icon('close')}</button></header><div class="dialog-body stack">${sticker ? '' : '<label class="field">选择图片<input type="file" id="sticker-files" accept="image/png,image/jpeg,image/webp,image/gif" multiple required><span class="hint">可一次选择多张，每张不超过 8 MiB；GIF 会保留动效。</span></label>'}<div id="sticker-editor-items" class="stack"></div><p class="hint">名字与使用场景供 Agent 选择表情。例如：名字“抱抱”，场景“安慰、鼓励，表达陪伴”。</p><div class="error-inline" id="sticker-editor-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="editor">取消</button><button type="submit" class="btn primary">${sticker ? '保存表情包' : '上传表情包'}</button></footer></form>`);
+    let files = []; let previews = [];
+    const fields = (name, description, src, enabled = true) => `<div class="sticker-editor-item"><img src="${esc(src)}" alt="表情预览"><div class="stack"><label class="field">名字<input name="sticker_name" maxlength="40" required value="${esc(name)}"></label><label class="field">使用场景 / 情绪标签<textarea name="sticker_description" maxlength="120" rows="2" placeholder="例如：开心、庆祝、打招呼">${esc(description)}</textarea></label><label class="check-label"><input name="sticker_enabled" type="checkbox" ${enabled ? 'checked' : ''}>允许使用这张表情</label></div></div>`;
+    if (sticker) $('#sticker-editor-items').innerHTML = fields(sticker.name, sticker.description, `/v1/sticker-images/${sticker.image_id}`, sticker.enabled);
+    else $('#sticker-files').onchange = event => {
+      previews.forEach(url => { URL.revokeObjectURL(url); objectURLs.delete(url); }); previews = [];
+      files = [...event.target.files]; const error = $('#sticker-editor-error'); error.textContent = '';
+      if (files.length > 50 || files.some(f => f.size > 8 * 1024 * 1024 || !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(f.type))) { files = []; event.target.value = ''; error.textContent = '请选择 PNG、JPEG、WebP 或 GIF，每张不超过 8 MiB，最多 50 张。'; }
+      $('#sticker-editor-items').innerHTML = files.map(file => { const url = URL.createObjectURL(file); objectURLs.add(url); previews.push(url); return fields(file.name.replace(/\.[^.]+$/, '').slice(0, 40), '', url); }).join('');
+    };
+    $('#sticker-form').onsubmit = async event => {
+      event.preventDefault(); const form = event.target; const button = $('button[type=submit]', form); const error = $('#sticker-editor-error'); error.textContent = '';
+      const items = $$('.sticker-editor-item', form).map(el => ({ name: $('[name=sticker_name]', el).value.trim(), description: $('[name=sticker_description]', el).value.trim(), enabled: $('[name=sticker_enabled]', el).checked }));
+      if (!items.length || items.some(item => !item.name)) return;
+      $$('input,textarea,button', form).forEach(el => { el.disabled = true; });
+      let completed = 0;
+      try {
+        if (sticker) await send(`/v1/stickers/${sticker.id}`, items[0], 'PUT');
+        else for (let i = 0; i < files.length; i++) { button.textContent = `正在上传 ${i + 1} / ${files.length}…`; await api(`/v1/stickers?${new URLSearchParams(items[i])}`, { method: 'POST', body: files[i], headers: { 'Content-Type': 'application/octet-stream' } }); completed++; }
+        previews.forEach(url => { URL.revokeObjectURL(url); objectURLs.delete(url); });
+        closeDialog('editor'); if (epoch === state.epoch) { await stickerPanel(epoch); toast(sticker ? '表情包已保存。' : `已添加 ${completed} 张表情包，所有渠道均可使用。`); }
+      } catch (failure) {
+        if (failure.name !== 'AbortError' && epoch === state.epoch) {
+          error.textContent = `${completed ? `已上传 ${completed} 张，剩余图片未完成。` : ''}${errorText(failure)}`;
+          if (completed) { files = files.slice(completed); $$('.sticker-editor-item', form).slice(0, completed).forEach(el => el.remove()); await stickerPanel(epoch); }
+        }
+        $$('input,textarea,button', form).forEach(el => { el.disabled = false; }); button.textContent = sticker ? '保存表情包' : '上传剩余表情包';
+      }
+    };
+  }
   async function agentPage(epoch) {
     const [data, qq, conversation] = await Promise.all([api('/v1/console/settings'), api('/v1/qq/status'), api('/v1/conversation')]);
     if (epoch !== state.epoch) return;
     const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '性格描述', 6000, '身份、个性与陪伴方式'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界'], ['output_format', '输出格式 Prompt', 6000, '例如：使用纯文本，分段回复，不使用 Markdown。留空表示不额外约束输出格式。']];
-    $('#page').innerHTML = `<div class="agent-layout"><section class="panel agent-profile"><div class="agent-avatar">${icon('leaf')}</div><div><h2 id="agent-name">${esc(data.persona.name)}</h2><p>${esc(data.model)}</p></div><span class="badge green">全局共享对话</span></section><div class="agent-columns"><div class="settings-stack">      <section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
+    $('#page').innerHTML = `<div class="agent-layout"><section class="panel agent-profile"><div class="agent-avatar">${icon('leaf')}</div><div><h2 id="agent-name">${esc(data.persona.name)}</h2><p>${esc(data.model)}</p></div><span class="badge green">全局共享对话</span></section><div class="agent-columns"><div class="settings-stack"><section class="panel" id="sticker-panel"></section><section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
       <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
       <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
       <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div><aside class="agent-aside">${qqCard(qq)}<section class="panel context-card"><div class="panel-head"><h2>上下文与记忆</h2></div><div class="context-facts"><div><small>上下文预算</small><strong>${fmt(conversation.context.context_tokens)} tokens</strong></div><div><small>下一轮上下文（估算）</small><strong>${fmt(conversation.context.context_used_tokens)} tokens</strong></div><div><small>定期提取记忆</small><strong>每 ${fmt(conversation.context.memory_extract_chars)} 字</strong></div><div><small>已压缩历史</small><strong>${fmt(conversation.context.compactions)} 次</strong></div></div><p class="hint">QQ、网页和 API 共用上下文。占用包含系统指令、历史、摘要、记忆和工具，按 Token 预算压缩历史。API 实际用量与本地估算、长期记忆提取独立统计，可在聊天底部查看。</p></section></aside></div></div>`;
+    await stickerPanel(epoch); if (epoch !== state.epoch) return;
     const personaForm = $('#persona-form');
     $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };
     personaForm.onsubmit = async event => {

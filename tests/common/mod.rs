@@ -36,6 +36,11 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                 let broken=messages.last().unwrap()["content"].as_str().unwrap().contains("断流");
                 let recalls = messages.iter().filter_map(|m|m["content"].as_str()).collect::<Vec<_>>().join("\n");
                 let answer=if recalls.contains("__markdown_chat__") {"**已整理**\n\n- 第一项\n- 第二项\n\n[参考资料](https://example.org/source) [危险链接](javascript:alert%281%29)\n\n```html\n<img src=x onerror=\"window.__answer_xss=1\">\n```\n\n<img src=x onerror=\"window.__answer_xss=1\">"} else if recalls.contains("用户住在成都") || messages.iter().take(messages.len()-1).any(|m|m["content"].as_str().is_some_and(|s|s.contains("我住在成都"))) {"你住在成都，我记得。"} else {"我会认真记住你告诉我的事情。"};
+                let mut answer = answer.to_owned();
+                if recalls.contains("__sticker_chat__")
+                    && let Some(sticker) = messages[0]["content"].as_str().and_then(|s| s.split("\"id\":\"").nth(1)).and_then(|s| s.split('"').next()) {
+                    answer.push_str(&format!("[[sticker:{sticker}]]"));
+                }
                 let first=json!({"choices":[{"delta":{"content":answer},"finish_reason":null}]}).to_string();
                 let finish=json!({"choices":[{"delta":{},"finish_reason":"stop"}]}).to_string();
                 // Fragment UTF-8 and SSE frames across arbitrary network body chunks.
