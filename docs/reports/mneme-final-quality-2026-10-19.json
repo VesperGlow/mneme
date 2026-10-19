@@ -1,0 +1,142 @@
+{
+  "date": "2026-10-19",
+  "checkpoint_commit": "485522a",
+  "quality_acceptance": "pending",
+  "pushed_by_agent": false,
+  "production_modified": false,
+  "defaults": {
+    "semantic_rewrite": false,
+    "verify_recall": false,
+    "reconcile_updates": true
+  },
+  "checkpoint_tests": {
+    "rust_passed": 103,
+    "rust_failed": 0,
+    "rust_ignored": 12,
+    "python_passed": 37,
+    "python_skipped": 10,
+    "native_tokenizer_passed": 4,
+    "model_queue_passed": 6,
+    "node_passed": 13,
+    "node_skipped": 2
+  },
+  "real_api_e2e": {
+    "artifact": "artifacts/mneme-quality-api/results.json",
+    "turns": 4,
+    "ledger_requests": 26,
+    "raw_captured_model_requests": 24,
+    "ledger_requests_by_purpose": {
+      "embedding": 10,
+      "chat": 4,
+      "memory": 9,
+      "reranker": 3
+    },
+    "raw_totals": {
+      "input_tokens": 8063,
+      "output_tokens": 878,
+      "total_tokens": 8941
+    },
+    "ledger_totals": {
+      "input_tokens": 9275,
+      "output_tokens": 990,
+      "total_tokens": 10265
+    },
+    "independent_reconciliation_complete": false,
+    "audit_bug": "usage was logged only after upstream EOF; clients can stop at [DONE]",
+    "audit_fix": "capture snapshots before forwarding, retain one row per physical request",
+    "audit_fix_protocol_regression": "passed",
+    "real_api_rerun_after_audit_fix": false
+  },
+  "real_thinking_api": {
+    "artifact": "artifacts/mneme-quality-reasoning.json",
+    "requests": 2,
+    "stream_reasoning_observed": true,
+    "provider_fields_match_ledger": true,
+    "ledger": [
+      {
+        "input_tokens": 374,
+        "output_tokens": 2,
+        "reasoning_tokens": 0,
+        "total_tokens": 376,
+        "cached_input_tokens": 0,
+        "cache_creation_input_tokens": null,
+        "source": "api",
+        "estimated": {
+          "input_tokens": 435,
+          "output_tokens": 1,
+          "reasoning_tokens": null,
+          "total_tokens": 436,
+          "tokenizer": "o200k_base (fallback)",
+          "model_matched": false,
+          "output_is_lower_bound": false
+        }
+      },
+      {
+        "input_tokens": 51,
+        "output_tokens": 60,
+        "reasoning_tokens": 54,
+        "total_tokens": 111,
+        "cached_input_tokens": 0,
+        "cache_creation_input_tokens": null,
+        "source": "api",
+        "estimated": {
+          "input_tokens": 33,
+          "output_tokens": 59,
+          "reasoning_tokens": 56,
+          "total_tokens": 92,
+          "tokenizer": "o200k_base (fallback)",
+          "model_matched": false,
+          "output_is_lower_bound": false
+        }
+      }
+    ]
+  },
+  "test_cost_upper_bound_cny": 0.648618,
+  "test_budget_cny": 1.5,
+  "experimental_combined_benchmark": {
+    "sources": 71,
+    "queries": 46,
+    "extraction_precision": 1,
+    "extraction_recall": 0.958,
+    "retrieval_precision": 0.861,
+    "retrieval_recall": 0.853,
+    "recall_p95_ms_approx": 2953,
+    "recall_p99_ms_approx": 3222,
+    "accepted": false,
+    "retrieval_experiments_default_enabled": false
+  },
+  "new_blind5": {
+    "state": "frozen_not_executed",
+    "sha256": "fb80afa16f0e45fd4069406564e6a965156e1932c41bddefd94c4177a59ca641"
+  },
+  "pending": [
+    "default metaphor recall acceptance",
+    "independent precision/recall acceptance",
+    "paired final-configuration P95/P99",
+    "full real API rerun after stream audit fix"
+  ],
+  "ui_regression": {
+    "artifact": "artifacts/mneme-chat-reading-browser.log",
+    "status": "passed",
+    "desktop_width_px": 1440,
+    "mobile_widths_px": [
+      390,
+      320
+    ],
+    "long_reasoning_without_internal_scroll": true,
+    "reasoning_default_collapsed": true,
+    "one_usage_entry_per_reply": true,
+    "summary_matches_backend_turn_totals": true,
+    "backend_accounting_changed": false,
+    "sticker_browser_regression": "passed",
+    "sticker_artifact": "artifacts/mneme-chat-reading-stickers.log"
+  },
+  "current_rust_regression": {
+    "passed": 104,
+    "failed": 0,
+    "ignored": 12,
+    "artifact": "artifacts/mneme-chat-reading-rust.log",
+    "clippy": "passed",
+    "format": "passed"
+  }
+}

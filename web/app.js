@@ -93,7 +93,7 @@
   }
   function clearLogin() {
     for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
-    state.chatBusy = false;
+    state.chatBusy = false; lazyDetails.clear();
     state.authenticated = false; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null; state.libraryView = 'memories';
     state.filter = { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }; clearTimeout(state.poll);
     for (const modal of $$('dialog')) { if (modal.open) modal.close(); modal.innerHTML = ''; }
@@ -266,10 +266,10 @@
     const percent = Math.round((context.context_used_tokens || 0) / context.context_tokens * 100);
     return `上下文 ≈ ${fmt(context.context_used_tokens)} / ${fmt(context.context_tokens)} tokens · ${percent}%`;
   };
-  const tokenValue = value => value == null ? '未提供' : fmt(value);
+  const tokenValue = (value, estimated = false) => value == null || !Number.isFinite(value) || value < 0 ? '未提供' : `${estimated || !Number.isSafeInteger(value) ? '≈ ' : ''}${fmt(value)}`;
   const tokenLabels = { input_tokens: '输入', output_tokens: '输出（含推理）', reasoning_tokens: '其中推理', total_tokens: '总消耗', cached_input_tokens: '其中缓存命中', cache_creation_input_tokens: '其中缓存写入' };
   const contextLabels = { system: '系统提示词', history: '历史消息', summary: '压缩摘要', memory: '长期记忆', current: '本轮消息', tools: '工具与图片', overhead: '消息封装' };
-  const tokenRows = usage => Object.entries(tokenLabels).map(([key, label]) => {
+  const tokenMetric = (usage, key) => {
     const cumulative = !!usage?.reported;
     const reported = cumulative ? (usage.reported[key] || 0) : Number(usage?.[key] != null);
     const estimates = cumulative ? (usage.estimated?.[key] || 0) : Number(usage?.[key] == null && usage?.estimated?.[key] != null);
@@ -277,7 +277,11 @@
     const missing = cumulative ? usage.requests - reported - estimates : Number(value == null);
     const lower = ['output_tokens', 'total_tokens'].includes(key) && (cumulative ? usage.output_lower_bound_requests > 0 : estimates && usage.estimated.output_is_lower_bound);
     const source = cumulative ? `${reported} 实测 / ${estimates} 估算${missing ? ` / ${missing} 未知` : ''}` : estimates ? '估算' : reported ? '实测' : '';
-    return `<div><dt>${label}</dt><dd>${estimates ? '≈ ' : ''}${tokenValue(value)} <small>${source}${cumulative && estimates && usage[key] != null ? ` · 实测合计 ${fmt(usage[key])}` : ''}${lower ? '，含已观测下限' : ''}</small></dd></div>`;
+    return { cumulative, reported, estimates, value, missing, lower, source };
+  };
+  const tokenRows = usage => Object.entries(tokenLabels).map(([key, label]) => {
+    const { cumulative, reported, estimates, value, lower, source } = tokenMetric(usage, key);
+    return `<div><dt>${label}</dt><dd>${tokenValue(reported || estimates || (cumulative && usage.requests === 0) ? value : null, estimates)} <small>${source}${cumulative && estimates && usage[key] != null ? ` · 实测合计 ${tokenValue(usage[key])}` : ''}${lower ? '，含已观测下限' : ''}</small></dd></div>`;
   }).join('');
   const distributionMarkup = distribution => `<dl class="token-distribution">${Object.entries(contextLabels).map(([key, label]) => `<div><dt>${label}</dt><dd>≈ ${fmt(distribution?.[key] || 0)}</dd></div>`).join('')}</dl>`;
   function contextDetails(context) {
@@ -286,15 +290,58 @@
     const purposeLabels = { chat: '对话与工具循环', compression: '历史压缩', memory: '长期记忆提取', embedding: 'Embedding', reranker: 'Reranker', sticker: '表情包理解' };
     return `<p>下一轮上下文估算 · ${fmt(context.context_used_tokens)} tokens</p>${distributionMarkup(context.distribution)}<p class="hint">按 ${esc(context.tokenizer || '本地分词器')} 估算，记忆沿用最近召回的大小；下一条消息及其召回结果尚未确定。回复预留 ${fmt(context.reply_reserve_tokens)} tokens${context.tool_reserve_tokens ? `，工具运行预留 ${fmt(context.tool_reserve_tokens)}` : ''}。</p>${last ? `<p>最近模型请求 · 输入 ${tokenValue(last.usage.input_tokens)} tokens（API）</p><details class="request-context"><summary>该请求的输入分布（估算）</summary>${distributionMarkup(last.context)}</details><dl class="token-distribution">${tokenRows(last.usage)}</dl>` : ''}<p>会话累计 · ${fmt(totals?.requests || 0)} 次模型请求</p>${totals?.incomplete_requests ? `<p class="hint">${fmt(totals.incomplete_requests)} 次请求未正常结束，用量以已收到的 API 统计为准。</p>` : ''}<dl class="token-distribution">${tokenRows(totals)}</dl>${Object.entries(totals?.by_purpose || {}).map(([purpose, usage]) => `<p class="hint">${purposeLabels[purpose] || esc(purpose)}：${usage.estimated?.total_tokens ? '≈ ' : ''}${tokenValue(usage.effective?.total_tokens ?? usage.total_tokens)} tokens · ${fmt(usage.requests)} 次请求${usage.reported.total_tokens < usage.requests ? '（统计不完整）' : ''}</p>`).join('')}<p class="hint">推理已包含在输出中，不重复相加。优先采用 API 或本地模型实际分词数；缺失字段单独标记估算，隐藏推理未知时显示已观测下限。累计消耗与下一轮上下文分别统计。</p><p>已整理 ${fmt(context.compactions)} 次 · 按 Token 预算自动压缩历史；长期记忆独立按每 ${fmt(context.memory_extract_tokens)} tokens 提取，最长等待 ${fmt(context.memory_extract_max_delay_seconds)} 秒。</p><p id="chat-summary" class="prewrap conversation-summary">${esc(context.summary || '对话摘要将在整理历史后显示。')}</p>`;
   }
-  function requestMarkup(request, live = false) {
-    const thinking = request.reasoning || '';
-    const stats = `<dl class="token-distribution request-usage" aria-label="模型请求 Token 用量">${tokenRows(request.usage)}</dl>`;
-    return `<details class="chat-reasoning"><summary>${thinking ? (live ? '正在思考' : '思考过程') : '模型请求'} · ${esc(request.model || '')}</summary><div class="prewrap reasoning-body">${esc(thinking)}</div>${stats}<p class="hint">估算分词器：${esc(request.usage?.estimated?.tokenizer || '未记录')}</p></details>`;
+  const lazyDetails = new Map();
+  function lazyContent(key, render) {
+    lazyDetails.set(key, render);
+    return '<div data-lazy-content></div>';
   }
-  const turnUsageMarkup = usage => usage ? `<dl class="token-distribution request-usage turn-usage" aria-label="本轮 Token 用量">${tokenRows(usage)}</dl>` : '';
-  function reasoningMarkup(history, message) {
-    const requests = (history.model_requests || []).filter(request => request.turn_id === message.turn_id && request.purpose === 'chat');
-    return requests.map(request => `<div class="model-request" data-request-id="${esc(request.id)}">${requestMarkup(request, request.status === 'running')}</div>`).join('') + turnUsageMarkup(history.turn_usage?.[message.turn_id]);
+  function hydrateDetails(detail) {
+    const body = $(':scope > [data-lazy-content]', detail);
+    if (!body || (body.childNodes.length && !detail.detailsDirty)) return;
+    body.innerHTML = lazyDetails.get(detail.dataset.detailKey)?.() || '';
+    detail.detailsDirty = false;
+    if (detail.rememberedOpen) restoreDetails(body, detail.rememberedOpen, detail.rememberedFocus);
+  }
+  document.addEventListener('toggle', event => {
+    if (event.target.matches('details[data-detail-key]') && event.target.open && event.target.isConnected) hydrateDetails(event.target);
+  }, true);
+  function requestMarkup(request, live = false) {
+    if (!request.reasoning) return '';
+    const key = `reasoning:${request.id}`;
+    return `<details class="chat-reasoning" data-detail-key="${esc(key)}"><summary><span class="reasoning-label">${live ? '正在思考' : '思考过程'}</span><span class="reasoning-model">${esc(request.model || '')}</span></summary>${lazyContent(key, () => `<div class="prewrap reasoning-body">${esc(request.reasoning)}</div>`)}</details>`;
+  }
+  const purposeLabels = { chat: '对话与工具循环', compression: '历史压缩', memory: '记忆提取', embedding: 'Embedding', reranker: 'Reranker', sticker: '表情包理解' };
+  function usageRequestMarkup(request) {
+    const key = `usage-request:${request.id}`;
+    return `<details class="usage-request" data-detail-key="${esc(key)}"><summary>${esc(purposeLabels[request.purpose] || request.purpose || '模型请求')} · ${esc(request.model || '模型')}${request.status === 'running' ? ' · 进行中' : request.status !== 'completed' ? ' · 未完成' : ''}</summary>${lazyContent(key, () => `<dl class="token-distribution request-usage" aria-label="模型请求 Token 用量">${tokenRows(request.usage)}</dl>${request.context ? `<details class="request-context" data-detail-key="request-context:${esc(request.id)}"><summary>输入分布（估算）</summary>${distributionMarkup(request.context)}</details>` : ''}<p class="hint">估算分词器：${esc(request.usage?.estimated?.tokenizer || '未记录')}</p>`)}</details>`;
+  }
+  function turnUsageMarkup(usage, requests = [], turnId = 'live') {
+    if (!usage) return '';
+    const summary = ['input_tokens', 'output_tokens', 'total_tokens'].map(key => {
+      const { reported, estimates, value, source, missing, lower } = tokenMetric(usage, key);
+      const display = !reported && !estimates && usage.requests !== 0 ? '未提供' : `${!estimates && (lower || missing) ? '≥ ' : ''}${tokenValue(value, estimates)}`;
+      return `<span class="usage-metric" title="${esc(source)}${lower ? '，含已观测下限' : ''}"><span>${key === 'output_tokens' ? '输出' : tokenLabels[key]}</span> <span class="usage-value">${display}</span></span>`;
+    }).join('<span class="usage-separator" aria-hidden="true">·</span>');
+    const key = `usage:${turnId}`;
+    return `<details class="turn-usage" data-detail-key="${esc(key)}" aria-label="本轮 Token 用量"><summary>${summary}</summary>${lazyContent(key, () => `<div class="usage-details"><p class="hint">本轮累计 · ${fmt(usage.requests)} 次模型请求${usage.incomplete_requests ? ` · ${fmt(usage.incomplete_requests)} 次未正常结束` : ''}</p><dl class="token-distribution" aria-label="本轮 Token 详细用量">${tokenRows(usage)}</dl><p class="hint">推理包含在输出中，缓存包含在输入中；实测与估算分别标记，未知分项不按零计入。超出浏览器精确整数范围的大数以 ≈ 显示。${usage.output_lower_bound_requests ? '部分输出仅包含已观测下限。' : ''}</p>${requests.length ? `<div class="usage-requests">${requests.map(usageRequestMarkup).join('')}</div>` : ''}</div>`)}</details>`;
+  }
+  function replaceDetails(container, markup) {
+    const open = new Set($$('details[data-detail-key][open]', container).map(detail => detail.dataset.detailKey));
+    const focused = container.contains(document.activeElement) && document.activeElement.tagName === 'SUMMARY' ? document.activeElement.parentElement.dataset.detailKey : null;
+    container.innerHTML = markup;
+    restoreDetails(container, open, focused);
+  }
+  function restoreDetails(container, open, focused) {
+    for (const detail of $$('details[data-detail-key]', container)) {
+      detail.rememberedOpen = open; detail.rememberedFocus = focused;
+      detail.open = open.has(detail.dataset.detailKey);
+      if (detail.open) hydrateDetails(detail);
+      if (focused === detail.dataset.detailKey) $('summary', detail).focus({ preventScroll: true });
+    }
+  }
+  function reasoningMarkup(requests) {
+    requests = requests.filter(request => request.purpose === 'chat');
+    return requests.map(request => `<div class="model-request" data-request-id="${esc(request.id)}">${requestMarkup(request, request.status === 'running')}</div>`).join('');
   }
   function answerMarkup(text) {
     const inline = value => value.split(/(`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\))/g).map(part => {
@@ -317,13 +364,54 @@
       }).join('');
     }).join('');
   }
-  function transcriptMarkup(history) {
-    return history.messages.map(message => `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small>${message.role === 'assistant' ? reasoningMarkup(history, message) : ''}<div class="${message.role === 'assistant' ? 'answer-body' : 'prewrap'}">${message.role === 'assistant' ? answerMarkup(message.content) : esc(message.content)}</div><div class="chat-stickers">${(history.stickers || []).filter(s => s.message_id === message.id).map(s => `<img class="chat-sticker" src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy">`).join('')}</div><div class="chat-assets">${history.assets.filter(a => a.message_id === message.id).map(a => `<button class="btn small" data-image="${esc(a.id)}">${message.role === 'assistant' ? '查看回复图片' : '查看上传图片'}</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${history.tool_calls.filter(c => c.turn_id === message.turn_id).reverse().map(toolMarkup).join('')}</div>` : ''}</article>`).join('') || `<div class="chat-welcome"><img src="/console/icon.svg" alt=""><h2>今天，想聊些什么？</h2><p>从这一刻开始，延续每一段交流。</p></div>`;
+  function transcriptIndex(history) {
+    const group = (rows, key) => {
+      const groups = new Map();
+      for (const row of rows || []) { const id = row[key]; if (!groups.has(id)) groups.set(id, []); groups.get(id).push(row); }
+      return groups;
+    };
+    return { requests: group(history.model_requests, 'turn_id'), tools: group([...(history.tool_calls || [])].reverse(), 'turn_id'), assets: group(history.assets, 'message_id'), stickers: group(history.stickers, 'message_id') };
+  }
+  function messageState(history, message, index) {
+    const assistant = message.role === 'assistant';
+    return JSON.stringify([message, assistant && index.requests.get(message.turn_id), assistant && history.turn_usage?.[message.turn_id], assistant && index.tools.get(message.turn_id), index.assets.get(message.id), index.stickers.get(message.id)]);
+  }
+  function messageMarkup(history, message, index) {
+    return `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small>${message.role === 'assistant' ? reasoningMarkup(index.requests.get(message.turn_id) || []) : ''}<div class="${message.role === 'assistant' ? 'answer-body' : 'prewrap'}">${message.role === 'assistant' ? answerMarkup(message.content) : esc(message.content)}</div><div class="chat-stickers">${(index.stickers.get(message.id) || []).map(s => `<img class="chat-sticker" src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy">`).join('')}</div><div class="chat-assets">${(index.assets.get(message.id) || []).map(a => `<button class="btn small" data-image="${esc(a.id)}">${message.role === 'assistant' ? '查看回复图片' : '查看上传图片'}</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${(index.tools.get(message.turn_id) || []).map(toolMarkup).join('')}</div>${turnUsageMarkup(history.turn_usage?.[message.turn_id], (index.requests.get(message.turn_id) || []), message.turn_id)}` : ''}</article>`;
+  }
+  function transcriptMarkup(history, index = transcriptIndex(history)) {
+    return history.messages.map(message => messageMarkup(history, message, index)).join('') || `<div class="chat-welcome"><img src="/console/icon.svg" alt=""><h2>今天，想聊些什么？</h2><p>从这一刻开始，延续每一段交流。</p></div>`;
+  }
+  function syncTranscript(container, history, signatures) {
+    const index = transcriptIndex(history);
+    const existing = new Map($$('[data-message-id]', container).map(node => [node.dataset.messageId, node]));
+    const ids = new Set(history.messages.map(message => message.id));
+    for (const [id, node] of existing) if (!ids.has(id)) { node.remove(); signatures.delete(id); }
+    if (!ids.size) { lazyDetails.clear(); container.innerHTML = transcriptMarkup(history, index); return; }
+    $('.chat-welcome', container)?.remove();
+    let previous = null;
+    for (const message of history.messages) {
+      const signature = messageState(history, message, index);
+      let node = existing.get(message.id);
+      if (!node || signatures.get(message.id) !== signature) {
+        const open = new Set(node ? $$('details[data-detail-key][open]', node).map(detail => detail.dataset.detailKey) : []);
+        const focused = node?.contains(document.activeElement) && document.activeElement.tagName === 'SUMMARY' ? document.activeElement.parentElement.dataset.detailKey : null;
+        const template = document.createElement('template'); template.innerHTML = messageMarkup(history, message, index);
+        const replacement = template.content.firstElementChild;
+        if (node) node.replaceWith(replacement);
+        node = replacement; restoreDetails(node, open, focused); signatures.set(message.id, signature);
+      }
+      if (node.previousElementSibling !== previous || node.parentElement !== container) container.insertBefore(node, previous ? previous.nextSibling : container.firstChild);
+      previous = node;
+    }
   }
   async function chatPage(epoch) {
     const [tools, history] = await Promise.all([api('/v1/console/tools'), api('/v1/console/messages')]); if (epoch !== state.epoch) return;
     const data = history.conversation;
-    $('#page').innerHTML = `<section class="chat-panel" aria-label="与 Mneme 对话"><div id="chat-messages" class="chat-messages" role="log" aria-label="对话记录">${transcriptMarkup(history)}</div><div class="composer-wrap">${data.active_turn ? '<p class="chat-resuming" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" rows="1" maxlength="4000" placeholder="给 Mneme 发消息…"></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="composer-actions"><label class="icon-btn image-upload" title="上传图片 · 最多 4 张，每张 8 MiB">${icon('plus')}<span class="sr-only">上传图片</span><input id="chat-files" type="file" aria-label="上传图片" accept="image/png,image/jpeg,image/webp" multiple></label><span class="composer-hint">Enter 发送 · Shift + Enter 换行</span><button class="send-button" id="send-chat" aria-label="发送" title="发送">${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form><details class="chat-context-details"><summary id="chat-context">${esc(contextUsage(data.context))}</summary><div class="context-popover" id="chat-context-popover">${contextDetails(data.context)}</div></details></div></section>`;
+    lazyDetails.clear();
+    const index = transcriptIndex(history);
+    const signatures = new Map(history.messages.map(message => [message.id, messageState(history, message, index)]));
+    $('#page').innerHTML = `<section class="chat-panel" aria-label="与 Mneme 对话"><div id="chat-messages" class="chat-messages" role="log" aria-label="对话记录">${transcriptMarkup(history, index)}</div><div class="composer-wrap">${data.active_turn ? '<p class="chat-resuming" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" rows="1" maxlength="4000" placeholder="给 Mneme 发消息…"></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="composer-actions"><label class="icon-btn image-upload" title="上传图片 · 最多 4 张，每张 8 MiB">${icon('plus')}<span class="sr-only">上传图片</span><input id="chat-files" type="file" aria-label="上传图片" accept="image/png,image/jpeg,image/webp" multiple></label><span class="composer-hint">Enter 发送 · Shift + Enter 换行</span><button class="send-button" id="send-chat" aria-label="发送" title="发送">${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form><details class="chat-context-details"><summary id="chat-context">${esc(contextUsage(data.context))}</summary><div class="context-popover" id="chat-context-popover">${contextDetails(data.context)}</div></details></div></section>`;
     const uploads = []; let uploading = false;
     const composer = $('#chat-message');
     const updateComposer = () => {
@@ -351,9 +439,40 @@
       const assets = [...uploads]; const requestId = crypto.randomUUID(); const errorEl = $('#chat-error'); errorEl.textContent = ''; state.chatBusy = true;
       updateComposer();
       const messages = $('#chat-messages'); $('.chat-welcome', messages)?.remove();
-      messages.insertAdjacentHTML('beforeend', `<article class="chat-message user"><small>你</small><div class="prewrap">${esc(message)}</div></article><article class="chat-message assistant" id="chat-current"><small>Mneme</small><div id="chat-live-requests"></div><div id="chat-live-usage"></div><div class="answer-body" id="chat-answer"></div><div class="chat-tools" id="chat-live-tools"></div><small id="chat-progress">正在思考…</small></article>`);
+      messages.insertAdjacentHTML('beforeend', `<article class="chat-message user"><small>你</small><div class="prewrap">${esc(message)}</div></article><article class="chat-message assistant" id="chat-current"><small>Mneme</small><div id="chat-live-requests"></div><div class="answer-body" id="chat-answer"></div><div class="chat-tools" id="chat-live-tools"></div><div id="chat-live-usage"></div><small id="chat-progress">正在思考…</small></article>`);
       messages.scrollTop = messages.scrollHeight;
-      let persisted = false; let failed = false; let answer = ''; const liveRequests = new Map();
+      let persisted = false; let failed = false; let answer = ''; let liveTurnUsage; const liveRequests = new Map();
+      let renderFrame = 0; let answerDirty = false; let usageDirty = false;
+      const dirtyRequests = new Set(); const dirtyTools = new Map();
+      const flushRender = () => {
+        if (renderFrame) cancelAnimationFrame(renderFrame); renderFrame = 0;
+        if (epoch !== state.epoch || (!answerDirty && !usageDirty && !dirtyRequests.size && !dirtyTools.size)) return;
+        const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+        for (const requestId of dirtyRequests) {
+          const request = liveRequests.get(requestId);
+          let element = document.getElementById(`request-${request.id}`);
+          if (!element) { element = document.createElement('div'); element.className = 'model-request'; element.id = `request-${request.id}`; $('#chat-live-requests').append(element); }
+          if (!$('.chat-reasoning', element)) element.innerHTML = requestMarkup(request, request.status === 'running');
+          const detail = $('.chat-reasoning', element);
+          if (detail) {
+            const body = $('.reasoning-body', element);
+            if (detail.open && body) body.textContent = request.reasoning;
+            else detail.detailsDirty = true;
+            $('.reasoning-label', element).textContent = request.status === 'running' ? '正在思考' : '思考过程';
+            $('.reasoning-model', element).textContent = request.model || '';
+          }
+        }
+        if (answerDirty) $('#chat-answer').innerHTML = answerMarkup(answer);
+        for (const data of dirtyTools.values()) {
+          const id = `tool-${data.id}`; let element = document.getElementById(id);
+          if (!element) { element = document.createElement('div'); element.id = id; $('#chat-live-tools').append(element); }
+          element.innerHTML = toolMarkup(data);
+        }
+        if (usageDirty) replaceDetails($('#chat-live-usage'), turnUsageMarkup(liveTurnUsage, [...liveRequests.values()], requestId));
+        answerDirty = false; usageDirty = false; dirtyRequests.clear(); dirtyTools.clear();
+        if (follow) messages.scrollTop = messages.scrollHeight;
+      };
+      const scheduleRender = () => { if (!renderFrame) renderFrame = requestAnimationFrame(flushRender); };
       try {
         const response = await fetch('/v1/chat', { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: requestId, message, assets }) });
         if (!response.ok) { if (response.status === 401) clearLogin(); throw new ApiFailure(response.status, (await response.json()).error); }
@@ -367,7 +486,6 @@
             const raw = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'); if (!raw) continue;
             const data = JSON.parse(raw); if (name === 'done') persisted = data.persisted; if (name === 'error') failed = true;
             if (epoch !== state.epoch) continue;
-            const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
             if (name === 'compaction') $('#chat-progress').textContent = data.status === 'running' ? '正在整理历史，延续对话…' : '历史已整理，正在思考…';
             if (name === 'context') {
               $('#chat-context').textContent = `当前请求 ≈ ${fmt(data.estimated_input_tokens)} / ${fmt(history.conversation.context.context_tokens)} tokens`;
@@ -375,40 +493,48 @@
             if (name === 'usage' && data.usage.input_tokens != null) {
               $('#chat-context').textContent = `当前请求 ${fmt(data.usage.input_tokens)} / ${fmt(history.conversation.context.context_tokens)} tokens（API）`;
             }
-            if (name === 'turn_usage') $('#chat-live-usage').innerHTML = turnUsageMarkup(data.usage);
+            if (name === 'turn_usage') { liveTurnUsage = data.usage; usageDirty = true; }
             if (name === 'context' || name === 'reasoning' || name === 'usage') {
               const request = liveRequests.get(data.request_id) || { id: data.request_id, reasoning: '', usage: {}, status: 'running' };
               if (name === 'reasoning') request.reasoning += data.content;
               else if (name === 'usage') { request.usage = data.usage; request.status = data.status; }
               else { request.model = data.model; request.purpose = data.purpose; request.context = data.context; }
               liveRequests.set(request.id, request);
-              let element = document.getElementById(`request-${request.id}`);
-              if (!element) { element = document.createElement('div'); element.className = 'model-request'; element.id = `request-${request.id}`; $('#chat-live-requests').append(element); }
-              if (!$('.reasoning-body', element)) element.innerHTML = requestMarkup(request, true);
-              const thinkingBody = $('.reasoning-body', element);
-              if (thinkingBody) {
-                const followThinking = thinkingBody.scrollHeight - thinkingBody.scrollTop - thinkingBody.clientHeight < 40;
-                thinkingBody.textContent = request.reasoning;
-                if (followThinking) thinkingBody.scrollTop = thinkingBody.scrollHeight;
-                $('summary', element).textContent = request.reasoning ? (request.status === 'running' ? '正在思考' : '思考过程') : '模型请求';
-                if (name === 'usage') $('.request-usage', element).innerHTML = tokenRows(request.usage);
-              }
+              dirtyRequests.add(request.id);
+              if (name === 'usage' || name === 'context') usageDirty = true;
               if (name === 'reasoning') $('#chat-progress').textContent = '正在思考…';
             }
-            if (name === 'delta') { answer += data.content; $('#chat-answer').innerHTML = answerMarkup(answer); $('#chat-progress').textContent = '正在回复…'; }
-            if (name === 'tool') { const id = `tool-${data.id}`; let element = document.getElementById(id); if (!element) { element = document.createElement('div'); element.id = id; $('#chat-live-tools').append(element); } element.innerHTML = toolMarkup(data); $('#chat-progress').textContent = data.status === 'running' ? `正在${toolLabels[data.action] || '执行工具'}…` : '正在继续思考…'; }
+            if (name === 'delta') { answer += data.content; answerDirty = true; $('#chat-progress').textContent = '正在回复…'; }
+            if (name === 'tool') { dirtyTools.set(data.id, data); $('#chat-progress').textContent = data.status === 'running' ? `正在${toolLabels[data.action] || '执行工具'}…` : '正在继续思考…'; }
             if (name === 'error') $('#chat-progress').textContent = '本轮失败，临时输出未保存。';
-            if (follow) messages.scrollTop = messages.scrollHeight;
+            scheduleRender();
           }
           if (done) break;
         }
+        flushRender();
         if (!persisted) throw new Error(failed ? 'generation_failed' : 'stream_interrupted');
       } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = `本轮未确认完成，可稍后刷新会话检查。${errorText(error)}`; }
-      finally { state.chatBusy = false; if (epoch === state.epoch && state.authenticated) { if (persisted) route(); else updateComposer(); } }
+      finally {
+        flushRender();
+        state.chatBusy = false;
+        if (epoch === state.epoch && state.authenticated) {
+          if (persisted) {
+            const open = new Set($$('details[data-detail-key][open]', messages).map(detail => detail.dataset.detailKey));
+            const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
+            const scrollTop = messages.scrollTop;
+            const focused = messages.contains(document.activeElement) && document.activeElement.tagName === 'SUMMARY' ? document.activeElement.parentElement.dataset.detailKey : null;
+            await route();
+            if (state.epoch === epoch + 1 && state.route === 'chat' && $('#chat-messages')) {
+              const container = $('#chat-messages');
+              restoreDetails(container, open, focused);
+              container.scrollTop = follow ? container.scrollHeight : scrollTop;
+            }
+          } else updateComposer();
+        }
+      }
     };
     $('#chat-messages').scrollTop = $('#chat-messages').scrollHeight;
     {
-      let previous = JSON.stringify([history.messages, history.assets, history.tool_calls, history.model_requests]);
       const refreshTranscript = async () => {
         if (epoch !== state.epoch) return;
         if (state.chatBusy) { state.poll = setTimeout(refreshTranscript, 3000); return; }
@@ -421,12 +547,16 @@
             $('#chat-context-popover').innerHTML = contextDetails(latest.conversation.context);
             if (!data.active_turn) $('.chat-resuming')?.remove();
             updateComposer();
-            const revision = JSON.stringify([latest.messages, latest.assets, latest.tool_calls, latest.model_requests]);
-            if (revision !== previous) {
-              const container = $('#chat-messages');
-              const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
-              container.innerHTML = transcriptMarkup(latest); previous = revision;
-              if (atBottom) container.scrollTop = container.scrollHeight;
+            const container = $('#chat-messages');
+            const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 60;
+            const top = container.getBoundingClientRect().top;
+            const anchor = atBottom ? null : $$('[data-message-id]', container).find(node => node.getBoundingClientRect().bottom > top);
+            const anchorTop = anchor?.getBoundingClientRect().top;
+            syncTranscript(container, latest, signatures);
+            if (atBottom) container.scrollTop = container.scrollHeight;
+            else if (anchor) {
+              const current = anchor.isConnected ? anchor : $$('[data-message-id]', container).find(node => node.dataset.messageId === anchor.dataset.messageId);
+              if (current) container.scrollTop += current.getBoundingClientRect().top - anchorTop;
             }
           }
         } catch (error) { if (error.name === 'AbortError' || epoch !== state.epoch) return; }

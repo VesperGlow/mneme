@@ -1,0 +1,53 @@
+{
+  "method": "same frozen facts, same gold, six fresh application instances per profile; 216 retrievals per version; only default rescue threshold 0.6; native float32 models and disposable Neo4j; no extraction or answer generation",
+  "source_fixture_sha256": "477f30b74a42a6ca22fe91c148de971ed6a54410d176860601214984bee12021",
+  "versions": {
+    "before": {
+      "retrieval": {
+        "p50_ms": 448.716319,
+        "p95_ms": 1441.568219,
+        "p99_ms": 2253.596428,
+        "samples": 216
+      },
+      "precision": 0.9629629629629629,
+      "recall": 0.88,
+      "precision_tp": 156,
+      "tp": 132,
+      "fp": 6,
+      "fn": 18,
+      "memory_entries": 162,
+      "degraded_queries": 0,
+      "source_sha256": "87ed607fd0b0758ab912813cddafef15ebc5a44326b3cd35713b19e8f717ab50",
+      "metadata": "artifacts/chat-retrieval-before/metadata.json",
+      "results_sha256": "ea0188d2325ba6e9003a4361b651dd98f8f00d93e4d718c693ef050b8f2d2796"
+    },
+    "after": {
+      "retrieval": {
+        "p50_ms": 419.61967100000004,
+        "p95_ms": 1427.560444,
+        "p99_ms": 2250.8353300000003,
+        "samples": 216
+      },
+      "precision": 0.9629629629629629,
+      "recall": 0.88,
+      "precision_tp": 156,
+      "tp": 132,
+      "fp": 6,
+      "fn": 18,
+      "memory_entries": 162,
+      "degraded_queries": 0,
+      "source_sha256": "95036fed8add747db25fca2583d7ea7390556ea217488cf6ef9fd4111393d98d",
+      "metadata": "artifacts/chat-retrieval-after/metadata.json",
+      "results_sha256": "84c05e15b94bfa96c1c995d7b301e8eaaf5e64210d90f1e3baf2b52b2c185564"
+    }
+  },
+  "identical_selection_queries": 216,
+  "gate": {
+    "precision_preserved": true,
+    "recall_preserved": true,
+    "no_degraded_results": true,
+    "p95_no_regression": true,
+    "p99_no_regression": true
+  },
+  "passed": true
+}

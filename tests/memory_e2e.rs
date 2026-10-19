@@ -115,6 +115,106 @@ async fn setup_threshold(run: &str, dir: &tempfile::TempDir, base: &str, thresho
     app.graph.initialize().await.unwrap();
     app
 }
+// Record usage before forwarding it: consumers can stop at [DONE] without
+// polling the upstream to EOF, so an audit performed after the stream loses rows.
+async fn audited_sse(
+    response: reqwest::Response,
+    log: Arc<Mutex<Vec<Value>>>,
+    mut record: Value,
+    at: Instant,
+) -> Body {
+    record["usage"] = Value::Null;
+    record["usage_frames"] = json!([]);
+    record["ms"] = json!(at.elapsed().as_secs_f64() * 1000.0);
+    let index = {
+        let mut rows = log.lock().await;
+        let index = rows.len();
+        rows.push(record);
+        index
+    };
+    let stream = async_stream::stream! {
+        let mut upstream = response.bytes_stream();
+        let mut pending = Vec::new();
+        while let Some(chunk) = upstream.next().await {
+            match chunk {
+                Ok(bytes) => {
+                    pending.extend_from_slice(&bytes);
+                    while let Some(end) = pending.iter().position(|byte| *byte == b'\n') {
+                        let line: Vec<_> = pending.drain(..=end).collect();
+                        if let Some(data) = std::str::from_utf8(&line).ok()
+                            .and_then(|line| line.strip_prefix("data:"))
+                            .and_then(|data| serde_json::from_str::<Value>(data.trim()).ok())
+                            && let Some(usage) = data.get("usage").filter(|usage| usage.is_object()) {
+                            let mut rows = log.lock().await;
+                            rows[index]["usage"] = usage.clone();
+                            rows[index]["usage_frames"].as_array_mut().unwrap().push(usage.clone());
+                            rows[index]["ms"] = json!(at.elapsed().as_secs_f64() * 1000.0);
+                        }
+                    }
+                    yield Ok::<_, reqwest::Error>(bytes);
+                }
+                Err(error) => { yield Err(error); break; }
+            }
+        }
+    };
+    Body::from_stream(stream)
+}
+
+#[tokio::test]
+async fn streaming_audit_survives_done_without_upstream_eof() {
+    use axum::body::HttpBody;
+    let handler = || async {
+        let stream = async_stream::stream! {
+            let wire = concat!(
+                "data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":5,\"total_tokens\":105}}\r\n\r\n",
+                "data: {\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":10,\"total_tokens\":110}}\n\n",
+                "data: [DONE]\n\n"
+            );
+            for chunk in wire.as_bytes().chunks(7) {
+                yield Ok::<_, std::convert::Infallible>(chunk.to_vec());
+            }
+            std::future::pending::<()>().await;
+        };
+        Body::from_stream(stream)
+    };
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/", post(handler)))
+            .await
+            .unwrap();
+    });
+    let response = reqwest::Client::new().post(url).send().await.unwrap();
+    let log = Arc::new(Mutex::new(Vec::new()));
+    let mut body = audited_sse(
+        response,
+        log.clone(),
+        json!({"stream":true}),
+        Instant::now(),
+    )
+    .await;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        let mut received = Vec::new();
+        while !String::from_utf8_lossy(&received).contains("[DONE]\n\n") {
+            let frame = std::future::poll_fn(|cx| std::pin::Pin::new(&mut body).poll_frame(cx))
+                .await
+                .unwrap()
+                .unwrap();
+            if let Ok(bytes) = frame.into_data() {
+                received.extend_from_slice(&bytes);
+            }
+        }
+    })
+    .await
+    .unwrap();
+    drop(body);
+    let rows = log.lock().await;
+    assert_eq!(rows.len(), 1, "usage snapshots are one physical request");
+    assert_eq!(rows[0]["usage"]["total_tokens"], 110);
+    assert_eq!(rows[0]["usage_frames"].as_array().unwrap().len(), 2);
+    server.abort();
+}
+
 async fn proxy() -> (String, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>) {
     let calls = Arc::new(Mutex::new(Vec::new()));
     let log = calls.clone();
@@ -146,26 +246,10 @@ async fn proxy() -> (String, Arc<Mutex<Vec<Value>>>, tokio::task::JoinHandle<()>
             let response = req.send().await.unwrap();
             let status = response.status();
             if body["stream"] == true {
-                let path = path.to_owned();
-                let stream = async_stream::stream! {
-                    let mut upstream = response.bytes_stream();
-                    let mut captured = Vec::new();
-                    while let Some(chunk) = upstream.next().await {
-                        match chunk {
-                            Ok(bytes) => {captured.extend_from_slice(&bytes);yield Ok::<_,reqwest::Error>(bytes);},
-                            Err(error) => {yield Err(error);break;}
-                        }
-                    }
-                    let frames: Vec<Value> = String::from_utf8_lossy(&captured).lines()
-                        .filter_map(|line|line.strip_prefix("data: "))
-                        .filter_map(|line|serde_json::from_str::<Value>(line).ok())
-                        .filter_map(|v|v.get("usage").filter(|u|u.is_object()).cloned()).collect();
-                    log.lock().await.push(json!({"endpoint":path,"request":body,"stream":true,"usage":frames.last(),"usage_frames":frames,"status":status.as_u16(),"ms":at.elapsed().as_secs_f64()*1000.0}));
-                };
                 (
                     status,
                     [("content-type", "text/event-stream")],
-                    Body::from_stream(stream),
+                    audited_sse(response, log, json!({"endpoint":path,"request":body,"stream":true,"status":status.as_u16()}), at).await,
                 )
                     .into_response()
             } else {

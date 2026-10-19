@@ -1,0 +1,532 @@
+{
+  "methodology": {
+    "samples": 120,
+    "warmups": 8,
+    "turns": 200,
+    "messages": 400,
+    "requests_per_turn": 4,
+    "synthetic": true,
+    "paid_api_calls": 0,
+    "quantiles": "nearest rank; empirical sample quantiles, not confidence bounds",
+    "timing": "interaction: DOM click to two animation frames; refresh includes loopback JSON + browser update + forced layout; scroll: rAF interval while scrolling",
+    "mobile": "390px viewport, Chromium CDP CPU slowdown 4x; not a physical phone",
+    "harness_sha256": "eaf5bd1dbacaeb9a2a4001198a4c35813df56be4260922d94917dc45e26368eb",
+    "node": "v20.19.2"
+  },
+  "assets": {
+    "before": {
+      "app.js": "35899e65af13e7c492c8aed32ef6f415f9d116faa219fde8068b09fa7b85d1a7",
+      "style.css": "9264c6772ed10b14ca6a36e7b53a2fe88c15f8b2a2327f901308fab1062f005e"
+    },
+    "after": {
+      "app.js": "9166321ae2efa1dc8cc5770e1f525e2fc77105903c495322939868f77044f6da",
+      "style.css": "9264c6772ed10b14ca6a36e7b53a2fe88c15f8b2a2327f901308fab1062f005e"
+    }
+  },
+  "raw_artifact": "artifacts/chat-performance-final.json",
+  "metrics": [
+    {
+      "device": "desktop",
+      "metric": "refresh",
+      "before": {
+        "samples": 120,
+        "p50_ms": 310.30000001192093,
+        "p95_ms": 381.19999998807907,
+        "p99_ms": 393
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 27.100000023841858,
+        "p95_ms": 35.69999998807907,
+        "p99_ms": 40.39999997615814
+      },
+      "p95_limit_ms": 100,
+      "p99_limit_ms": 150,
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "metric": "reasoning_open",
+      "before": {
+        "samples": 120,
+        "p50_ms": 31,
+        "p95_ms": 34.19999998807907,
+        "p99_ms": 36.10000002384186
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 30.80000001192093,
+        "p95_ms": 33.5,
+        "p99_ms": 37
+      },
+      "p95_limit_ms": 100,
+      "p99_limit_ms": 100,
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "metric": "reasoning_close",
+      "before": {
+        "samples": 120,
+        "p50_ms": 30.80000001192093,
+        "p95_ms": 33.39999997615814,
+        "p99_ms": 34.700000047683716
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 30.69999998807907,
+        "p95_ms": 33.39999997615814,
+        "p99_ms": 35
+      },
+      "p95_limit_ms": 100,
+      "p99_limit_ms": 100,
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "metric": "tokens_open",
+      "before": {
+        "samples": 120,
+        "p50_ms": 31.30000001192093,
+        "p95_ms": 35.30000001192093,
+        "p99_ms": 36.80000001192093
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 31.30000001192093,
+        "p95_ms": 38,
+        "p99_ms": 39
+      },
+      "p95_limit_ms": 100,
+      "p99_limit_ms": 100,
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "metric": "tokens_close",
+      "before": {
+        "samples": 120,
+        "p50_ms": 30.30000001192093,
+        "p95_ms": 33.80000001192093,
+        "p99_ms": 35
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 30.30000001192093,
+        "p95_ms": 33.69999998807907,
+        "p99_ms": 35.39999997615814
+      },
+      "p95_limit_ms": 100,
+      "p99_limit_ms": 100,
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "metric": "long_english_open",
+      "before": {
+        "samples": 120,
+        "p50_ms": 31,
+        "p95_ms": 31.69999998807907,
+        "p99_ms": 32.200000047683716
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 30.80000001192093,
+        "p95_ms": 31.600000023841858,
+        "p99_ms": 35.90000003576279
+      },
+      "p95_limit_ms": 150,
+      "p99_limit_ms": 150,
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "metric": "long_english_close",
+      "before": {
+        "samples": 120,
+        "p50_ms": 31.099999964237213,
+        "p95_ms": 31.69999998807907,
+        "p99_ms": 32.19999998807907
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 30.899999976158142,
+        "p95_ms": 32.80000001192093,
+        "p99_ms": 33.700000047683716
+      },
+      "p95_limit_ms": 150,
+      "p99_limit_ms": 150,
+      "passed": true
+    },
+    {
+      "device": "desktop",
+      "metric": "scroll_frames",
+      "before": {
+        "samples": 120,
+        "p50_ms": 16.69999999999709,
+        "p95_ms": 16.700000000004366,
+        "p99_ms": 16.799999999995634
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 16.69999999999709,
+        "p95_ms": 16.700000000000728,
+        "p99_ms": 16.799999999999272
+      },
+      "p95_limit_ms": 33.5,
+      "p99_limit_ms": 33.5,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "refresh",
+      "before": {
+        "samples": 120,
+        "p50_ms": 1637.0999999642372,
+        "p95_ms": 1977.4000000357628,
+        "p99_ms": 2069.699999988079
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 86.69999998807907,
+        "p95_ms": 102.70000004768372,
+        "p99_ms": 152.69999998807907
+      },
+      "p95_limit_ms": 250,
+      "p99_limit_ms": 350,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "reasoning_open",
+      "before": {
+        "samples": 120,
+        "p50_ms": 105.19999998807907,
+        "p95_ms": 126.30000001192093,
+        "p99_ms": 132.10000002384186
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 76.5,
+        "p95_ms": 97.09999996423721,
+        "p99_ms": 106.79999995231628
+      },
+      "p95_limit_ms": 150,
+      "p99_limit_ms": 150,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "reasoning_close",
+      "before": {
+        "samples": 120,
+        "p50_ms": 102.80000001192093,
+        "p95_ms": 125.89999997615814,
+        "p99_ms": 136
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 80.5,
+        "p95_ms": 95.60000002384186,
+        "p99_ms": 107.40000003576279
+      },
+      "p95_limit_ms": 150,
+      "p99_limit_ms": 150,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "tokens_open",
+      "before": {
+        "samples": 120,
+        "p50_ms": 112.69999998807907,
+        "p95_ms": 138.80000001192093,
+        "p99_ms": 153.5
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 86,
+        "p95_ms": 110.30000001192093,
+        "p99_ms": 118.09999996423721
+      },
+      "p95_limit_ms": 150,
+      "p99_limit_ms": 150,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "tokens_close",
+      "before": {
+        "samples": 120,
+        "p50_ms": 104.10000002384186,
+        "p95_ms": 127.80000001192093,
+        "p99_ms": 142.5
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 81.89999997615814,
+        "p95_ms": 101.89999997615814,
+        "p99_ms": 105.30000001192093
+      },
+      "p95_limit_ms": 150,
+      "p99_limit_ms": 150,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "long_english_open",
+      "before": {
+        "samples": 120,
+        "p50_ms": 84.69999998807907,
+        "p95_ms": 101.60000002384186,
+        "p99_ms": 115.40000003576279
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 71.09999996423721,
+        "p95_ms": 85.5,
+        "p99_ms": 88
+      },
+      "p95_limit_ms": 250,
+      "p99_limit_ms": 250,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "long_english_close",
+      "before": {
+        "samples": 120,
+        "p50_ms": 81.40000003576279,
+        "p95_ms": 95.19999998807907,
+        "p99_ms": 105
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 68.59999996423721,
+        "p95_ms": 86.5,
+        "p99_ms": 93.5
+      },
+      "p95_limit_ms": 250,
+      "p99_limit_ms": 250,
+      "passed": true
+    },
+    {
+      "device": "mobile_4x",
+      "metric": "scroll_frames",
+      "before": {
+        "samples": 120,
+        "p50_ms": 16.70000000001164,
+        "p95_ms": 33.40000000002328,
+        "p99_ms": 33.40000000002328
+      },
+      "after": {
+        "samples": 120,
+        "p50_ms": 16.69999999999709,
+        "p95_ms": 16.80000000000291,
+        "p99_ms": 16.80000000000291
+      },
+      "p95_limit_ms": 33.5,
+      "p99_limit_ms": 33.5,
+      "passed": true
+    }
+  ],
+  "budgets": {},
+  "passed": true,
+  "correctness": {
+    "desktop": {
+      "layout_1440": {
+        "overflow": false,
+        "reasoning_overflow": false,
+        "internal_scroll": false,
+        "summary_overflow": false,
+        "reasoning_truncated": false
+      },
+      "layout_1024": {
+        "overflow": false,
+        "reasoning_overflow": false,
+        "internal_scroll": false,
+        "summary_overflow": false,
+        "reasoning_truncated": false
+      },
+      "token_cases": {
+        "no_requests": {
+          "summary": "输入\n0\n·\n输出\n0\n·\n总消耗\n0",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "zero": {
+          "summary": "输入\n0\n·\n输出\n0\n·\n总消耗\n0",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "unknown": {
+          "summary": "输入\n未提供\n·\n输出\n未提供\n·\n总消耗\n未提供",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "estimated": {
+          "summary": "输入\n≈ 123,456\n·\n输出\n≈ 123,456\n·\n总消耗\n≈ 123,456",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "mixed": {
+          "summary": "输入\n≈ 150\n·\n输出\n≈ 150\n·\n总消耗\n≈ 150",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "unsafe_integer": {
+          "summary": "输入\n≈ 9,223,372,036,854,776,000\n·\n输出\n≈ 9,223,372,036,854,776,000\n·\n总消耗\n≈ 9,223,372,036,854,776,000",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        }
+      },
+      "scroll_anchor_delta_px": 0,
+      "unchanged_message_preserved": true,
+      "keyboard_details_open": true,
+      "stream_reasoning_open": true,
+      "stream_usage_open": true,
+      "stream_reply_complete": true,
+      "message_count": 406,
+      "poll_errors": [],
+      "javascript_errors": []
+    },
+    "mobile_4x": {
+      "layout_390": {
+        "overflow": false,
+        "reasoning_overflow": false,
+        "internal_scroll": false,
+        "summary_overflow": false,
+        "reasoning_truncated": false
+      },
+      "layout_320": {
+        "overflow": false,
+        "reasoning_overflow": false,
+        "internal_scroll": false,
+        "summary_overflow": false,
+        "reasoning_truncated": false
+      },
+      "layout_768": {
+        "overflow": false,
+        "reasoning_overflow": false,
+        "internal_scroll": false,
+        "summary_overflow": false,
+        "reasoning_truncated": false
+      },
+      "token_cases": {
+        "no_requests": {
+          "summary": "输入\n0\n·\n输出\n0\n·\n总消耗\n0",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "zero": {
+          "summary": "输入\n0\n·\n输出\n0\n·\n总消耗\n0",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "unknown": {
+          "summary": "输入\n未提供\n·\n输出\n未提供\n·\n总消耗\n未提供",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "estimated": {
+          "summary": "输入\n≈ 123,456\n·\n输出\n≈ 123,456\n·\n总消耗\n≈ 123,456",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "mixed": {
+          "summary": "输入\n≈ 150\n·\n输出\n≈ 150\n·\n总消耗\n≈ 150",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        },
+        "unsafe_integer": {
+          "summary": "输入\n≈ 9,223,372,036,854,776,000\n·\n输出\n≈ 9,223,372,036,854,776,000\n·\n总消耗\n≈ 9,223,372,036,854,776,000",
+          "no_invalid_numbers": true,
+          "expected_marker": true
+        }
+      },
+      "scroll_anchor_delta_px": 0,
+      "unchanged_message_preserved": true,
+      "keyboard_details_open": true,
+      "stream_reasoning_open": true,
+      "stream_usage_open": true,
+      "stream_reply_complete": true,
+      "message_count": 406,
+      "poll_errors": [],
+      "javascript_errors": []
+    }
+  },
+  "initial": {
+    "desktop": {
+      "before": {
+        "ready_ms": 406.89999997615814,
+        "dom_nodes": 55349
+      },
+      "after": {
+        "ready_ms": 280.30000001192093,
+        "dom_nodes": 8149
+      }
+    },
+    "mobile_4x": {
+      "before": {
+        "ready_ms": 2335.199999988079,
+        "dom_nodes": 55349
+      },
+      "after": {
+        "ready_ms": 991.6999999880791,
+        "dom_nodes": 8149
+      }
+    }
+  },
+  "continuous_stream_ms": {
+    "desktop": {
+      "before": [
+        2029,
+        2039,
+        2023
+      ],
+      "after": [
+        1039,
+        1073,
+        1044
+      ]
+    },
+    "mobile_4x": {
+      "before": [
+        8170,
+        7912,
+        7908
+      ],
+      "after": [
+        2108,
+        1966,
+        1928
+      ]
+    }
+  },
+  "regression": {
+    "rust": {
+      "passed": 104,
+      "failed": 0,
+      "ignored": 12,
+      "artifact": "artifacts/chat-regression-final-rust.log"
+    },
+    "clippy": "passed",
+    "python_host": {
+      "passed": 37,
+      "skipped": 10
+    },
+    "native_tokenizer_passed": 4,
+    "model_queue_passed": 6,
+    "node_real_sandbox_passed": 15,
+    "console_browser": "passed",
+    "sticker_browser_english_description": "passed",
+    "sticker_artifact": "artifacts/chat-regression-final-stickers.log"
+  },
+  "sticker_description": {
+    "language": "English",
+    "name_language": "Chinese",
+    "max_description_characters": 120,
+    "scope": "new uploads and explicit reanalysis; no bulk rewrite",
+    "real_provider_vision_test": false
+  }
+}

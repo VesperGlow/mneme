@@ -41,11 +41,13 @@ async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
             post(
                 |State(s): State<Fixture>, Json(body): Json<Value>| async move {
                     if body["stream"] == false {
+                        assert!(body["messages"][0]["content"].as_str().unwrap().contains("Write description in English"));
+                        assert!(body["messages"][1]["content"][0]["text"].as_str().unwrap().contains("write the description in English"));
                         s.vision_calls.fetch_add(1, Ordering::SeqCst);
                         tokio::time::sleep(std::time::Duration::from_millis(s.vision_delay.load(Ordering::SeqCst) as u64)).await;
                         if s.fail_vision.load(Ordering::SeqCst) { return ([("content-type", "text/event-stream")], Body::from("{}")); }
                         assert!(body["messages"][1]["content"].to_string().contains("data:image/jpeg;base64,"));
-                        return ([("content-type", "text/event-stream")], Body::from(json!({"choices":[{"message":{"content":json!({"name":"自动识别的抱抱","description":"小动物张开手臂拥抱，表达安慰和陪伴。"}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":40,"total_tokens":1040}}).to_string()));
+                        return ([("content-type", "text/event-stream")], Body::from(json!({"choices":[{"message":{"content":json!({"name":"自动识别的抱抱","description":"A small animal opens its arms for a hug, offering comfort and companionship."}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":40,"total_tokens":1040}}).to_string()));
                     }
                     s.requests.lock().await.push(body.clone());
                     let mut reply = s.reply.lock().await.clone();
@@ -538,7 +540,13 @@ async fn automatic_understanding_resumes_after_restart_and_can_retry_without_ove
     })
     .await
     .unwrap();
-    assert!(app.stickers.read().unwrap().prompt().contains("安慰和陪伴"));
+    assert!(
+        app.stickers
+            .read()
+            .unwrap()
+            .prompt()
+            .contains("comfort and companionship")
+    );
     assert_eq!(fake.vision_calls.load(Ordering::SeqCst), 1);
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM model_requests WHERE purpose='sticker' AND json_extract(usage,'$.total_tokens')=1040").fetch_one(&app.store.pool).await.unwrap(), 1);
     fake.fail_vision.store(true, Ordering::SeqCst);

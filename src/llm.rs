@@ -244,7 +244,7 @@ impl Llm {
         let messages = json!([
             {"role":"system","content":system},
             {"role":"user","content":[
-                {"type":"text","text":"请识别这张表情包。若有多格，按从左到右的首、中、末帧理解动作；只描述实际可见的内容。"},
+                {"type":"text","text":"Identify this sticker. For multiple frames, interpret the action from left to right. Describe only visible content and write the description in English."},
                 {"type":"image_url","image_url":{"url":format!("data:{};base64,{}",image.mime,image.data)}}
             ]}
         ]);
