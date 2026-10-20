@@ -90,6 +90,10 @@ pub struct LlmConfig {
     /// Enable only for providers supporting response_format json_schema.
     #[serde(default)]
     pub json_schema: bool,
+    /// Explicit provider options for persona compile/reflection/validation only.
+    /// Empty by default; the Agent cannot edit connection or request policy.
+    #[serde(default)]
+    pub persona_request_options: serde_json::Map<String, serde_json::Value>,
     #[serde(default = "default_context_tokens")]
     pub context_tokens: usize,
     /// Accepted for old TOML files; generation is now bounded by context_tokens.
@@ -331,6 +335,13 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.llm.persona_request_options.keys().all(|key| matches!(
+                key.as_str(),
+                "thinking" | "reasoning_effort" | "reasoning" | "chat_template_kwargs"
+            )) && serde_json::to_string(&self.llm.persona_request_options)?.len() <= 1024,
+            "persona_request_options only accepts bounded provider reasoning controls"
+        );
         ensure!(
             (1..=100_000).contains(&self.memory.extract_every_tokens)
                 && (1..=86400).contains(&self.memory.extract_max_delay_seconds),

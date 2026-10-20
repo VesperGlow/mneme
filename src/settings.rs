@@ -411,6 +411,9 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         "DELETE FROM conversation_aliases",
         "DELETE FROM extracted_messages",
         "DELETE FROM metadata WHERE key IN ('conversation.id','conversation.scope') OR key LIKE 'memory.extraction.%'",
+        "DELETE FROM evolution_feedback",
+        "DELETE FROM evolution_revisions",
+        "DELETE FROM metadata WHERE key='agent.evolution.v1'",
         "DELETE FROM messages",
         "DELETE FROM turns",
         "DELETE FROM sessions",
@@ -429,10 +432,16 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
             .execute(&mut *tx)
             .await
             .map_err(anyhow::Error::from)?;
+        sqlx::query("DELETE FROM metadata WHERE key='console.persona_derivation.v1'")
+            .execute(&mut *tx)
+            .await
+            .map_err(anyhow::Error::from)?;
     }
     tx.commit().await.map_err(anyhow::Error::from)?;
+    *app.evolution.write().unwrap() = Default::default();
     if input.reset_persona {
         *app.persona.write().unwrap() = app.config.persona.clone();
+        *app.derivation.write().unwrap() = Default::default();
     }
     *app.status_cache.lock().await = None;
     Ok(Json(

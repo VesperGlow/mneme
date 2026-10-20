@@ -52,6 +52,7 @@ pub fn router(app: App) -> Router {
         )
         .merge(crate::console::protected_routes())
         .merge(crate::settings::protected_routes())
+        .merge(crate::persona::routes())
         .merge(crate::tools::routes())
         .merge(crate::assets::routes())
         .merge(crate::stickers::routes())

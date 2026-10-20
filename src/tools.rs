@@ -139,6 +139,7 @@ pub fn definitions() -> Value {
     let mut catalog: Value =
         serde_json::from_str(include_str!("../services/tools/catalog.json")).unwrap();
     catalog["tools"].as_array_mut().unwrap().push(json!({"type":"function","function":{"name":"view_image","description":"查看当前会话中已上传或浏览器截取的图片。由当前多模态模型直接理解图片，asset_id 必须来自本会话图片标识或工具结果。","parameters":{"type":"object","additionalProperties":false,"required":["asset_id"],"properties":{"asset_id":{"type":"string"}}}}}));
+    catalog["tools"].as_array_mut().unwrap().push(json!({"type":"function","function":{"name":"self_prompt","description":"读取自己的软行为记忆，或基于当前用户直接反馈请求一次受证据、冷却、锁定及验证约束的后台反思。不是每轮必用；不能修改核心人格、事实记忆、安全或工具权限，排队不等于应用成功。","parameters":{"type":"object","additionalProperties":false,"required":["action"],"properties":{"action":{"type":"string","enum":["read","reflect"]}}}}}));
     catalog["tools"].take()
 }
 
@@ -152,6 +153,8 @@ pub async fn execute(
     let arguments = serde_json::from_str::<Value>(&call.function.arguments).unwrap_or(Value::Null);
     let action = if call.function.name == "browser" {
         arguments["action"].as_str().unwrap_or("invalid")
+    } else if call.function.name == "self_prompt" {
+        "self_prompt"
     } else {
         "view_image"
     };
@@ -171,6 +174,12 @@ pub async fn execute(
     let start = Instant::now();
     let result = async {
         ensure!(!arguments.is_null(), "invalid_arguments");
+        if call.function.name == "self_prompt" {
+            return Ok((
+                crate::evolution::self_prompt(app, user, &arguments).await?,
+                None,
+            ));
+        }
         let client = app
             .tools
             .as_ref()

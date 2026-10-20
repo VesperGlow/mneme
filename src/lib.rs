@@ -7,10 +7,12 @@ pub mod console_store;
 pub mod continuity;
 pub mod diagnostics;
 pub mod domain;
+pub mod evolution;
 pub mod graph;
 pub mod llm;
 pub mod memory;
 pub mod models;
+pub mod persona;
 pub mod qq;
 pub mod qq_store;
 pub mod settings;
@@ -40,6 +42,8 @@ pub struct App {
     pub qq: Option<qq::Client>,
     pub stickers: Arc<std::sync::RwLock<stickers::Catalog>>,
     pub persona: Arc<std::sync::RwLock<config::Persona>>,
+    pub derivation: Arc<std::sync::RwLock<persona::Derivation>>,
+    pub evolution: Arc<std::sync::RwLock<evolution::Evolution>>,
     pub console_security: Arc<tokio::sync::Mutex<settings::ConsoleSecurity>>,
     pub maintenance: Arc<tokio::sync::RwLock<()>>,
     pub settings_lock: Arc<tokio::sync::Mutex<()>>,
@@ -62,6 +66,8 @@ impl App {
             store.conversation().await?;
         }
         let (persona, security) = settings::load(&store, &config).await?;
+        let derivation = persona::load(&store).await?;
+        let evolution = evolution::load(&store).await?;
         if config.llm.model == "auto" {
             let key = format!(
                 "llm.model.{:x}",
@@ -103,6 +109,8 @@ impl App {
             generation_slots: Arc::new(tokio::sync::Semaphore::new(4)),
             stickers: Arc::new(std::sync::RwLock::new(stickers::load(&store).await?)),
             persona: Arc::new(std::sync::RwLock::new(persona)),
+            derivation: Arc::new(std::sync::RwLock::new(derivation)),
+            evolution: Arc::new(std::sync::RwLock::new(evolution)),
             console_security: Arc::new(tokio::sync::Mutex::new(security)),
             maintenance: Default::default(),
             settings_lock: Default::default(),

@@ -141,6 +141,8 @@ pub struct Llm {
     context_tokens: usize,
     tokens: crate::tokens::Counter,
     json_schema: bool,
+    persona_request_options: serde_json::Map<String, Value>,
+    sticker_markers: std::sync::Arc<Vec<String>>,
     store: Option<crate::store::Store>,
     scope: Option<(Option<String>, String)>,
     stream_usage: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -169,6 +171,8 @@ impl Llm {
                 config.llm.tokenizer_path.as_deref(),
             )?,
             json_schema: config.llm.json_schema,
+            persona_request_options: config.llm.persona_request_options.clone(),
+            sticker_markers: Default::default(),
             store: None,
             scope: None,
             stream_usage: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -180,6 +184,11 @@ impl Llm {
         self.store = Some(store);
         self
     }
+    pub(crate) fn with_sticker_ids(&self, ids: impl Iterator<Item = String>) -> Self {
+        let mut scoped = self.clone();
+        scoped.sticker_markers = std::sync::Arc::new(ids.map(|id| format!("[[{id}]]")).collect());
+        scoped
+    }
     pub(crate) fn for_turn(&self, turn: &str, purpose: &str) -> Self {
         let mut scoped = self.clone();
         scoped.scope = Some((Some(turn.to_owned()), purpose.to_owned()));
@@ -189,6 +198,18 @@ impl Llm {
         let mut scoped = self.clone();
         scoped.scope = Some((None, purpose.into()));
         scoped
+    }
+    fn apply_persona_options(&self, body: &mut Value) {
+        if self.scope.as_ref().is_some_and(|(_, purpose)| {
+            matches!(
+                purpose.as_str(),
+                "persona_compile" | "persona_reflect" | "persona_validate"
+            )
+        }) {
+            for (key, value) in &self.persona_request_options {
+                body[key] = value.clone();
+            }
+        }
     }
     async fn start_request(&self, context: &crate::usage::ContextTokens) -> Result<String> {
         if let Some(store) = &self.store {
@@ -345,6 +366,7 @@ impl Llm {
         );
         let mut body = json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,
             "messages":[{"role":"system","content":system},{"role":"user","content":input.to_string()}]});
+        self.apply_persona_options(&mut body);
         if self.json_schema
             && let Some(schema) = schema
         {
@@ -613,7 +635,8 @@ impl Llm {
         let mut events = response.bytes_stream().eventsource();
         let mut content = String::new();
         let mut guard = ToolTextGuard::default();
-        let mut media_guard = crate::stickers::MediaTextGuard::default();
+        let mut media_guard =
+            crate::stickers::MediaTextGuard::with_stickers(self.sticker_markers.clone());
         let mut calls = std::collections::BTreeMap::<usize, ToolCall>::new();
         let mut finish = String::new();
         let mut total_bytes = 0usize;
@@ -806,6 +829,65 @@ pub async fn bounded_body(response: reqwest::Response, limit: usize) -> Result<V
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn persona_reasoning_controls_are_explicit_scoped_and_provider_agnostic() {
+        use super::*;
+        let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+        config.api_token = "persona-options-token-01234567890123456789".into();
+        config.llm_key = "fixture".into();
+        config.neo4j_password = "fixture".into();
+        config
+            .llm
+            .persona_request_options
+            .insert("thinking".into(), json!({"type":"disabled"}));
+        assert!(config.validate().is_ok());
+        for base in [
+            "http://127.0.0.1:9999/v1",
+            "https://api.deepseek.com/v1",
+            "https://other-provider.example/v1",
+        ] {
+            config.llm.base_url = base.into();
+            let llm = Llm::new(&config).unwrap();
+            for purpose in [
+                "persona_compile",
+                "persona_reflect",
+                "persona_validate",
+                "memory",
+                "compression",
+                "persona_preview",
+                "chat",
+            ] {
+                let mut body = json!({"model":"retained","messages":[],"max_tokens":100});
+                llm.for_purpose(purpose).apply_persona_options(&mut body);
+                assert_eq!(
+                    body.get("thinking").is_some(),
+                    matches!(
+                        purpose,
+                        "persona_compile" | "persona_reflect" | "persona_validate"
+                    )
+                );
+                assert_eq!(body["max_tokens"], 100);
+                assert_eq!(body["model"], "retained");
+            }
+        }
+        for forbidden in [
+            "messages",
+            "model",
+            "max_tokens",
+            "tools",
+            "tool_choice",
+            "response_format",
+            "stream",
+            "safety_settings",
+        ] {
+            config
+                .llm
+                .persona_request_options
+                .insert(forbidden.into(), json!("invalid"));
+            assert!(config.validate().is_err());
+            config.llm.persona_request_options.remove(forbidden);
+        }
+    }
     #[test]
     fn sticker_requests_reserve_output_and_only_disable_thinking_for_official_deepseek() {
         use super::*;

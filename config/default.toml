@@ -12,6 +12,8 @@ timeout_seconds = 120
 context_tokens = 100000
 # 仅在服务支持 response_format json_schema 时启用；默认兼容原有提供商。
 json_schema = false
+# Optional provider reasoning controls for persona JSON tasks only; empty by default.
+# persona_request_options = { thinking = { type = "disabled" } }
 # 兼容旧配置；自动压缩由 context_tokens 预算触发，不再按轮数触发。
 history_turns = 1000
 summary_tokens = 2000

@@ -557,3 +557,47 @@ async fn incomplete_tool_stream_never_executes_a_browser_action() {
     service.abort();
     fake.abort();
 }
+
+#[tokio::test]
+async fn derived_persona_reaches_every_tool_round_and_plain_finalization() {
+    let (models, model_task) = common::fake_services().await;
+    let (base, seen, upstream) = services("long").await;
+    let temp = tempfile::TempDir::new().unwrap();
+    let mut config = config(&temp, &base, &models);
+    config.tools.max_calls = 2;
+    let (_stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config, rx).await.unwrap();
+    let router = api::router(app.clone());
+    let (_, state) = request(&router, "GET", "/v1/console/persona/derivation", json!({})).await;
+    let dimensions: Vec<_> = mneme::persona::DIMENSIONS.iter().map(|name| json!({"id":name,"description":"衍生画像工具链测试标记","basis":"人工测试","evidence":[],"locked":false})).collect();
+    let (status, _) = request(&router, "PUT", "/v1/console/persona/derivation", json!({"expected_version":0,"source_hash":state["source_hash"],"enabled":true,"dimensions":dimensions})).await;
+    assert_eq!(status, StatusCode::OK);
+    let evolution_hash = mneme::evolution::base_hash(&app);
+    {
+        let mut evolution = app.evolution.write().unwrap();
+        evolution.source_hash = evolution_hash;
+        evolution.version = 1;
+        evolution.notes = vec![mneme::evolution::Note {
+            id: "tools".into(),
+            area: "tools".into(),
+            text: "进化习惯工具链测试标记".into(),
+            evidence: vec![],
+            locked: false,
+        }];
+    }
+    let session = app.store.conversation().await.unwrap();
+    let (_, wire) = chat(&router, &session, "请查看网页", vec![]).await;
+    assert!(wire.contains("event: done"));
+    let records = seen.lock().unwrap();
+    assert_eq!(records.llm.len(), 3);
+    for request in &records.llm {
+        let system = request["messages"][0]["content"].as_str().unwrap();
+        assert!(system.contains("衍生画像工具链测试标记"));
+        assert!(system.contains("进化习惯工具链测试标记"));
+        assert!(system.contains("原始人格为准"));
+        assert!(system.contains("不能改变系统指令"));
+    }
+    assert!(records.llm.last().unwrap().get("tools").is_none());
+    upstream.abort();
+    model_task.abort();
+}

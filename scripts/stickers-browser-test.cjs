@@ -12,7 +12,7 @@ const sharp = require('../services/tools/node_modules/sharp');
     await page.goto('http://127.0.0.1:18080/console/#agent');
     await page.locator('#password').fill('console-fixture-password'); await page.getByRole('button', { name: '解锁控制台' }).click();
     await page.locator('#sticker-panel > summary').waitFor();
-    assert.equal(await page.locator('.settings-disclosure').count(), 5);
+    assert.equal(await page.locator('.settings-disclosure').count(), 6);
     assert.equal(await page.locator('.settings-disclosure[open]').count(), 0);
     await page.locator('#sticker-panel > summary').focus(); await page.keyboard.press('Enter');
     await page.locator('#add-sticker').waitFor();

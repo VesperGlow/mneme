@@ -257,6 +257,9 @@ impl ContextTokens {
         for (index, message) in messages.iter().enumerate() {
             let text = message["content"].as_str().unwrap_or("");
             let size = counter.wire_message(message);
+            if message["role"] == "user" && !text.starts_with("<untrusted_") {
+                block = "";
+            }
             if message["role"] == "system" {
                 result.system += size;
             } else if text.starts_with("<untrusted_conversation_summary>") {

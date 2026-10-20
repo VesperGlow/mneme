@@ -63,6 +63,21 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                     return Json(json!({"choices":[{"message":{"content":json!({"name":"开心表情","description":"An expressive face celebrating; use for happy reactions and congratulations."}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1100,"completion_tokens":40,"total_tokens":1140}})).into_response();
                 }
                 let input:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
+                if input["evolution_request"]==true {
+                    let source=&input["sources"][0];
+                    let notes=if input["notes"].as_array().is_some_and(|n|!n.is_empty()){input["notes"].clone()}else{json!([{"id":"quiet_chat","area":"communication","text":"聊天留意对方的具体分享，避免反复追加无关追问。","evidence":[{"source_id":source["id"],"quote":source["content"].as_str().unwrap().chars().take(160).collect::<String>()}]}])};
+                    return Json(json!({"choices":[{"message":{"content":json!({"action":"revise","reason":"根据真实用户反馈调整沟通习惯。","notes":notes}).to_string()},"finish_reason":"stop"}]})).into_response();
+                }
+                if input["evolution_validation"]==true {
+                    let result=json!({"core_consistent":true,"evidence_supported":true,"low_risk":true,"natural":true,"reason":"测试夹具：核对候选、证据和基础能力。","replies":[{"id":"chat","reply":"猫大概睡得很舒服。"},{"id":"emotion","reply":"陪你待会儿。"},{"id":"tech","reply":"42"},{"id":"unknown","reply":"UNKNOWN"},{"id":"tool","reply":"UNVERIFIED"}]});
+                    return Json(json!({"choices":[{"message":{"content":result.to_string()},"finish_reason":"stop"}]})).into_response();
+                }
+                if let Some(persona)=input.get("persona") {
+                    let style=persona["style"].as_str().unwrap();
+                    let quote:String=style.chars().take(80).collect();
+                    let dimensions:Vec<_>=["overall","chat","emotion","task","tools","memory"].iter().map(|id|json!({"id":id,"description":format!("{id}：{}",style.chars().take(200).collect::<String>()),"basis":"来自原始交流方式的测试衍生，不添加角色经历。","evidence":[{"field":"style","quote":quote}],"signals":["参考倾向"]})).collect();
+                    return Json(json!({"choices":[{"message":{"content":json!({"dimensions":dimensions}).to_string()},"finish_reason":"stop"}]})).into_response();
+                }
                 if input.get("max_tokens").is_some() {
                     let mut summary = input["previous_summary"].as_str().unwrap_or("").to_owned();
                     if input["messages"].to_string().contains("__summary_fail__") {

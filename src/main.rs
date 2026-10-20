@@ -42,6 +42,7 @@ async fn main() -> Result<()> {
         tracing::info!(listen=%app.config.qq.listen, "QQ webhook enabled; first private message starts the personal session");
     }
     let worker = tokio::spawn(mneme::memory::worker(app.clone()));
+    let evolution_worker = tokio::spawn(mneme::evolution::worker(app.clone()));
     let qq_worker = tokio::spawn(mneme::qq::worker(app.clone()));
     let sticker_worker = tokio::spawn(mneme::stickers::worker(app.clone()));
     let mut qq_shutdown = shutdown_rx.clone();
@@ -73,6 +74,7 @@ async fn main() -> Result<()> {
     server.await?;
     let _ = tokio::time::timeout(Duration::from_secs(15), async {
         let _ = worker.await;
+        let _ = evolution_worker.await;
         let _ = qq_worker.await;
         let _ = sticker_worker.await;
         if let Some(server) = qq_server {

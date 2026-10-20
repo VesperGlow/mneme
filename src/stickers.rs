@@ -33,6 +33,27 @@ pub struct Catalog {
     pub stickers: Vec<Sticker>,
 }
 impl Catalog {
+    pub(crate) fn parse_reply(&self, input: &str) -> (String, Vec<String>, Vec<String>) {
+        let mut normalized = input.to_owned();
+        // Only IDs from the real catalog are media protocol, never arbitrary
+        // double-bracket text or UUIDs copied from a document/code example.
+        for sticker in &self.stickers {
+            normalized = normalized.replace(
+                &format!("[[{}]]", sticker.id),
+                &format!("[[sticker:{}]]", sticker.id),
+            );
+        }
+        let (text, mut stickers, images) = parse_reply(&normalized);
+        stickers.retain(|id| {
+            self.enabled
+                && self.stickers.iter().any(|s| {
+                    s.id == *id
+                        && s.enabled
+                        && matches!(s.analysis_status.as_str(), "complete" | "manual")
+                })
+        });
+        (text, stickers, images)
+    }
     pub fn prompt(&self) -> String {
         let available: Vec<_> = self
             .stickers
@@ -465,8 +486,15 @@ pub(crate) async fn history_metadata(app: &App, session: &str) -> anyhow::Result
 #[derive(Default)]
 pub(crate) struct MediaTextGuard {
     pending: String,
+    sticker_markers: std::sync::Arc<Vec<String>>,
 }
 impl MediaTextGuard {
+    pub fn with_stickers(sticker_markers: std::sync::Arc<Vec<String>>) -> Self {
+        Self {
+            pending: String::new(),
+            sticker_markers,
+        }
+    }
     pub fn push(&mut self, delta: &str) -> String {
         self.pending.push_str(delta);
         let mut visible = String::new();
@@ -480,9 +508,21 @@ impl MediaTextGuard {
             };
             visible.push_str(&self.pending[..start]);
             self.pending.drain(..start);
+            if let Some(marker) = self
+                .sticker_markers
+                .iter()
+                .find(|m| self.pending.starts_with(m.as_str()))
+            {
+                self.pending.drain(..marker.len());
+                continue;
+            }
             if ["[[sticker:", "[[image:"]
                 .iter()
                 .any(|p| p.starts_with(&self.pending))
+                || self
+                    .sticker_markers
+                    .iter()
+                    .any(|m| m.starts_with(&self.pending))
             {
                 break;
             }
@@ -517,6 +557,44 @@ impl MediaTextGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn catalog_resolves_only_known_bare_ids_and_streaming_matches_persistence() {
+        let known = id();
+        let unknown = id();
+        let mut catalog = Catalog {
+            enabled: true,
+            stickers: vec![Sticker {
+                id: known.clone(),
+                image_id: id(),
+                name: "测试".into(),
+                description: "测试".into(),
+                enabled: true,
+                analysis_status: "complete".into(),
+                analysis_error: None,
+            }],
+        };
+        let raw = format!("你好🙂 [[note]] [[{unknown}]] [[{known}]]");
+        let mut guard =
+            MediaTextGuard::with_stickers(std::sync::Arc::new(vec![format!("[[{known}]]")]));
+        let mut visible = String::new();
+        for c in raw.chars() {
+            visible.push_str(&guard.push(&c.to_string()));
+        }
+        visible.push_str(&guard.finish());
+        let (text, stickers, images) = catalog.parse_reply(&raw);
+        assert_eq!(text, visible.trim());
+        assert_eq!(text, format!("你好🙂 [[note]] [[{unknown}]]"));
+        assert_eq!(stickers, vec![known.clone()]);
+        assert!(images.is_empty());
+        catalog.enabled = false;
+        assert!(catalog.parse_reply(&raw).1.is_empty());
+        let prefix = format!("[[{}", &known[..8]);
+        let mut partial =
+            MediaTextGuard::with_stickers(std::sync::Arc::new(vec![format!("[[{known}]]")]));
+        let mut output = partial.push(&prefix);
+        output.push_str(&partial.finish());
+        assert_eq!(output, prefix);
+    }
     #[test]
     fn marker_filter_handles_every_character_boundary_and_unknown_ids() {
         let sticker = id();
