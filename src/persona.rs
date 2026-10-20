@@ -17,9 +17,9 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 const KEY: &str = "console.persona_derivation.v1";
-pub const COMPILER_VERSION: u32 = 4;
+pub const COMPILER_VERSION: u32 = 5;
 pub const DIMENSIONS: [&str; 6] = ["overall", "chat", "emotion", "task", "tools", "memory"];
-const COMPILE_PROMPT: &str = "你负责解释用户填写的人格，生成可编辑的行为画像。唯一角色设定来源是输入的 persona；不读取记忆、不增加独立人设。将身份、个性和交流偏好推导为有弹性的倾向，不能编造口味、经历、关系、能力或当前情绪。六个 id overall/chat/emotion/task/tools/memory 只是展示维度，不是场景路由、话术模板、执行步骤或回复概率；不规定每轮必须追问、建议、撒娇、吐槽或固定结构。description 写自然语言倾向，basis 用一句简短中文解释推导与不确定性，不重复英文引文；依据不足就明确未指定。evidence 只引用 persona 某个字段中的逐字连续原文，field 为 name/description/style/boundaries/output_format；每项至少一条证据，优先引用短语；字符上限包含空格，英文不能按词数计算。画像不得推翻原始人格，也不能改变事实、安全、工具权限或记忆证据要求。只输出 JSON {\"dimensions\":[{\"id\":\"overall\",\"description\":\"...\",\"basis\":\"...\",\"evidence\":[{\"field\":\"style\",\"quote\":\"原文\"}]}]}，六个 id 各一次；每项 description 最多300字，basis 最多150字，证据最多3条、每条100字；可选 signals 为最多3个、每个24字的定性参考标签，仅用于可视化，不参与运行时决策。不生成数值概率或情绪刻度，总体简洁。画像也应覆盖是否及何时使用工具、任务规划习惯、记忆重要性与关注点、风险沟通方式；均为软倾向，由人格推导而非固定策略，不得改权限、检索阈值或事实验证标准。";
+const COMPILE_PROMPT: &str = "你负责解释用户填写的人格，生成可编辑的行为画像。唯一角色设定来源是输入的 persona；不读取记忆、不增加独立人设。将身份、个性和交流偏好推导为有弹性的倾向，不能编造口味、经历、关系、能力或当前情绪。六个 id overall/chat/emotion/task/tools/memory 只是展示维度，不是场景路由、话术模板、执行步骤或回复概率；不规定每轮必须追问、建议、撒娇、吐槽或固定结构。description、basis 和 signals 统一用简体中文，description 写自然语言倾向，basis 用一句短话解释推导与不确定性，不重复引文；原始人格、专名和证据引文保持原文，不翻译或改写；依据不足就明确未指定。evidence 只引用 persona 某个字段中的逐字连续原文，field 为 name/description/style/boundaries/output_format；每项至少一条证据，优先引用短语；字符上限包含空格，英文不能按词数计算。画像不得推翻原始人格，也不能改变事实、安全、工具权限或记忆证据要求。只输出 JSON {\"dimensions\":[{\"id\":\"overall\",\"description\":\"...\",\"basis\":\"...\",\"evidence\":[{\"field\":\"style\",\"quote\":\"原文\"}]}]}，六个 id 各一次；每项 description 最多300字，basis 最多150字，证据最多3条、每条100字；可选 signals 为最多3个、每个24字的定性参考标签，仅用于可视化，不参与运行时决策。不生成数值概率或情绪刻度，总体简洁。画像也应覆盖是否及何时使用工具、任务规划习惯、记忆重要性与关注点、风险沟通方式；均为软倾向，由人格推导而非固定策略，不得改权限、检索阈值或事实验证标准。";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

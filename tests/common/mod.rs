@@ -60,7 +60,7 @@ pub async fn fake_services() -> (String, tokio::task::JoinHandle<()>) {
                 ([("content-type","text/event-stream")],Body::from_stream(stream)).into_response()
             } else {
                 if body["messages"][1]["content"].is_array() {
-                    return Json(json!({"choices":[{"message":{"content":json!({"name":"开心表情","description":"An expressive face celebrating; use for happy reactions and congratulations."}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1100,"completion_tokens":40,"total_tokens":1140}})).into_response();
+                    return Json(json!({"choices":[{"message":{"content":json!({"name":"开心表情","description":"角色兴奋庆祝，适合开心回应或表达祝贺。"}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1100,"completion_tokens":40,"total_tokens":1140}})).into_response();
                 }
                 let input:Value=serde_json::from_str(body["messages"][1]["content"].as_str().unwrap()).unwrap();
                 if input["evolution_request"]==true {

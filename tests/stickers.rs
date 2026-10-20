@@ -44,13 +44,13 @@ async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
                     if body["stream"] == false {
                         assert!(body["max_tokens"].as_u64().unwrap() >= 4096, "reasoning needs headroom before the JSON answer");
                         assert!(body.get("thinking").is_none(), "provider extensions must not leak to compatible endpoints");
-                        assert!(body["messages"][0]["content"].as_str().unwrap().contains("Write description in English"));
-                        assert!(body["messages"][1]["content"][0]["text"].as_str().unwrap().contains("write the description in English"));
+                        assert!(body["messages"][0]["content"].as_str().unwrap().contains("名称和描述都用简体中文"));
+                        assert!(body["messages"][1]["content"][0]["text"].as_str().unwrap().contains("名称和描述都用简体中文"));
                         s.vision_calls.fetch_add(1, Ordering::SeqCst);
                         tokio::time::sleep(std::time::Duration::from_millis(s.vision_delay.load(Ordering::SeqCst) as u64)).await;
                         if s.fail_vision.load(Ordering::SeqCst) { return ([("content-type", "text/event-stream")], Body::from("{}")); }
                         assert!(body["messages"][1]["content"].to_string().contains("data:image/jpeg;base64,"));
-                        let description = s.vision_descriptions.lock().await.pop_front().unwrap_or_else(|| "A small animal opens its arms for a hug, offering comfort and companionship.".into());
+                        let description = s.vision_descriptions.lock().await.pop_front().unwrap_or_else(|| "小动物张开双臂求抱抱，适合安慰或表达亲近。".into());
                         return ([("content-type", "text/event-stream")], Body::from(json!({"choices":[{"message":{"content":json!({"name":"自动识别的抱抱","description":description}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":40,"total_tokens":1040}}).to_string()));
                     }
                     s.requests.lock().await.push(body.clone());
@@ -549,7 +549,7 @@ async fn automatic_understanding_resumes_after_restart_and_can_retry_without_ove
             .read()
             .unwrap()
             .prompt()
-            .contains("comfort and companionship")
+            .contains("安慰或表达亲近")
     );
     assert_eq!(fake.vision_calls.load(Ordering::SeqCst), 1);
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM model_requests WHERE purpose='sticker' AND json_extract(usage,'$.total_tokens')=1040").fetch_one(&app.store.pool).await.unwrap(), 1);

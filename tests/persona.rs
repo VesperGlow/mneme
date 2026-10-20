@@ -117,6 +117,12 @@ async fn generated_cache_runtime_preview_restart_and_model_switch() {
     let v = generate(&router, false).await;
     assert_eq!(v["status"], "ready");
     assert_eq!(v["version"], 1);
+    assert!(
+        seen.requests.lock().unwrap()[0]["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("description、basis 和 signals 统一用简体中文")
+    );
     let again = generate(&router, false).await;
     assert_eq!(again["version"], 1);
     assert_eq!(seen.requests.lock().unwrap().len(), 1);
