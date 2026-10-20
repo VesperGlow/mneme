@@ -80,3 +80,19 @@ fn arbitrary_error_messages_and_stream_payloads_are_not_returned() {
     );
     assert_eq!(describe(&error.into()).category, "invalid_stream");
 }
+
+#[test]
+fn sticker_failures_have_fixed_safe_categories() {
+    for (message, category) in [
+        (
+            "incomplete image description",
+            "incomplete_image_description",
+        ),
+        ("missing image description", "empty_image_description"),
+        ("empty image description", "empty_image_description"),
+        ("invalid image description", "invalid_image_description"),
+        ("image description timeout", "timeout"),
+    ] {
+        assert_eq!(describe(&anyhow::anyhow!(message)).category, category);
+    }
+}

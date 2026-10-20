@@ -28,7 +28,7 @@
     info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.1"/>',
   };
   const icon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${paths[name] || paths.book}</svg>`;
-  const state = { chatBusy: false, authenticated: false, route: 'chat', libraryView: 'memories', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, library: null, poll: 0 };
+  const state = { chatBusy: false, authenticated: false, route: 'chat', libraryView: 'memories', epoch: 0, controller: new AbortController(), filter: { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }, detail: null, library: null, poll: 0, agentPanels: {} };
   const fmt = n => Number(n || 0).toLocaleString('zh-CN');
   const pct = n => `${Math.round(Number(n || 0) * 100)}%`;
   const date = (n, full = false) => n ? new Date(n * 1000).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', ...(full ? { year: 'numeric', hour: '2-digit', minute: '2-digit' } : {}) }) : '—';
@@ -93,7 +93,7 @@
   }
   function clearLogin() {
     for (const url of objectURLs) URL.revokeObjectURL(url); objectURLs.clear();
-    state.chatBusy = false; lazyDetails.clear();
+    state.chatBusy = false; lazyDetails.clear(); state.agentPanels = {};
     state.authenticated = false; state.controller.abort(); state.controller = new AbortController(); state.epoch++; state.detail = null; state.library = null; state.libraryView = 'memories';
     state.filter = { q: '', kind: '', status: 'all', sort: 'updated', offset: 0 }; clearTimeout(state.poll);
     for (const modal of $$('dialog')) { if (modal.open) modal.close(); modal.innerHTML = ''; }
@@ -576,15 +576,44 @@
   function qqCard(qq) {
     return `<section class="panel job-card spaced"><div class="between"><div><h2>QQ 机器人</h2><p class="subheading">${qq.enabled ? `AppID ${esc(qq.app_id)} · 个人单聊` : '在 .env 填写 QQ AppID 和 AppSecret 后启用'}</p></div><span class="badge ${qq.has_session ? 'green' : 'amber'}">${qq.has_session ? '个人会话已建立' : qq.bound ? '等待新会话' : qq.enabled ? '等待首条私聊' : '未启用'}</span></div>${qq.enabled ? `<p class="hint spaced">直接私聊即可开始，无需绑定码。首次私聊自动建立个人会话，重启后继续使用。</p><div class="spaced"><small>待处理 ${fmt(qq.queue.pending)} · 运行中 ${fmt(qq.queue.running)} · 已发送 ${fmt(qq.queue.sent)} · 失败 ${fmt(qq.queue.dead)}</small></div>` : ''}</section>`;
   }
+  function collapsibleSettings(panel, key) {
+    const head = $(':scope > .panel-head, :scope > .between', panel);
+    const summary = document.createElement('summary');
+    summary.className = head.className; summary.classList.add('panel-head');
+    const button = $(':scope > button', head);
+    if (button) {
+      const actions = document.createElement('div'); actions.className = 'settings-panel-actions';
+      actions.append(button); head.after(actions);
+    }
+    summary.append(...head.childNodes); head.replaceWith(summary);
+    if (panel.tagName !== 'DETAILS') {
+      const details = document.createElement('details');
+      details.className = `${panel.className} settings-disclosure`; details.id = panel.id;
+      details.append(...panel.childNodes); panel.replaceWith(details); panel = details;
+      panel.open = state.agentPanels[key] ?? false;
+    }
+    panel.dataset.setting = key;
+    panel.ontoggle = () => { if (panel.isConnected) state.agentPanels[key] = panel.open; };
+    return panel;
+  }
+  const stickerAnalysisError = code => ({
+    catalog_full: '表情库上下文容量不足，请移除部分表情后重试。',
+    incomplete_image_description: '模型输出被截断，请重试识别。图片已保留。',
+    invalid_image_description: '模型描述超出格式或长度限制，请重试识别或手动修正。图片已保留。',
+    invalid_json: '模型未返回有效的识别格式，请重试识别。图片已保留。',
+    empty_image_description: '模型未返回描述，请重试识别。图片已保留。',
+    timeout: '识别请求超时，请稍后重试。图片已保留。',
+  })[code] || '自动识别未完成，请检查模型或工具服务后重试。图片已保留。';
   async function stickerPanel(epoch) {
     const data = await api('/v1/stickers'); if (epoch !== state.epoch) return;
-    const panel = $('#sticker-panel');
+    let panel = $('#sticker-panel');
     panel.innerHTML = `<div class="panel-head between"><div><h2>自定义表情包</h2><p class="subheading">你收藏的表情，让每次回应多一点默契。</p></div><button class="btn primary" id="add-sticker" ${data.upload_available ? '' : 'disabled'}>${icon('plus')}添加表情包</button></div><div class="sticker-body"><label class="check-label"><input type="checkbox" id="stickers-enabled" ${data.enabled ? 'checked' : ''}>允许 Agent 在回复中使用表情包</label><p class="hint">网页、QQ 和 API 共用这份表情库。上传后自动理解画面、文案和情绪，按语境选用，每轮最多一张。重启和重置对话后保留。</p>${!data.upload_available ? '<div class="notice warn">启用工具服务后即可上传图片；已有表情包仍可使用。</div>' : ''}<div class="sticker-toolbar"><label class="search-field">${icon('search')}<input id="sticker-search" placeholder="搜索名字或使用场景" aria-label="搜索表情包"></label><small id="sticker-count"></small></div><div id="sticker-grid" class="sticker-grid"></div><div class="error-inline" id="stickers-error" role="alert"></div><p class="hint">支持 PNG、JPEG、WebP 和 GIF 动图，原图最多 8 MiB。最多 ${data.limit} 张；自动缩至 512 像素并移除元数据。</p></div>`;
+    panel = collapsibleSettings(panel, 'stickers');
     const render = () => {
       const q = $('#sticker-search').value.trim().toLocaleLowerCase();
       const visible = data.stickers.filter(s => `${s.name} ${s.description}`.toLocaleLowerCase().includes(q));
       $('#sticker-count').textContent = `${data.stickers.length} / ${data.limit} 张`;
-      $('#sticker-grid').innerHTML = visible.map(s => `<article class="sticker-card${s.enabled ? '' : ' is-disabled'}"><div class="sticker-preview"><img src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy"></div><div class="sticker-caption"><strong>${esc(s.name)}</strong><span class="badge ${s.enabled ? 'green' : ''}">${s.analysis_status === 'pending' ? '正在识别' : s.analysis_status === 'failed' ? '待重试' : s.enabled ? '已启用' : '已停用'}</span></div><p>${esc(s.analysis_status === 'pending' ? '正在自动理解画面和表达，无需手动打标签…' : s.analysis_status === 'failed' ? s.analysis_error === 'catalog_full' ? '表情库上下文容量不足，请移除部分表情后重试。' : '自动识别未完成，请确认模型支持看图后重试。图片已保留。' : s.description)}</p><div class="sticker-actions"><button class="btn small" data-sticker-analyze="${esc(s.id)}" ${s.analysis_status === 'pending' ? 'disabled' : ''}>${s.analysis_status === 'failed' ? '重试识别' : '重新识别'}</button><button class="btn small" data-sticker-edit="${esc(s.id)}" aria-label="编辑 ${esc(s.name)}">${icon('edit')}编辑</button><button class="icon-btn" data-sticker-delete="${esc(s.id)}" aria-label="删除 ${esc(s.name)}">${icon('trash')}</button></div></article>`).join('') || `<div class="sticker-empty">${icon('spark')}<strong>${q ? '没有找到表情包' : '把你的表情收藏放在这里'}</strong><p>${q ? '试试其他名字或使用场景。' : '上传喜欢的表情，Agent 会自动理解什么时候用它。'}</p></div>`;
+      $('#sticker-grid').innerHTML = visible.map(s => `<article class="sticker-card${s.enabled ? '' : ' is-disabled'}"><div class="sticker-preview"><img src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy"></div><div class="sticker-caption"><strong>${esc(s.name)}</strong><span class="badge ${s.enabled ? 'green' : ''}">${s.analysis_status === 'pending' ? '正在识别' : s.analysis_status === 'failed' ? '待重试' : s.enabled ? '已启用' : '已停用'}</span></div><p>${esc(s.analysis_status === 'pending' ? '正在自动理解画面和表达，无需手动打标签…' : s.analysis_status === 'failed' ? stickerAnalysisError(s.analysis_error) : s.description)}</p><div class="sticker-actions"><button class="btn small" data-sticker-analyze="${esc(s.id)}" ${s.analysis_status === 'pending' ? 'disabled' : ''}>${s.analysis_status === 'failed' ? '重试识别' : '重新识别'}</button><button class="btn small" data-sticker-edit="${esc(s.id)}" aria-label="编辑 ${esc(s.name)}">${icon('edit')}编辑</button><button class="icon-btn" data-sticker-delete="${esc(s.id)}" aria-label="删除 ${esc(s.name)}">${icon('trash')}</button></div></article>`).join('') || `<div class="sticker-empty">${icon('spark')}<strong>${q ? '没有找到表情包' : '把你的表情收藏放在这里'}</strong><p>${q ? '试试其他名字或使用场景。' : '上传喜欢的表情，Agent 会自动理解什么时候用它。'}</p></div>`;
       $$('[data-sticker-analyze]', panel).forEach(button => { button.onclick = async () => {
         button.disabled = true; $('#stickers-error').textContent = '';
         try { await send(`/v1/stickers/${button.dataset.stickerAnalyze}/analyze`, {}); if (epoch === state.epoch) await stickerPanel(epoch); }
@@ -656,6 +685,10 @@
       <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
       <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
       <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div><aside class="agent-aside">${qqCard(qq)}<section class="panel context-card"><div class="panel-head"><h2>上下文与记忆</h2></div><div class="context-facts"><div><small>上下文预算</small><strong>${fmt(conversation.context.context_tokens)} tokens</strong></div><div><small>下一轮上下文（估算）</small><strong>${fmt(conversation.context.context_used_tokens)} tokens</strong></div><div><small>定期提取记忆</small><strong>每 ${fmt(conversation.context.memory_extract_tokens)} tokens</strong></div><div><small>已压缩历史</small><strong>${fmt(conversation.context.compactions)} 次</strong></div></div><p class="hint">QQ、网页和 API 共用上下文。占用包含系统指令、历史、摘要、记忆和工具，按 Token 预算压缩历史。API 实际用量与本地估算、长期记忆提取独立统计，可在聊天底部查看。</p></section></aside></div></div>`;
+    collapsibleSettings($('#persona-form').closest('.panel'), 'persona');
+    collapsibleSettings($('.reset-panel'), 'reset');
+    collapsibleSettings($('.agent-aside .job-card'), 'qq');
+    collapsibleSettings($('.context-card'), 'context');
     await stickerPanel(epoch); if (epoch !== state.epoch) return;
     const personaForm = $('#persona-form');
     $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };

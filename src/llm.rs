@@ -236,11 +236,7 @@ impl Llm {
     pub async fn complete_json(&self, system: &str, input: Value) -> Result<Value> {
         self.complete_json_with_tokens(system, input, 2500).await
     }
-    pub(crate) async fn describe_image(
-        &self,
-        system: &str,
-        image: &crate::assets::ImageData,
-    ) -> Result<Value> {
+    fn image_request_body(&self, system: &str, image: &crate::assets::ImageData) -> Result<Value> {
         let messages = json!([
             {"role":"system","content":system},
             {"role":"user","content":[
@@ -253,19 +249,50 @@ impl Llm {
             messages.as_array().unwrap(),
             None,
         );
-        ensure!(
-            context.total() + 768 <= self.context_tokens,
-            "image request exceeds token budget"
-        );
+        // Compatible reasoning models can spend the output budget before emitting
+        // JSON. Leave headroom, and use DeepSeek's documented switch only on its
+        // official endpoint; other providers may reject that extension.
+        let max_tokens = self
+            .context_tokens
+            .saturating_sub(context.total())
+            .min(4096);
+        ensure!(max_tokens >= 768, "image request exceeds token budget");
+        let mut body = json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,"messages":messages});
+        if reqwest::Url::parse(&self.url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .as_deref()
+            == Some("api.deepseek.com")
+        {
+            body["thinking"] = json!({"type":"disabled"});
+        }
+        Ok(body)
+    }
+    pub(crate) async fn describe_image(
+        &self,
+        system: &str,
+        image: &crate::assets::ImageData,
+    ) -> Result<Value> {
+        let body = self.image_request_body(system, image)?;
         let start = std::time::Instant::now();
         let result = async {
-            let response = self.json_request(&json!({"model":self.model,"temperature":0,"max_tokens":768,"stream":false,"messages":messages})).await?;
-            ensure!(response["choices"][0]["finish_reason"] == "stop", "incomplete image description");
-            let content = response["choices"][0]["message"]["content"].as_str().ok_or_else(|| anyhow::anyhow!("missing image description"))?;
-            let text = content.trim().strip_prefix("```json").or_else(|| content.trim().strip_prefix("```"))
-                .map(|s| s.trim().strip_suffix("```").unwrap_or(s).trim()).unwrap_or(content.trim());
+            let response = self.json_request(&body).await?;
+            ensure!(
+                response["choices"][0]["finish_reason"] == "stop",
+                "incomplete image description"
+            );
+            let content = response["choices"][0]["message"]["content"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("missing image description"))?;
+            let text = content
+                .trim()
+                .strip_prefix("```json")
+                .or_else(|| content.trim().strip_prefix("```"))
+                .map(|s| s.trim().strip_suffix("```").unwrap_or(s).trim())
+                .unwrap_or(content.trim());
             Ok::<Value, anyhow::Error>(serde_json::from_str(text)?)
-        }.await;
+        }
+        .await;
         self.metrics.record(start, result.is_ok());
         result
     }
@@ -779,6 +806,62 @@ pub async fn bounded_body(response: reqwest::Response, limit: usize) -> Result<V
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sticker_requests_reserve_output_and_only_disable_thinking_for_official_deepseek() {
+        use super::*;
+        let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+        let image = crate::assets::ImageData {
+            mime: "image/jpeg".into(),
+            data: "/9j/AA==".into(),
+            width: 256,
+            height: 256,
+        };
+        for (url, disable) in [
+            ("https://api.deepseek.com/v1", true),
+            ("https://api.deepseek.com", true),
+            ("http://127.0.0.1:8080/v1", false),
+            ("https://api.deepseek.com.example/v1", false),
+            ("https://example.com/api.deepseek.com", false),
+        ] {
+            config.llm.base_url = url.into();
+            let llm = Llm::new(&config).unwrap();
+            let body = llm
+                .image_request_body("Return English JSON", &image)
+                .unwrap();
+            assert_eq!(body.get("thinking").is_some(), disable);
+            if disable {
+                assert_eq!(body["thinking"]["type"], "disabled");
+            }
+            assert_eq!(body["max_tokens"], 4096);
+            assert!(
+                body["messages"][1]["content"][1]["image_url"]["url"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("data:image/jpeg;base64,")
+            );
+        }
+        config.llm.context_tokens = 2000;
+        let llm = Llm::new(&config).unwrap();
+        let body = llm
+            .image_request_body("Return English JSON", &image)
+            .unwrap();
+        let context = crate::usage::ContextTokens::from_wire_with(
+            &llm.tokens,
+            body["messages"].as_array().unwrap(),
+            None,
+        );
+        assert_eq!(
+            body["max_tokens"].as_u64().unwrap() as usize + context.total(),
+            2000
+        );
+        config.llm.context_tokens = 768;
+        assert!(
+            Llm::new(&config)
+                .unwrap()
+                .image_request_body("Return English JSON", &image)
+                .is_err()
+        );
+    }
     use super::ToolTextGuard;
 
     #[test]

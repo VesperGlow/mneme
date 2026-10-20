@@ -1,0 +1,84 @@
+{
+  "date": "2026-10-20",
+  "provider": "official DeepSeek",
+  "model": "deepseek-flash",
+  "method": "20 identical existing images, fixed ordered paired wire requests; final candidate repeated after prompt refinement; no production database writes",
+  "sample_images_sha256": "8929f1bd5ab38d963fc9651565b2a87b3f90d9e2ec7ddb5fdebac7995476f052",
+  "before": {
+    "samples": 20,
+    "valid": 3,
+    "english": 8,
+    "truncated": 12,
+    "overlength": 5,
+    "p50_ms": 3730.55,
+    "p95_ms": 4471.4,
+    "max_ms": 4848.8,
+    "input_tokens": 7490,
+    "output_tokens": 12768,
+    "total_tokens": 20258,
+    "reasoning_tokens": 12413,
+    "description_chars_range": [
+      105,
+      152
+    ]
+  },
+  "after": {
+    "samples": 20,
+    "valid": 20,
+    "english": 20,
+    "truncated": 0,
+    "overlength": 0,
+    "p50_ms": 923.55,
+    "p95_ms": 1128.4,
+    "max_ms": 1177.9,
+    "input_tokens": 7130,
+    "output_tokens": 528,
+    "total_tokens": 7658,
+    "reasoning_tokens": 0,
+    "description_chars_range": [
+      61,
+      96
+    ]
+  },
+  "production_modified": false,
+  "scope": "Structural success, language constraints and returned API usage; no independent semantic accuracy grading; small sample timings are not a production tail-latency guarantee",
+  "candidate_requests": 60,
+  "total_api_reported_tokens_all_runs": 35814,
+  "baseline_commit": "96c37fa1ba948af45332b080463391d8fc82986e",
+  "source_sha256": {
+    "src/llm.rs": "154b6c5881ce566ff0677340bf1811299a790fa4d62e507789d99de2800a463f",
+    "src/stickers.rs": "a3d52086374f8389d66fade27576a6ef875e18ba0501e03816e742237e7f82d7",
+    "src/diagnostics.rs": "a20ca7928ba59fb00bd948f4c42235176ac7a0a8786e7b50455003848aa7317a",
+    "web/app.js": "26d4116bff3151316bb8a143b12ceb8de7ec841ae660d12d53f05661e261a0d3",
+    "web/style.css": "40df96de6e314731ac315207be27471d40515b02e1efdbd2624f90461e94de8b"
+  },
+  "tests": {
+    "rust": {
+      "passed": 107,
+      "failed": 0,
+      "ignored": 12
+    },
+    "strict_clippy": "passed",
+    "rustfmt": "passed",
+    "js_syntax": "passed",
+    "console_browser_desktop_mobile": "passed",
+    "sticker_browser_png_gif": "passed",
+    "expanded_settings_widths": [
+      320,
+      390,
+      768,
+      1024,
+      1440
+    ],
+    "bounded_retry_usage": "4 requests, total 4160 fixture API tokens; exactly one retry per overlength analysis",
+    "production_data_writes": false
+  },
+  "raw_artifacts": [
+    "artifacts/sticker-recognition-initial-2026-10-20.jsonl",
+    "artifacts/sticker-recognition-live-2026-10-20.jsonl",
+    "artifacts/sticker-fold-final-rust-2026-10-20.log",
+    "artifacts/sticker-fold-final-clippy-2026-10-20.log",
+    "artifacts/sticker-fold-final-browser-2026-10-20.log",
+    "artifacts/sticker-fold-console-clean-2026-10-20.log"
+  ]
+}

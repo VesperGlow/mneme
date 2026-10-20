@@ -32,6 +32,7 @@ struct Fixture {
     fail_vision: Arc<AtomicBool>,
     vision_calls: Arc<AtomicUsize>,
     vision_delay: Arc<AtomicUsize>,
+    vision_descriptions: Arc<Mutex<std::collections::VecDeque<String>>>,
 }
 async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
     let fixture = Fixture::default();
@@ -41,13 +42,16 @@ async fn fixture() -> (Fixture, String, tokio::task::JoinHandle<()>) {
             post(
                 |State(s): State<Fixture>, Json(body): Json<Value>| async move {
                     if body["stream"] == false {
+                        assert!(body["max_tokens"].as_u64().unwrap() >= 4096, "reasoning needs headroom before the JSON answer");
+                        assert!(body.get("thinking").is_none(), "provider extensions must not leak to compatible endpoints");
                         assert!(body["messages"][0]["content"].as_str().unwrap().contains("Write description in English"));
                         assert!(body["messages"][1]["content"][0]["text"].as_str().unwrap().contains("write the description in English"));
                         s.vision_calls.fetch_add(1, Ordering::SeqCst);
                         tokio::time::sleep(std::time::Duration::from_millis(s.vision_delay.load(Ordering::SeqCst) as u64)).await;
                         if s.fail_vision.load(Ordering::SeqCst) { return ([("content-type", "text/event-stream")], Body::from("{}")); }
                         assert!(body["messages"][1]["content"].to_string().contains("data:image/jpeg;base64,"));
-                        return ([("content-type", "text/event-stream")], Body::from(json!({"choices":[{"message":{"content":json!({"name":"自动识别的抱抱","description":"A small animal opens its arms for a hug, offering comfort and companionship."}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":40,"total_tokens":1040}}).to_string()));
+                        let description = s.vision_descriptions.lock().await.pop_front().unwrap_or_else(|| "A small animal opens its arms for a hug, offering comfort and companionship.".into());
+                        return ([("content-type", "text/event-stream")], Body::from(json!({"choices":[{"message":{"content":json!({"name":"自动识别的抱抱","description":description}).to_string()},"finish_reason":"stop"}],"usage":{"prompt_tokens":1000,"completion_tokens":40,"total_tokens":1040}}).to_string()));
                     }
                     s.requests.lock().await.push(body.clone());
                     let mut reply = s.reply.lock().await.clone();
@@ -622,6 +626,82 @@ async fn automatic_understanding_resumes_after_restart_and_can_retry_without_ove
         app.stickers.read().unwrap().stickers[0].analysis_status,
         "manual"
     );
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    server.abort();
+    upstream.abort();
+}
+
+#[tokio::test]
+async fn oversized_descriptions_retry_once_without_truncation_and_count_each_physical_request() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (fake, base, server) = fixture().await;
+    let (services, upstream) = common::fake_services().await;
+    let (stop, rx) = tokio::sync::watch::channel(false);
+    let app = App::new(config(&temp, &base, &services), rx).await.unwrap();
+    let router = api::router(app.clone());
+    let description = "A small animal waves hello; use for friendly greetings.";
+    fake.vision_descriptions
+        .lock()
+        .await
+        .extend(["Too long. ".repeat(30), description.into()]);
+    let (status, wire) = request(&router, "POST", "/v1/stickers?enabled=true", "gif".into()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let sticker = serde_json::from_str::<Value>(&wire).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let worker = tokio::spawn(mneme::stickers::worker(app.clone()));
+    wait_for(
+        &app,
+        "SELECT EXISTS(SELECT 1 FROM stickers WHERE analysis_status='complete')",
+    )
+    .await;
+    assert_eq!(fake.vision_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        sqlx::query_scalar::<_, String>("SELECT description FROM stickers")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap(),
+        description
+    );
+    fake.vision_descriptions
+        .lock()
+        .await
+        .extend(["Still too long. ".repeat(20), "Still too long. ".repeat(20)]);
+    assert_eq!(
+        call(
+            &router,
+            "POST",
+            &format!("/v1/stickers/{sticker}/analyze"),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    wait_for(
+        &app,
+        "SELECT EXISTS(SELECT 1 FROM stickers WHERE analysis_status='failed')",
+    )
+    .await;
+    assert_eq!(
+        fake.vision_calls.load(Ordering::SeqCst),
+        4,
+        "exactly one retry per analysis"
+    );
+    let (saved, error): (String, String) =
+        sqlx::query_as("SELECT description,analysis_error FROM stickers")
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        saved, description,
+        "failed reanalysis must preserve the old description"
+    );
+    assert_eq!(error, "invalid_image_description");
+    let (requests, total): (i64, i64) = sqlx::query_as("SELECT COUNT(*),SUM(json_extract(usage,'$.total_tokens')) FROM model_requests WHERE purpose='sticker'").fetch_one(&app.store.pool).await.unwrap();
+    assert_eq!((requests, total), (4, 4160));
     stop.send(true).unwrap();
     worker.await.unwrap();
     server.abort();

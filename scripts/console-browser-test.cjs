@@ -15,6 +15,11 @@ const savedCalls = ['search', 'read'].map((action, index) => ({
   result: { url: 'https://example.org/source', title: '已读取的来源 <img src=x onerror="window.__tool_xss=1">', text: '这是用于检查工具记录布局的已保存结果。', untrusted: true },
 }));
 const toolHistory = context => context.route('**/v1/console/tools/calls', route => route.fulfill({ json: { calls: savedCalls } }));
+const expandSetting = async (page, key) => {
+  const panel = page.locator(`[data-setting="${key}"]`);
+  await panel.locator(':scope > summary').waitFor();
+  if (!await panel.evaluate(el => el.open)) await panel.locator(':scope > summary').click();
+};
 const output = path.resolve('artifacts');
 fs.mkdirSync(output, { recursive: true });
 
@@ -312,6 +317,7 @@ fs.mkdirSync(output, { recursive: true });
     await mobile.screenshot({ path: path.join(output, 'console-mobile-tools.png'), fullPage: true });
     await mobile.locator('#menu-toggle').click();
     await mobile.getByRole('link', { name: 'Agent', exact: true }).click();
+    await expandSetting(mobile, 'persona');
     await mobile.locator('#persona-name').waitFor();
     const personaName = '小满 <img src=x onerror="window.__xss=1">';
     const outputFormat = '先给结论，再分段说明，不使用 Markdown。\n字面文本 </textarea><img src=x onerror="window.__format_xss=1">';
@@ -322,6 +328,7 @@ fs.mkdirSync(output, { recursive: true });
     await mobile.getByRole('button', { name: '保存性格' }).click();
     assert.equal((await savedPersona).status(), 200);
     await mobile.reload();
+    await expandSetting(mobile, 'persona');
     await mobile.locator('#persona-name').waitFor();
     assert.equal(await mobile.locator('#persona-name').inputValue(), personaName);
     assert.equal(await mobile.locator('#persona-output_format').inputValue(), outputFormat);
@@ -332,6 +339,7 @@ fs.mkdirSync(output, { recursive: true });
     await mobile.screenshot({ path: path.join(output, 'console-mobile-settings.png'), fullPage: true });
     await page.getByRole('link', { name: 'Agent', exact: true }).click();
     await page.reload();
+    await expandSetting(page, 'persona');
     await page.locator('#persona-name').waitFor();
     assert.equal(await page.locator('#persona-name').inputValue(), personaName);
     assert.equal(await page.locator('#persona-output_format').inputValue(), outputFormat);
@@ -356,12 +364,14 @@ fs.mkdirSync(output, { recursive: true });
     assert.equal(await mobile.evaluate(() => localStorage.length + sessionStorage.length), 0);
     await mobile.locator('#menu-toggle').click();
     await mobile.getByRole('link', { name: 'Agent', exact: true }).click();
+    await expandSetting(mobile, 'reset');
     await mobile.getByRole('button', { name: '重置 Agent', exact: true }).click();
     await mobile.getByRole('heading', { name: '确认重新开始？' }).waitFor();
     await mobile.screenshot({ path: path.join(output, 'console-mobile-reset.png'), fullPage: true });
     await mobile.locator('#confirm').getByRole('button', { name: '取消', exact: true }).click();
     const beforeReset = await mobileContext.request.get(`${BASE}/v1/console/stats`, { headers: { Authorization: `Bearer ${TOKEN}` } });
     assert((await beforeReset.json()).total > 0, 'cancel must preserve memories');
+    await expandSetting(mobile, 'reset');
     await mobile.getByRole('button', { name: '重置 Agent', exact: true }).click();
     await mobile.locator('[name=confirmation]').fill('RESET');
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -371,6 +381,7 @@ fs.mkdirSync(output, { recursive: true });
       await mobile.waitForTimeout(250);
     }
     await mobile.locator('#confirm').waitFor({ state: 'hidden' });
+    await expandSetting(mobile, 'persona');
     await mobile.locator('#persona-name').waitFor();
     const afterReset = await mobileContext.request.get(`${BASE}/v1/console/stats`, { headers: { Authorization: `Bearer ${TOKEN}` } });
     assert.equal((await afterReset.json()).total, 0);
@@ -380,6 +391,7 @@ fs.mkdirSync(output, { recursive: true });
     await page.reload();
     await page.getByRole('heading', { name: '进入你的记忆空间' }).waitFor();
     await mobile.reload();
+    await expandSetting(mobile, 'persona');
     await mobile.locator('#persona-name').waitFor();
     await mobile.getByRole('button', { name: '填入配置文件默认值', exact: true }).click();
     assert.equal(await mobile.locator('#persona-output_format').inputValue(), '');

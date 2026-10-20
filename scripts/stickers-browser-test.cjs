@@ -11,7 +11,19 @@ const sharp = require('../services/tools/node_modules/sharp');
     page.on('pageerror', error => errors.push(error.message));
     await page.goto('http://127.0.0.1:18080/console/#agent');
     await page.locator('#password').fill('console-fixture-password'); await page.getByRole('button', { name: '解锁控制台' }).click();
+    await page.locator('#sticker-panel > summary').waitFor();
+    assert.equal(await page.locator('.settings-disclosure').count(), 5);
+    assert.equal(await page.locator('.settings-disclosure[open]').count(), 0);
+    await page.locator('#sticker-panel > summary').focus(); await page.keyboard.press('Enter');
     await page.locator('#add-sticker').waitFor();
+    const persona = page.locator('[data-setting=persona]');
+    await persona.locator('summary').click();
+    await page.locator('#persona-style').fill('未保存的性格草稿');
+    await persona.locator('summary').click();
+    assert.equal(await page.locator('#persona-style').isVisible(), false);
+    await persona.locator('summary').focus(); await page.keyboard.press('Space');
+    assert.equal(await page.locator('#persona-style').inputValue(), '未保存的性格草稿');
+    await persona.locator('summary').click();
     await page.getByRole('button', { name: '添加表情包', exact: true }).click();
     const png = await sharp({ create: { width: 160, height: 160, channels: 4, background: '#d9e7ca' } }).png().toBuffer();
     const gif = await sharp(Buffer.from([255, 0, 0, 255, 0, 255, 0, 255]), { raw: { width: 1, height: 2, channels: 4, pageHeight: 1 } }).gif({ delay: [100, 200] }).toBuffer();
@@ -20,7 +32,10 @@ const sharp = require('../services/tools/node_modules/sharp');
     await page.getByRole('button', { name: '上传表情包', exact: true }).click();
     await page.locator('#editor').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => document.querySelectorAll('.sticker-card').length === 2);
+    await page.locator('#sticker-panel > summary').click();
     await page.waitForFunction(() => document.querySelectorAll('[data-sticker-analyze]:disabled').length === 0 && [...document.querySelectorAll('.sticker-card>p')].every(el => el.textContent.includes('celebrating')));
+    assert.equal(await page.locator('#sticker-panel').evaluate(el => el.open), false, 'analysis polling must not reopen the panel');
+    await page.locator('#sticker-panel > summary').click();
     await page.locator('#sticker-search').fill('happy'); assert.equal(await page.locator('.sticker-card').count(), 2);
     await page.locator('[data-sticker-edit]').first().click();
     await page.locator('[name=sticker_name]').fill('<b>抱抱</b>');
@@ -28,23 +43,42 @@ const sharp = require('../services/tools/node_modules/sharp');
     await page.getByRole('button', { name: '保存表情包', exact: true }).click(); await page.locator('#editor').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => document.querySelector('.sticker-caption strong')?.textContent === '<b>抱抱</b>' || [...document.querySelectorAll('.sticker-caption strong')].some(el => el.textContent === '<b>抱抱</b>'));
     assert.equal(await page.locator('.sticker-caption b').count(), 0);
-    await page.reload(); await page.locator('#sticker-grid img').first().waitFor();
+    await page.reload(); await page.locator('#sticker-panel > summary').click(); await page.locator('#sticker-grid img').first().waitFor();
     await page.waitForFunction(() => [...document.querySelectorAll('#sticker-grid img')].every(img => img.complete && img.naturalWidth > 0));
     fs.mkdirSync('artifacts', { recursive: true }); await page.screenshot({ path: 'artifacts/console-stickers-desktop.png', fullPage: true });
     await page.getByRole('link', { name: '对话', exact: true }).click(); await page.locator('#chat-message').fill('__sticker_chat__'); await page.locator('#send-chat').click();
     await page.locator('.chat-sticker').waitFor(); await page.waitForFunction(() => document.querySelector('.chat-sticker')?.naturalWidth > 0);
     assert(!(await page.locator('#chat-messages').innerText()).includes('[[sticker:'));
     await page.reload(); await page.locator('.chat-sticker').waitFor(); await page.screenshot({ path: 'artifacts/console-sticker-chat.png', fullPage: true });
-    await page.setViewportSize({ width: 390, height: 844 }); await page.goto('http://127.0.0.1:18080/console/#agent'); await page.locator('#sticker-grid').waitFor();
+    await page.setViewportSize({ width: 390, height: 844 }); await page.goto('http://127.0.0.1:18080/console/#agent'); await page.locator('#sticker-panel > summary').click(); await page.locator('#sticker-grid').waitFor();
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.screenshot({ path: 'artifacts/console-stickers-mobile.png', fullPage: true });
+    for (const key of ['persona', 'reset', 'qq', 'context']) {
+      const panel = page.locator(`[data-setting="${key}"]`);
+      await panel.locator(':scope > summary').click();
+      assert(await panel.evaluate(el => el.open));
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+      await panel.locator(':scope > summary').click();
+    }
+    await page.goto('http://127.0.0.1:18080/console/#chat'); await page.locator('#chat-form').waitFor();
+    await page.goto('http://127.0.0.1:18080/console/#agent'); await page.locator('#sticker-panel > summary').waitFor();
+    assert.equal(await page.locator('#sticker-panel').evaluate(el => el.open), true, 'navigation must retain the chosen fold state');
+    for (const width of [320, 768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const key of ['stickers', 'persona', 'reset', 'qq', 'context']) {
+        const panel = page.locator(`[data-setting="${key}"]`);
+        if (!await panel.evaluate(el => el.open)) await panel.locator(':scope > summary').click();
+      }
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, `expanded settings overflow at ${width}px`);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
     const toggle = page.waitForResponse(response => response.url().endsWith('/v1/stickers/settings') && response.request().method() === 'PUT');
     await page.locator('#stickers-enabled').uncheck(); assert.equal((await toggle).status(), 200);
-    await page.reload(); await page.locator('#stickers-enabled').waitFor(); assert.equal(await page.locator('#stickers-enabled').isChecked(), false);
+    await page.reload(); await page.locator('#sticker-panel > summary').click(); await page.locator('#stickers-enabled').waitFor(); assert.equal(await page.locator('#stickers-enabled').isChecked(), false);
     const card = page.locator('.sticker-card').filter({ hasText: '<b>抱抱</b>' }); await card.locator('[data-sticker-delete]').click();
     await page.getByRole('button', { name: '确认删除', exact: true }).click(); await page.locator('#confirm').waitFor({ state: 'hidden' });
     await page.waitForFunction(() => document.querySelectorAll('.sticker-card').length === 1);
     assert.deepEqual(errors, []);
-    console.log('PASS: custom PNG/GIF batch upload without tags, automatic understanding, metadata correction, search, escaped names, persisted global switch, generated chat sticker, history reload, mobile layout and deletion.');
+    console.log('PASS: custom PNG/GIF batch upload without tags, automatic understanding, metadata correction, search, escaped names, persisted global switch, generated chat sticker, history reload, mobile layout, five keyboard-accessible collapsible settings, draft retention, background polling while collapsed and deletion.');
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exit(1); });

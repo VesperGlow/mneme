@@ -69,6 +69,12 @@ pub fn describe(error: &anyhow::Error) -> Failure {
                 "upstream stream error" => "stream_api_error",
                 "unsupported finish reason" => "unsupported_finish_reason",
                 "incomplete extraction response" => "incomplete_extraction",
+                "incomplete image description" => "incomplete_image_description",
+                "missing image description" | "empty image description" => {
+                    "empty_image_description"
+                }
+                "invalid image description" => "invalid_image_description",
+                "image description timeout" => "timeout",
                 "QQ token API error" => "token_api_error",
                 "QQ token missing" => "token_missing",
                 "QQ token expiry invalid" => "token_expiry_invalid",
