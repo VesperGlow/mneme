@@ -75,6 +75,7 @@ struct UsageFields {
     tool_input: u64,
     anthropic: bool,
     gemini: bool,
+    reasoning_separate: bool,
 }
 
 fn number(value: &Value, paths: &[&str]) -> Option<u64> {
@@ -175,8 +176,24 @@ impl TokenUsage {
                 n
             }
         });
+        // Some compatible APIs report visible completion tokens separately.
+        // Infer that convention only when an explicit total proves it, rather
+        // than adding reasoning twice for providers whose output includes it.
+        if let (Some(input), Some(output), Some(reasoning), Some(total)) = (
+            self.input_tokens,
+            self.raw.output,
+            self.reasoning_tokens,
+            number(value, &["/total_tokens", "/totalTokenCount"]),
+        ) && reasoning > 0
+            && input
+                .checked_add(output)
+                .and_then(|n| n.checked_add(reasoning))
+                == Some(total)
+        {
+            self.raw.reasoning_separate = true;
+        }
         self.output_tokens = self.raw.output.map(|n| {
-            if self.raw.gemini {
+            if self.raw.gemini || self.raw.reasoning_separate {
                 n.saturating_add(self.reasoning_tokens.unwrap_or(0))
             } else {
                 n
@@ -219,6 +236,8 @@ pub struct ContextTokens {
     pub system: usize,
     pub summary: usize,
     pub memory: usize,
+    #[serde(default)]
+    pub state: usize,
     pub history: usize,
     pub current: usize,
     pub tools: usize,
@@ -229,6 +248,7 @@ impl ContextTokens {
         self.system
             + self.summary
             + self.memory
+            + self.state
             + self.history
             + self.current
             + self.tools
@@ -268,6 +288,12 @@ impl ContextTokens {
             } else if text.starts_with("<untrusted_long_term_memory>") {
                 result.memory += size;
                 block = "memory";
+            } else if text.starts_with("<untrusted_interaction_state>")
+                || text.starts_with("<untrusted_situation>")
+                || text.starts_with("<untrusted_history_metadata>")
+            {
+                result.state += size;
+                block = "";
             } else if message["role"] == "assistant" && !block.is_empty() {
                 if block == "summary" {
                     result.summary += size;
@@ -568,6 +594,29 @@ mod tests {
         assert_eq!(usage.total_tokens, Some(140));
         assert_eq!(usage.cached_input_tokens, Some(60));
         assert!(!usage.update(&json!({"usage":{"prompt_tokens":null}})));
+    }
+
+    #[test]
+    fn explicit_totals_identify_separate_reasoning_without_double_counting_snapshots() {
+        let mut usage = TokenUsage::default();
+        let snapshot = json!({"usage":{"prompt_tokens":2589,"completion_tokens":62,
+            "completion_tokens_details":{"reasoning_tokens":840},"total_tokens":3491}});
+        usage.update(&snapshot);
+        assert_eq!(usage.output_tokens, Some(902));
+        assert_eq!(usage.reasoning_tokens, Some(840));
+        assert_eq!(usage.total_tokens, Some(3491));
+        assert!(!usage.update(&snapshot));
+        usage.update(&json!({"usage":{"completion_tokens":70}}));
+        assert_eq!(usage.output_tokens, Some(910));
+        assert_eq!(usage.total_tokens, Some(3499));
+        usage.update(&json!({"usage":{"completion_tokens_details":{"reasoning_tokens":850}}}));
+        assert_eq!(usage.output_tokens, Some(920));
+        assert_eq!(usage.total_tokens, Some(3509));
+        let mut ambiguous = TokenUsage::default();
+        ambiguous.update(&json!({"usage":{"prompt_tokens":100,"completion_tokens":40,
+            "completion_tokens_details":{"reasoning_tokens":30},"total_tokens":999}}));
+        assert_eq!(ambiguous.output_tokens, Some(40));
+        assert_eq!(ambiguous.total_tokens, Some(999));
     }
     #[test]
     fn estimates_remain_separate_and_mixed_totals_use_actual_components() {

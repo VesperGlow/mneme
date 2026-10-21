@@ -90,8 +90,8 @@ pub struct LlmConfig {
     /// Enable only for providers supporting response_format json_schema.
     #[serde(default)]
     pub json_schema: bool,
-    /// Explicit provider options for persona compile/reflection/validation only.
-    /// Empty by default; the Agent cannot edit connection or request policy.
+    /// Legacy compile/reflection settings accepted for old configuration files.
+    /// These tasks have been retired; this field is never sent to the provider.
     #[serde(default)]
     pub persona_request_options: serde_json::Map<String, serde_json::Value>,
     #[serde(default = "default_context_tokens")]

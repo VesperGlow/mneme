@@ -106,7 +106,7 @@ API 把图片作为 `image_url` 的 data URL 发给当前多模态 LLM。工具�
 | GET | /v1/console/tools/calls | 最近 100 条记录，可按 session_id 筛选 |
 | POST | /v1/console/tools/close | `{"session_id":"UUID"}`，释放浏览器会话 |
 
-SSE 保留 meta/delta/done/error，新增 tool 事件，包含 id、name、action、status、elapsed_ms、error 和有界结果。工具日志记录 SQLite；密码输入和普通 type 的实际文本不进入工具日志，进程日志只含动作、状态、耗时和固定错误码。原始图片数据不写入日志。
+SSE 保留 meta/delta/done/error，tool 事件包含 id、name、action、status、elapsed_ms、error 和有界结果。工具调用前的正文是临时内容：收到 `reply_reset` 时客户端清空本轮正文，可将 `tool_progress` 单独作为进度展示。工具结束后的最后答复才保存到对话历史；限额、无效协议或断流后的文本收尾也先撤回临时片段。工具日志记录 SQLite；密码输入和普通 type 的实际文本不进入工具日志，进程日志只含动作、状态、耗时和固定错误码。原始图片数据不写入日志。
 
 ## 共享 Pod 的边界与防护
 
@@ -143,3 +143,5 @@ node scripts/smoke-tools.mjs
 最后一项使用真实公网浏览器和本地确定性 LLM 协议替身，不能据此声称某个真实提供商的工具选择或视觉质量已验收。搜索默认使用确定性 Tavily 协议替身；设置 `MNEME_QA_TAVILY_API_KEY` 可显式使用真实 Tavily key 验证公网搜索。普通网页浏览仍依赖公网。验证产物位于忽略的 artifacts/tools-validation.json、tools-browser-live.jpg、tools-console-desktop.png、tools-console-chat.png 和 tools-console-mobile.png。测试默认不使用生产配置、密钥或数据库。
 
 实现依据：[Playwright CDP](https://playwright.dev/docs/api/class-browsertype#browser-type-connect-over-cdp)、[Chromium 沙箱容器配置](https://playwright.dev/docs/docker)、[Mozilla Readability](https://github.com/mozilla/readability)、[Chat Completions 工具调用](https://developers.openai.com/api/docs/guides/function-calling)。
+
+人格只读取用户保存的角色背景；旧 `self_prompt` 反思工具已移除，工具权限、执行审计和来源约束保留。

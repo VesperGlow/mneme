@@ -504,7 +504,12 @@ async fn token_budget_preserves_more_than_a_hundred_thousand_english_characters(
     assert!(expected < 30_000);
     let router = api::router(app);
     let status = data(&router, "/v1/conversation").await;
-    assert_eq!(status["context"]["distribution"]["history"], expected);
+    // Source timestamps travel with user history; original bodies still fit.
+    let reported = status["context"]["distribution"]["history"]
+        .as_u64()
+        .unwrap();
+    assert!(reported >= expected as u64 && reported < (expected + history.len() * 64) as u64);
+    assert!(status["context"]["distribution"]["state"].as_u64().unwrap() > 0);
     assert!(status["context"]["context_used_tokens"].as_u64().unwrap() > expected as u64);
     assert_eq!(status["context"]["tokens_estimated"], true);
     let wire = chat(&router, "Continue our conversation.").await;

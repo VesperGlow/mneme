@@ -141,7 +141,6 @@ pub struct Llm {
     context_tokens: usize,
     tokens: crate::tokens::Counter,
     json_schema: bool,
-    persona_request_options: serde_json::Map<String, Value>,
     sticker_markers: std::sync::Arc<Vec<String>>,
     store: Option<crate::store::Store>,
     scope: Option<(Option<String>, String)>,
@@ -171,7 +170,6 @@ impl Llm {
                 config.llm.tokenizer_path.as_deref(),
             )?,
             json_schema: config.llm.json_schema,
-            persona_request_options: config.llm.persona_request_options.clone(),
             sticker_markers: Default::default(),
             store: None,
             scope: None,
@@ -198,18 +196,6 @@ impl Llm {
         let mut scoped = self.clone();
         scoped.scope = Some((None, purpose.into()));
         scoped
-    }
-    fn apply_persona_options(&self, body: &mut Value) {
-        if self.scope.as_ref().is_some_and(|(_, purpose)| {
-            matches!(
-                purpose.as_str(),
-                "persona_compile" | "persona_reflect" | "persona_validate"
-            )
-        }) {
-            for (key, value) in &self.persona_request_options {
-                body[key] = value.clone();
-            }
-        }
     }
     async fn start_request(&self, context: &crate::usage::ContextTokens) -> Result<String> {
         if let Some(store) = &self.store {
@@ -278,7 +264,7 @@ impl Llm {
             .saturating_sub(context.total())
             .min(4096);
         ensure!(max_tokens >= 768, "image request exceeds token budget");
-        let mut body = json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,"messages":messages});
+        let mut body = json!({"model":self.model,"temperature":0,"top_p":1.0,"max_tokens":max_tokens,"stream":false,"messages":messages});
         if reqwest::Url::parse(&self.url)
             .ok()
             .and_then(|url| url.host_str().map(str::to_owned))
@@ -302,9 +288,8 @@ impl Llm {
                 response["choices"][0]["finish_reason"] == "stop",
                 "incomplete image description"
             );
-            let content = response["choices"][0]["message"]["content"]
-                .as_str()
-                .ok_or_else(|| anyhow::anyhow!("missing image description"))?;
+            let content = text_chunks(&response["choices"][0]["message"]["content"]).concat();
+            ensure!(!content.is_empty(), "missing image description");
             let text = content
                 .trim()
                 .strip_prefix("```json")
@@ -364,9 +349,10 @@ impl Llm {
                 <= self.context_tokens,
             "JSON request exceeds token budget"
         );
-        let mut body = json!({"model":self.model,"temperature":0,"max_tokens":max_tokens,"stream":false,
+        // Greedy requests must disable nucleus filtering explicitly: some
+        // compatible providers otherwise apply a non-unit default top_p.
+        let mut body = json!({"model":self.model,"temperature":0,"top_p":1.0,"max_tokens":max_tokens,"stream":false,
             "messages":[{"role":"system","content":system},{"role":"user","content":input.to_string()}]});
-        self.apply_persona_options(&mut body);
         if self.json_schema
             && let Some(schema) = schema
         {
@@ -377,9 +363,8 @@ impl Llm {
             value["choices"][0]["finish_reason"] == "stop",
             "incomplete extraction response"
         );
-        let content = value["choices"][0]["message"]["content"]
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("missing completion"))?;
+        let content = text_chunks(&value["choices"][0]["message"]["content"]).concat();
+        ensure!(!content.is_empty(), "missing completion");
         // A number of compatible providers wrap otherwise valid JSON in a code fence.
         let text = content
             .trim()
@@ -652,7 +637,12 @@ impl Llm {
                     let tail = guard.finish();
                     if !tail.is_empty() {
                         content.push_str(&tail);
-                        emit(output, "delta", json!({"content":media_guard.push(&tail)}))?;
+                        let visible = tail;
+                        emit(
+                            output,
+                            "delta",
+                            json!({"content":media_guard.push(&visible)}),
+                        )?;
                     }
                 }
                 let tail = media_guard.finish();
@@ -662,7 +652,7 @@ impl Llm {
                 ensure!(!finish.is_empty(), "unfinished completion");
                 if calls.is_empty() {
                     ensure!(
-                        (!content.trim().is_empty() || guard.suppressed)
+                        (!content.trim().is_empty() || guard.suppressed || finish == "stop")
                             && matches!(finish.as_str(), "stop" | "length"),
                         "empty or unfinished completion"
                     );
@@ -682,6 +672,16 @@ impl Llm {
                                 && call.function.name.len() <= 64,
                             "invalid tool call"
                         );
+                    }
+                    // Tool preambles are provisional. Clients clear them before
+                    // the next round; only a final answer enters durable history.
+                    emit(output, "reply_reset", json!({"request_id":id}))?;
+                    if !content.trim().is_empty() {
+                        emit(
+                            output,
+                            "tool_progress",
+                            json!({"request_id":id,"content":content}),
+                        )?;
                     }
                 }
                 return Ok(Completion {
@@ -713,7 +713,7 @@ impl Llm {
                 );
                 finish = reason.into();
             }
-            if let Some(delta) = chunk["choices"][0]["delta"]["content"].as_str() {
+            for delta in text_chunks(&chunk["choices"][0]["delta"]["content"]) {
                 observed_output.push_str(delta);
                 ensure!(
                     content.len() + delta.len() <= 128_000,
@@ -786,13 +786,26 @@ impl Llm {
 
 // Compatible providers expose plain reasoning under different names. Only render
 // returned text/summary blocks; signatures and encrypted blocks are not display text.
+fn text_chunks(content: &Value) -> Vec<&str> {
+    if let Some(text) = content.as_str() {
+        return vec![text];
+    }
+    content
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|part| part["type"] == "text")
+        .filter_map(|part| part["text"].as_str())
+        .collect()
+}
+
 fn reasoning_deltas(delta: &Value) -> Vec<&str> {
     for key in ["reasoning_content", "reasoning", "thinking"] {
         if let Some(text) = delta[key].as_str() {
             return vec![text];
         }
     }
-    delta["reasoning_details"]
+    let mut text: Vec<_> = delta["reasoning_details"]
         .as_array()
         .map(|details| {
             details
@@ -804,7 +817,15 @@ fn reasoning_deltas(delta: &Value) -> Vec<&str> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    // Mistral can close a thinking block and begin the answer in one delta.
+    // Nested thinking text remains separate from the visible answer.
+    for part in delta["content"].as_array().into_iter().flatten() {
+        if part["type"] == "thinking" {
+            text.extend(text_chunks(&part["thinking"]));
+        }
+    }
+    text
 }
 
 /// A disconnected client does not cancel a durable turn. A slow connected client is bounded.
@@ -829,65 +850,6 @@ pub async fn bounded_body(response: reqwest::Response, limit: usize) -> Result<V
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn persona_reasoning_controls_are_explicit_scoped_and_provider_agnostic() {
-        use super::*;
-        let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
-        config.api_token = "persona-options-token-01234567890123456789".into();
-        config.llm_key = "fixture".into();
-        config.neo4j_password = "fixture".into();
-        config
-            .llm
-            .persona_request_options
-            .insert("thinking".into(), json!({"type":"disabled"}));
-        assert!(config.validate().is_ok());
-        for base in [
-            "http://127.0.0.1:9999/v1",
-            "https://api.deepseek.com/v1",
-            "https://other-provider.example/v1",
-        ] {
-            config.llm.base_url = base.into();
-            let llm = Llm::new(&config).unwrap();
-            for purpose in [
-                "persona_compile",
-                "persona_reflect",
-                "persona_validate",
-                "memory",
-                "compression",
-                "persona_preview",
-                "chat",
-            ] {
-                let mut body = json!({"model":"retained","messages":[],"max_tokens":100});
-                llm.for_purpose(purpose).apply_persona_options(&mut body);
-                assert_eq!(
-                    body.get("thinking").is_some(),
-                    matches!(
-                        purpose,
-                        "persona_compile" | "persona_reflect" | "persona_validate"
-                    )
-                );
-                assert_eq!(body["max_tokens"], 100);
-                assert_eq!(body["model"], "retained");
-            }
-        }
-        for forbidden in [
-            "messages",
-            "model",
-            "max_tokens",
-            "tools",
-            "tool_choice",
-            "response_format",
-            "stream",
-            "safety_settings",
-        ] {
-            config
-                .llm
-                .persona_request_options
-                .insert(forbidden.into(), json!("invalid"));
-            assert!(config.validate().is_err());
-            config.llm.persona_request_options.remove(forbidden);
-        }
-    }
     #[test]
     fn sticker_requests_reserve_output_and_only_disable_thinking_for_official_deepseek() {
         use super::*;
@@ -961,6 +923,88 @@ mod tests {
             vec!["实际摘要", "实际内容"]
         );
         assert!(reasoning_deltas(&json!({"content":"ordinary answer"})).is_empty());
+        let mixed = json!({"content":[
+            {"type":"thinking","thinking":[{"type":"text","text":"思考片段"},{"type":"signature","text":"opaque"}],"closed":true},
+            {"type":"text","text":"答案开头"}, {"type":"text","text":"接续"},
+            {"type":"image_url","text":"not text"}
+        ]});
+        assert_eq!(text_chunks(&mixed["content"]).concat(), "答案开头接续");
+        assert_eq!(reasoning_deltas(&mixed), vec!["思考片段"]);
+    }
+
+    #[tokio::test]
+    async fn typed_content_preserves_transition_text_and_separates_reasoning_over_http() {
+        use super::*;
+        use axum::{
+            Json, Router,
+            response::{IntoResponse, Sse},
+            routing::post,
+        };
+        let router = Router::new().route("/chat/completions", post(|Json(body):Json<Value>| async move {
+            if body["stream"] != true {
+                assert_eq!(body["temperature"], 0);
+                assert_eq!(body["top_p"], 1.0);
+                return Json(json!({"choices":[{"message":{"content":[
+                    {"type":"thinking","thinking":[{"type":"text","text":"not JSON"}]},
+                    {"type":"text","text":"{\"ok\":true}"}
+                ]},"finish_reason":"stop"}]})).into_response();
+            }
+            let chunks = [
+                json!({"choices":[{"delta":{"content":[{"type":"thinking","thinking":[{"type":"text","text":"独立思考"}],"closed":false}]}}]}),
+                json!({"choices":[{"delta":{"content":[{"type":"thinking","thinking":[],"closed":true},{"type":"text","text":"正"}]}}]}),
+                json!({"choices":[{"delta":{"content":"文"}}]}),
+                json!({"choices":[{"delta":{"content":""},"finish_reason":"stop"}]}),
+            ];
+            let wire = chunks.iter().map(|v|format!("data: {v}\n\n")).collect::<String>() + "data: [DONE]\n\n";
+            ([("content-type","text/event-stream")],wire).into_response()
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut config: Config = toml::from_str(include_str!("../config/default.toml")).unwrap();
+        config.llm.base_url = format!("http://{}", listener.local_addr().unwrap());
+        config.llm.model = "typed-content-fixture".into();
+        config.llm_key = "fixture".into();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let llm = Llm::new(&config).unwrap();
+        assert_eq!(
+            llm.complete_json("JSON", json!({})).await.unwrap(),
+            json!({"ok":true})
+        );
+        let (tx, rx) = mpsc::channel(128);
+        let raw = llm
+            .stream(
+                &[ChatMessage {
+                    role: "user".into(),
+                    content: "测试".into(),
+                }],
+                &tx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(raw, "正文");
+        drop(tx);
+        let stream =
+            tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, std::convert::Infallible>);
+        let bytes = axum::body::to_bytes(Sse::new(stream).into_response().into_body(), 65536)
+            .await
+            .unwrap();
+        let wire = std::str::from_utf8(&bytes).unwrap();
+        let mut visible = String::new();
+        let mut reasoning = String::new();
+        for frame in wire.split("\n\n") {
+            let event = frame.lines().find_map(|line| line.strip_prefix("event: "));
+            if let Some(data) = frame.lines().find_map(|line| line.strip_prefix("data: ")) {
+                let value: Value = serde_json::from_str(data).unwrap();
+                if event == Some("delta") {
+                    visible.push_str(value["content"].as_str().unwrap());
+                }
+                if event == Some("reasoning") {
+                    reasoning.push_str(value["content"].as_str().unwrap());
+                }
+            }
+        }
+        assert_eq!(visible, "正文");
+        assert_eq!(reasoning, "独立思考");
+        server.abort();
     }
 
     #[tokio::test]

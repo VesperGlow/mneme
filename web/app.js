@@ -51,7 +51,7 @@
   }
   const send = (path, data, method = 'POST') => api(path, { method, body: JSON.stringify(data) });
   function errorText(error) {
-    const personaErrors = { evolution_changed: '进化版本已经变化，请刷新后重试。', invalid_evolution_lock: '锁定项已变化，请刷新后重试。', invalid_evolution_evidence: '证据必须来自真实已完成用户对话。', evolution_paused_busy_or_changed: '进化已暂停、正在运行或配置已变化，请刷新后重试。', evolution_version_missing: '找不到该进化版本。', persona_derivation_changed: '人格或画像已发生变化，请刷新后核对最新版本。', persona_generation_running: '画像正在生成，请等待完成。', invalid_persona_derivation: '请检查画像：每项倾向最多 300 字、依据最多 150 字，参考标签最多 3 个。', persona_derivation_budget: '画像超过当前上下文预算，请缩短后保存。', invalid_preview_message: '请输入 1–4000 字的示例消息。', persona_preview_failed: '预览未完成，请检查模型连接后重试。', persona_version_missing: '该画像版本已不在最近五版记录中。' };
+    const personaErrors = { interaction_turn_running: '当前正在回复，请等待本轮完成后清除临时状态。', persona_changed: '角色背景已变化，请刷新后重试。', persona_layer_retired: '旧版人格层已停用，记录仍可在归档中查看。', invalid_preview_message: '请输入 1–4000 字的示例消息。', persona_preview_failed: '预览未完成，请检查模型连接后重试。' };
     if (personaErrors[error.code]) return personaErrors[error.code];
     const stickerErrors = { invalid_sticker: '名字须为 1–40 字，使用场景最多 120 字。', invalid_sticker_image: '图片未能处理，请检查格式、动图帧数与工具服务；处理后的图片须小于 2 MiB。', sticker_catalog_full: '表情库已达到数量或上下文容量上限，请精简使用场景或删除部分表情。', sticker_storage_full: '表情图片存储已达到 64 MiB 上限。', sticker_not_found: '表情包已被删除，请刷新列表。', tools_disabled: '请先启用工具服务，再上传表情包。' };
     if (stickerErrors[error.code]) return stickerErrors[error.code];
@@ -270,7 +270,7 @@
   };
   const tokenValue = (value, estimated = false) => value == null || !Number.isFinite(value) || value < 0 ? '未提供' : `${estimated || !Number.isSafeInteger(value) ? '≈ ' : ''}${fmt(value)}`;
   const tokenLabels = { input_tokens: '输入', output_tokens: '输出（含推理）', reasoning_tokens: '其中推理', total_tokens: '总消耗', cached_input_tokens: '其中缓存命中', cache_creation_input_tokens: '其中缓存写入' };
-  const contextLabels = { system: '系统提示词', history: '历史消息', summary: '压缩摘要', memory: '长期记忆', current: '本轮消息', tools: '工具与图片', overhead: '消息封装' };
+  const contextLabels = { system: '系统提示词', history: '历史消息', summary: '压缩摘要', memory: '长期记忆', state: '情境与临时状态', current: '本轮消息', tools: '工具与图片', overhead: '消息封装' };
   const tokenMetric = (usage, key) => {
     const cumulative = !!usage?.reported;
     const reported = cumulative ? (usage.reported[key] || 0) : Number(usage?.[key] != null);
@@ -506,6 +506,7 @@
               if (name === 'usage' || name === 'context') usageDirty = true;
               if (name === 'reasoning') $('#chat-progress').textContent = '正在思考…';
             }
+            if (name === 'reply_reset') { answer = ''; answerDirty = true; $('#chat-progress').textContent = '正在继续…'; }
             if (name === 'delta') { answer += data.content; answerDirty = true; $('#chat-progress').textContent = '正在回复…'; }
             if (name === 'tool') { dirtyTools.set(data.id, data); $('#chat-progress').textContent = data.status === 'running' ? `正在${toolLabels[data.action] || '执行工具'}…` : '正在继续思考…'; }
             if (name === 'error') $('#chat-progress').textContent = '本轮失败，临时输出未保存。';
@@ -679,133 +680,64 @@
       }
     };
   }
-  async function evolutionPanel(host, epoch, changed) {
-    let data, busy = false;
-    const path = '/v1/console/persona/evolution';
-    const areas = { communication: '交流习惯', preferences: '个人偏好', initiative: '主动性', emotion: '情绪表达', task: '任务处理', tools: '工具策略', memory: '记忆关注' };
-    const alive = () => epoch === state.epoch && host.isConnected;
-    const labels = { applied: '已应用', rejected: '未通过 · 保留旧版', no_change: '无需修改', needs_owner: '核心变更建议 · 未应用', conflict: '配置变化 · 未应用', rollback: '用户回退', owner_control: '用户调整' };
-    const render = () => {
-      if (!alive()) return;
-      const s = data.state;
-      host.innerHTML = `<details class="evolution-panel" open><summary><strong>自主进化</strong><span class="badge ${data.status === 'ready' ? 'green' : 'amber'}" id="evolution-status">${esc({ ready: '进化记忆已生效', empty: '尚无自我形成的习惯', stale: '人格已变更 · 进化记忆待复核' }[data.status])}</span></summary>
-        <p class="hint">只学习有真实互动依据的软行为倾向，不改核心人格、权限或事实。自动反思至少间隔一小时且积累八轮新对话；暂停只停止学习，现有有效习惯仍参与回复。版本 ${fmt(s.version)}${s.updated_at ? ` · ${date(s.updated_at, true)}` : ''} · 待评估线索 ${fmt(data.pending)}</p>
-        ${s.error ? `<p class="notice warn">${esc({ reflection_rejected: '上次反思未通过检查，旧版仍保留。', reflection_interrupted: '上次反思被重启中断，未完成版本没有生效。', evolution_cache_invalid: '进化缓存无法读取，当前停用该层；历史仍可查看。' }[s.error] || s.error)}</p>` : ''}
-        <form id="evolution-control"><label class="check-label"><input name="paused" type="checkbox"${s.paused ? ' checked' : ''}>暂停自主进化</label>
-          ${s.notes.map(n => `<div class="evolution-note"><div class="between"><strong>${esc(areas[n.area] || n.area)}</strong><label class="check-label"><input name="locked" type="checkbox" value="${esc(n.id)}"${n.locked ? ' checked' : ''}>锁定</label></div><p>${esc(n.text)}</p><details><summary>真实来源</summary>${n.evidence.map(e => `<p><q>${esc(e.quote)}</q><br><small>${esc(e.source_id)}</small></p>`).join('')}</details></div>`).join('') || '<p class="hint">有明确反馈时才反思，不要求每轮调整。</p>'}
-          <button class="btn" type="submit"${busy || s.running ? ' disabled' : ''}>保存进化设置</button></form>
-        <details class="evolution-reflection"><summary>选择真实反馈，反思一次</summary><p class="hint">使用已保存的人格，选择最多八条已完成用户消息。手动操作会跳过自动冷却；有修改时包含一次反思和一次独立验证调用。验证是模型审查与基础能力哨兵，不能保证自然度；预览不进入证据。</p><form id="evolution-reflect">${data.sources.map(m => `<label class="evolution-source check-label"><input type="checkbox" name="source" value="${esc(m.id)}"><span>${esc(m.content.slice(0, 320))}<small>${date(m.created_at, true)}</small></span></label>`).join('') || '<p class="hint">暂无真实对话，请先完成一次交流。</p>'}<button class="btn" type="submit"${busy || s.running || s.paused || !data.sources.length ? ' disabled' : ''}>反思并验证</button></form></details>
-        <div class="error-inline" id="evolution-error" role="alert"></div>${s.running || busy ? '<p class="hint" role="status">正在反思或验证，当前仍使用已生效版本…</p>' : ''}
-        <details class="evolution-history"><summary>修改历史、差异与验证（最近三十条）</summary>${data.history.map(r => `<details data-evolution-revision="${r.version}"><summary>版本 ${fmt(r.version)} · ${esc(labels[r.status] || r.status)} · ${date(r.at, true)}</summary><p>${esc(r.reason || '')}</p><details><summary>触发证据</summary><pre class="prewrap">${esc(JSON.stringify(r.evidence || [], null, 2))}</pre></details><div class="evolution-diff"><div><small>修改前</small><pre class="prewrap">${esc(JSON.stringify(r.before, null, 2))}</pre></div><div><small>修改后 / 候选</small><pre class="prewrap">${esc(JSON.stringify(r.proposed ?? r.after, null, 2))}</pre></div></div><details><summary>验证结果${r.validation?.passed === true ? ' · 通过' : r.validation?.skipped ? ' · 未运行 / 不适用' : ' · 未通过'}</summary><pre class="prewrap">${esc(JSON.stringify(r.validation, null, 2))}</pre></details><small>${esc(r.model || '')} · ${esc(r.base_hash || r.source_hash || '')}</small>${['applied', 'rollback', 'owner_control'].includes(r.status) ? `<button class="btn small" type="button" data-evolution-rollback="${r.version}">回退到此版</button>` : ''}</details>`).join('') || '<p class="hint">暂无记录。</p>'}</details>
-        <button class="btn small" type="button" data-evolution-rollback="0"${busy || s.running ? ' disabled' : ''}>清空进化层并记录回退</button></details>`;
-      const mutate = async (suffix, body, method = 'POST') => {
-        busy = true; const buttons = $$('button', host).map(b => [b, b.disabled]); buttons.forEach(([b]) => b.disabled = true);
-        try { data = await send(path + suffix, { expected_version: data.state.version, ...body }, method); await changed(); }
-        catch (error) { if (alive()) $('#evolution-error', host).textContent = errorText(error); return; }
-        finally { busy = false; if (alive()) buttons.forEach(([b, disabled]) => b.disabled = disabled); }
-        render();
-      };
-      $('#evolution-control', host).onsubmit = event => { event.preventDefault(); mutate('', { paused: event.currentTarget.elements.paused.checked, locked: $$('[name="locked"]:checked', host).map(n => n.value) }, 'PUT'); };
-      $('#evolution-reflect', host).onsubmit = event => {
-        event.preventDefault(); const ids = $$('[name="source"]:checked', host).map(n => n.value);
-        if (!ids.length || ids.length > 8) { $('#evolution-error', host).textContent = '请选择 1–8 条真实用户消息。'; return; }
-        mutate('/reflect', { source_ids: ids });
-      };
-      $$('[data-evolution-rollback]', host).forEach(b => b.onclick = () => mutate('/rollback', { target_version: Number(b.dataset.evolutionRollback) }));
+  async function personaContextPanel(epoch) {
+    const data = await api('/v1/console/persona/context');
+    if (epoch !== state.epoch) return;
+    const host = $('#persona-context');
+    host.innerHTML = `<div class="panel-head"><h2>角色预览</h2><p class="subheading">仅使用上面保存的角色背景；不会自动生成人格规则。</p></div><div class="settings-form"><details><summary>实际系统提示 · ${fmt(data.system_tokens)} tokens（估算）</summary><pre class="prewrap">${esc(data.system_prompt)}</pre></details><form id="persona-preview" class="stack"><label class="field">试聊消息<textarea name="message" maxlength="4000" required></textarea></label><label class="check-label"><input type="checkbox" name="use_context">带入已有对话与相关记忆</label><button class="btn" type="submit">预览回复</button><div class="error-inline" role="alert"></div><p id="preview-answer" class="prewrap"></p></form><details id="persona-archive"><summary>旧版画像与行为记录归档</summary><p class="hint">保留供查看，不再参与对话。可将需要的内容手动整理到角色背景。</p><button type="button" class="btn" id="load-persona-archive">查看归档</button><pre class="prewrap"></pre></details></div>`;
+    $('#load-persona-archive').onclick = async event => {
+      event.target.disabled = true;
+      try { const archive = await api('/v1/console/persona/archive'); if (epoch === state.epoch) $('#persona-archive pre').textContent = JSON.stringify(archive, null, 2); }
+      catch (error) { if (epoch === state.epoch) $('#persona-archive pre').textContent = errorText(error); }
+      finally { event.target.disabled = false; }
     };
-    try { data = await api(path); render(); } catch (error) { if (alive()) host.textContent = errorText(error); return; }
-    const poll = async () => { if (!alive() || busy || !data.state.running) return; try { data = await api(path); render(); if (!data.state.running) await changed(); } catch (_) {} if (alive() && data.state.running) setTimeout(poll, 1500); };
-    if (data.state.running) setTimeout(poll, 1500);
+    $('#persona-preview').onsubmit = async event => {
+      event.preventDefault(); const form = event.currentTarget; const button = $('button', form);
+      const draft = Object.entries(data.persona).some(([key,value]) => $('#persona-form').elements[key]?.value !== value);
+      if (draft) { $('.error-inline', form).textContent = '请先保存角色背景，再预览。'; return; }
+      button.disabled = true; $('.error-inline', form).textContent = ''; $('#preview-answer').textContent = '正在生成预览…';
+      try { const reply = await send('/v1/console/persona/preview', { source_hash:data.source_hash, message:form.elements.message.value, use_context:form.elements.use_context.checked }); if (epoch === state.epoch) $('#preview-answer').textContent = reply.reply; }
+      catch (error) { if (epoch === state.epoch) { $('.error-inline', form).textContent = errorText(error); $('#preview-answer').textContent = ''; } }
+      finally { if (button.isConnected) button.disabled = false; }
+    };
+    return () => personaContextPanel(epoch);
   }
 
-  async function derivationPanel(epoch) {
-    const titles = { overall: '整体行为倾向', chat: '日常闲聊', emotion: '情绪交流', task: '任务处理', tools: '工具使用', memory: '记忆关注与表达' };
-    const labels = { empty: '尚未生成', ready: '已生效', disabled: '已停用 · 仅使用原始人格', stale: '原始人格已修改 · 待更新', needs_review: '保留了人工内容 · 待核对' };
-    let data = await api('/v1/console/persona/derivation');
-    if (epoch !== state.epoch) return () => {};
-    let dirty = false, busy = false, showSignals = false, enabledDraft = null;
-    const release = new Set();
-    const panel = collapsibleSettings($('#persona-derivation'), 'derivation');
-    const content = $('.derivation-content', panel);
-    const rawUnsaved = () => Object.entries(data.effective.persona).some(([key, value]) => $('#persona-form').elements[key]?.value !== value);
-    const dimensions = () => Object.keys(titles).map(id => data.profile?.dimensions.find(d => d.id === id) || { id, description: '', basis: '', evidence: [], signals: [], locked: false, edited: false });
-    const collect = () => dimensions().map(d => ({ ...d, description: $(`[name="description-${d.id}"]`, content).value, basis: $(`[name="basis-${d.id}"]`, content).value, signals: $(`[name="signals-${d.id}"]`, content).value.split(/[,，\n]/).map(s => s.trim()).filter(Boolean), locked: $(`[name="lock-${d.id}"]`, content).checked }));
-    const fail = error => { if (error.name !== 'AbortError') $('#derivation-error', content).textContent = errorText(error); };
-    const token = () => ({ expected_version: data.version, source_hash: data.source_hash });
-    const checkSaved = () => { if (rawUnsaved()) { toast('请先保存上方原始人格，再生成或预览。', true); return false; } return true; };
-    const render = drafts => {
-      if (epoch !== state.epoch) return;
-      const entries = drafts || dimensions();
-      content.innerHTML = `<div class="derivation-meta between"><span class="badge ${data.status === 'ready' ? 'green' : 'amber'}" id="derivation-status">${esc(labels[data.status])}${data.generation.running || busy ? ' · 正在生成' : ''}</span><small>版本 ${fmt(data.version)}${data.profile ? ` · ${date(data.profile.updated_at, true)} · ${esc(data.profile.model)}` : ''}</small></div>
-        <p class="hint">原始人格始终优先。画像是可调整的解释，六个维度不对应固定话术。修改原始人格后，待更新画像暂不参与回复；人工编辑和锁定项不会被重新生成覆盖。</p>
-        ${data.generation.error ? `<div class="notice warn">${esc({ generation_interrupted: '上次生成被服务重启中断，可重新生成。', persona_cache_invalid: '画像缓存无法读取，当前仅使用原始人格；可重新生成。', persona_generation_failed: '生成失败或证据格式不合格，原画像已保留。', persona_derivation_changed: '生成期间配置发生变化，生成结果未覆盖现有内容。', persona_derivation_budget: '画像超出上下文预算，请缩短内容。' }[data.generation.error] || '生成未完成，原画像已保留。')}</div>` : ''}
-        <form id="derivation-form"><label class="check-label"><input type="checkbox" name="enabled"${(enabledDraft ?? data.profile?.enabled ?? true) ? ' checked' : ''}>启用画像（取消后仅使用原始人格）</label><div class="derivation-dimensions">${entries.map(d => `<details class="derivation-dimension" data-dimension="${d.id}"><summary><strong>${titles[d.id]}</strong><span class="badge">${release.has(d.id) ? '允许 AI 更新' : d.edited ? '人工编辑' : 'AI 衍生'}${d.locked ? ' · 已锁定' : ''}</span></summary><div class="derivation-fields"><label class="field">行为倾向<textarea name="description-${d.id}" maxlength="300">${esc(d.description)}</textarea></label><label class="field">推导依据 / 调整说明<textarea name="basis-${d.id}" maxlength="150">${esc(d.basis)}</textarea></label>${d.evidence.length ? `<div class="hint">原始依据：${d.evidence.map(e => `<q>${esc(e.quote)}</q>（${esc(e.field)}）`).join('；')}</div>` : ''}<label class="field">可选参考标签<input name="signals-${d.id}" value="${esc((d.signals || []).join('，'))}" maxlength="74" placeholder="最多 3 个定性标签，以逗号分隔"><span class="hint">仅用于可视化，不作为概率、阈值或运行时规则。</span></label><div class="between"><label class="check-label"><input type="checkbox" name="lock-${d.id}"${d.locked ? ' checked' : ''}>锁定此项，生成时保留</label><button type="button" class="btn small" data-release="${d.id}">允许 AI 更新此项</button></div></div></details>`).join('')}</div>
-        <label class="check-label"><input type="checkbox" id="show-persona-signals"${showSignals ? ' checked' : ''}>显示参考标签</label><div id="persona-signals" class="entity-list"${showSignals ? '' : ' hidden'}>${entries.flatMap(d => (d.signals || []).map(s => `<span class="tag">${titles[d.id]} · ${esc(s)}</span>`)).join('') || '<small>尚未设置参考标签。</small>'}</div>
-        <div class="error-inline" id="derivation-error" role="alert"></div><div class="settings-actions"><button class="btn" type="button" id="generate-derivation"${busy || data.generation.running ? ' disabled' : ''}>${data.profile ? '重新生成' : '生成行为画像'}</button><button class="btn primary" type="submit"${busy ? ' disabled' : ''}>核对并保存画像</button></div></form>
-        <details class="derivation-effective"><summary>实际生效的完整人格配置</summary><p class="hint">包含当前原始人格、画像生效状态及正式对话的系统提示；每轮历史、召回记忆和工具结果按语境另行加入。</p><pre class="prewrap">${esc(JSON.stringify({ ...data.effective, source_hash: data.source_hash, version: data.version }, null, 2))}</pre></details>
-        <details class="derivation-history"><summary>最近版本与回退（最多五版）</summary>${data.history.length ? data.history.slice().reverse().map(p => `<details><summary>版本 ${fmt(p.version)} · ${date(p.updated_at, true)}</summary><pre class="prewrap">${esc(JSON.stringify(p, null, 2))}</pre><button class="btn small" data-rollback="${p.version}">恢复此版${p.source_hash !== data.source_hash ? '为待核对草稿' : ''}</button></details>`).join('') : '<p class="hint">保存或生成下一版后，上一版会保留在这里。</p>'}</details>
-        <div class="evolution-host"></div><form id="persona-preview" class="derivation-preview"><h3>人格一致性预览</h3><label class="field">示例消息<textarea name="message" maxlength="4000" required placeholder="输入一条日常分享、问题或需要表达观点的消息…"></textarea></label><label class="check-label"><input type="checkbox" name="use_context">参考当前对话与真实记忆</label><p class="hint">使用已保存且当前生效的配置。点击预览才调用一次生成模型；不保存对话、不提取记忆，也不执行外部工具。参考记忆时会运行现有检索。</p><div class="settings-actions"><button class="btn" type="submit">预览回复</button></div><div class="error-inline" id="preview-error" role="alert"></div><div class="prewrap preview-answer" id="preview-answer" aria-live="polite"></div></form>`;
-      evolutionPanel($('.evolution-host', content), epoch, async () => { const latest = await api('/v1/console/persona/derivation'); if (epoch !== state.epoch) return; data.effective = latest.effective; $('.derivation-effective pre', content).textContent = JSON.stringify({ ...data.effective, source_hash: data.source_hash, version: data.version }, null, 2); });
-      $('#derivation-form', content).oninput = event => { if (event.target.id === 'show-persona-signals') return; dirty = true; enabledDraft = event.currentTarget.elements.enabled.checked; };
-      $('#show-persona-signals', content).onchange = event => { showSignals = event.target.checked; $('#persona-signals', content).hidden = !showSignals; };
-      $$('[data-release]', content).forEach(button => { button.onclick = () => { const drafts = collect(); release.add(button.dataset.release); const d = drafts.find(d => d.id === button.dataset.release); d.locked = false; dirty = true; render(drafts); }; });
-      $('#derivation-form', content).onsubmit = async event => {
-        event.preventDefault(); if (!checkSaved()) return;
-        const payload = { ...token(), enabled: event.currentTarget.elements.enabled.checked, dimensions: collect(), release: [...release] };
-        const button = $('button[type=submit]', event.currentTarget); button.disabled = true;
-        try { data = await send('/v1/console/persona/derivation', payload, 'PUT'); dirty = false; enabledDraft = null; release.clear(); render(); toast('画像已保存，下一轮对话生效。'); } catch (error) { fail(error); } finally { if (button.isConnected) button.disabled = false; }
-      };
-      $('#generate-derivation', content).onclick = async () => {
-        if (!checkSaved()) return;
-        if (dirty) { toast('请先保存画像编辑，再重新生成。', true); return; }
-        busy = true; render();
-        try { data = await send('/v1/console/persona/derivation/generate', { ...token(), force: true }); }
-        catch (error) { fail(error); }
-        finally { busy = false; if (epoch === state.epoch) { const errorText = $('#derivation-error', content)?.textContent; render(); $('#derivation-error', content).textContent = errorText || ''; } }
-      };
-      $$('[data-rollback]', content).forEach(button => { button.onclick = async () => {
-        if (!checkSaved()) return;
-        if (dirty) { toast('请先保存画像编辑，再回退。', true); return; }
-        try { data = await send('/v1/console/persona/derivation/rollback', { ...token(), target_version: Number(button.dataset.rollback) }); render(); toast('已恢复所选画像；待更新或待核对版本不会自动生效。'); } catch (error) { fail(error); }
-      }; });
-      $('#persona-preview', content).onsubmit = async event => {
-        event.preventDefault(); if (!checkSaved()) return;
-        if (dirty) { toast('请先保存画像编辑，再预览。', true); return; }
-        const form = event.currentTarget; const button = $('button[type=submit]', form); button.disabled = true;
-        $('#preview-error', content).textContent = ''; $('#preview-answer', content).textContent = '正在生成预览…';
-        try { const result = await send('/v1/console/persona/preview', { ...token(), expected_evolution_version: data.effective.evolution_version, message: form.elements.message.value, use_context: form.elements.use_context.checked }); if (epoch === state.epoch) $('#preview-answer', content).textContent = result.version === data.version && result.source_hash === data.source_hash && result.evolution_version === data.effective.evolution_version ? result.reply : '配置已变化，请使用当前版本重新预览。'; }
-        catch (error) { if (error.name !== 'AbortError' && epoch === state.epoch) { $('#preview-error', content).textContent = errorText(error); $('#preview-answer', content).textContent = ''; } }
-        finally { if (button.isConnected) button.disabled = false; }
-      };
+  async function interactionPanel(epoch) {
+    const host = $('#interaction-panel'); const data = await api('/v1/console/persona/state');
+    if (epoch !== state.epoch) return;
+    host.innerHTML = `<div class="panel-head"><h2>对话摘要</h2><p class="subheading">查看已有对话摘要；尚无摘要时，仍通过最近历史承接。</p></div><div class="settings-form"><p class="prewrap">${esc(data.summary || '尚无压缩摘要。')}</p>${data.legacy_notes ? `<details><summary>旧版临时笔记归档 · 不参与对话</summary><pre class="prewrap">${esc(JSON.stringify(data.legacy_notes,null,2))}</pre></details>` : ''}<div class="settings-actions"><button class="btn" id="refresh-interaction">刷新</button>${data.legacy_notes ? '<button class="btn" id="clear-interaction">清除旧笔记</button>' : ''}</div><div class="error-inline" role="alert"></div></div>`;
+    $('#refresh-interaction').onclick = () => interactionPanel(epoch).catch(error => { if (epoch === state.epoch) $('.error-inline',host).textContent = errorText(error); });
+    const clear=$('#clear-interaction'); if (clear) clear.onclick=async event=>{
+      event.target.disabled=true;
+      try {await send('/v1/console/persona/state',{},'DELETE');await interactionPanel(epoch);}
+      catch(error){if(epoch===state.epoch){$('.error-inline',host).textContent=errorText(error);event.target.disabled=false;}}
     };
-    const refresh = async () => { const drafts = dirty ? collect() : null; const latest = await api('/v1/console/persona/derivation'); if (epoch !== state.epoch) return; if (dirty && latest.version !== data.version) { toast('画像有新版本，当前草稿已保留；请刷新并核对后保存。', true); return; } data = latest; render(drafts); };
-    render();
-    const poll = async () => { if (epoch !== state.epoch || !data.generation.running) return; try { if (!dirty) await refresh(); } catch (error) { fail(error); } if (epoch === state.epoch && data.generation.running) setTimeout(poll, 1500); };
-    if (data.generation.running) setTimeout(poll, 1500);
-    return refresh;
   }
 
   async function agentPage(epoch) {
     const [data, qq, conversation] = await Promise.all([api('/v1/console/settings'), api('/v1/qq/status'), api('/v1/conversation')]);
     if (epoch !== state.epoch) return;
-    const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '性格描述', 6000, '身份、个性与陪伴方式'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界'], ['output_format', '输出格式 Prompt', 6000, '例如：使用纯文本，分段回复，不使用 Markdown。留空表示不额外约束输出格式。']];
+    const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '角色背景', 6000, '身份、核心性格、价值倾向与彼此关系'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界'], ['output_format', '输出格式 Prompt', 6000, '例如：使用纯文本，分段回复，不使用 Markdown。留空表示不额外约束输出格式。']];
     $('#page').innerHTML = `<div class="agent-layout"><section class="panel agent-profile"><div class="agent-avatar">${icon('leaf')}</div><div><h2 id="agent-name">${esc(data.persona.name)}</h2><p>${esc(data.model)}</p></div><span class="badge green">全局共享对话</span></section><div class="agent-columns"><div class="settings-stack"><section class="panel" id="sticker-panel"></section><section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
       <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
       <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
-      <section class="panel" id="persona-derivation"><div class="panel-head"><h2>人格衍生</h2><p class="subheading">由原始人格推导，独立存储并可随时调整、回退。</p></div><div class="derivation-content settings-form"></div></section>
+      <section class="panel" id="persona-context"></section>
+      <section class="panel" id="interaction-panel"></section>
       <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div><aside class="agent-aside">${qqCard(qq)}<section class="panel context-card"><div class="panel-head"><h2>上下文与记忆</h2></div><div class="context-facts"><div><small>上下文预算</small><strong>${fmt(conversation.context.context_tokens)} tokens</strong></div><div><small>下一轮上下文（估算）</small><strong>${fmt(conversation.context.context_used_tokens)} tokens</strong></div><div><small>定期提取记忆</small><strong>每 ${fmt(conversation.context.memory_extract_tokens)} tokens</strong></div><div><small>已压缩历史</small><strong>${fmt(conversation.context.compactions)} 次</strong></div></div><p class="hint">QQ、网页和 API 共用上下文。占用包含系统指令、历史、摘要、记忆和工具，按 Token 预算压缩历史。API 实际用量与本地估算、长期记忆提取独立统计，可在聊天底部查看。</p></section></aside></div></div>`;
     collapsibleSettings($('#persona-form').closest('.panel'), 'persona');
     collapsibleSettings($('.reset-panel'), 'reset');
     collapsibleSettings($('.agent-aside .job-card'), 'qq');
     collapsibleSettings($('.context-card'), 'context');
-    const refreshDerivation = await derivationPanel(epoch); if (epoch !== state.epoch) return;
+    const refreshPersonaContext = await personaContextPanel(epoch); if (epoch !== state.epoch) return;
     await stickerPanel(epoch); if (epoch !== state.epoch) return;
+    await interactionPanel(epoch); if (epoch !== state.epoch) return;
     const personaForm = $('#persona-form');
     $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };
     personaForm.onsubmit = async event => {
       event.preventDefault(); const button = $('button[type=submit]', personaForm); const errorEl = $('#persona-error'); button.disabled = true; errorEl.textContent = '';
       const persona = Object.fromEntries(fields.map(([key]) => [key, personaForm.elements[key].value]));
-      try { await send('/v1/console/persona', persona, 'PUT'); if (epoch === state.epoch) { $('#agent-name').textContent = persona.name; await refreshDerivation(); toast('原始人格已保存，画像状态已更新。'); } }
+      try { await send('/v1/console/persona', persona, 'PUT'); if (epoch === state.epoch) { $('#agent-name').textContent = persona.name; await refreshPersonaContext(); await interactionPanel(epoch); toast('角色背景已保存，下一轮生效。'); } }
       catch (error) { if (error.name !== 'AbortError') errorEl.textContent = errorText(error); }
       finally { button.disabled = false; }
     };

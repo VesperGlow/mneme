@@ -128,7 +128,7 @@ async fn actual_usage_reasoning_replay_restart_and_context_are_separate() {
     );
     let before = data(&router, "/v1/conversation").await;
     let context = &before["context"];
-    assert_eq!(context["session_usage"]["requests"], 2);
+    assert_eq!(context["session_usage"]["requests"], 1);
     assert_eq!(context["session_usage"]["input_tokens"], 100);
     assert_eq!(context["session_usage"]["output_tokens"], 90010);
     assert_eq!(context["session_usage"]["reasoning_tokens"], 90000);
@@ -187,7 +187,7 @@ async fn actual_usage_reasoning_replay_restart_and_context_are_separate() {
     let missing = chat(&router, &id(), "missing").await;
     assert!(missing.contains("event: done") && !missing.contains("event: reasoning"));
     let context = data(&router, "/v1/conversation").await;
-    assert_eq!(context["context"]["session_usage"]["requests"], 6);
+    assert_eq!(context["context"]["session_usage"]["requests"], 3);
     assert_eq!(
         context["context"]["session_usage"]["reported"]["total_tokens"],
         2
@@ -246,7 +246,7 @@ async fn interrupted_stream_keeps_reported_usage_without_committing_partial_repl
     );
     assert_eq!(
         data(&router, "/v1/conversation").await["context"]["session_usage"]["requests"],
-        2
+        1
     );
     let wire = chat(&router, &id(), "bad400").await;
     assert!(wire.contains("event: error"));
@@ -273,7 +273,7 @@ async fn unsupported_stream_usage_falls_back_once_and_is_not_double_counted() {
     assert_eq!(seen.lock().unwrap().len(), 3);
     assert!(seen.lock().unwrap()[2].get("stream_options").is_none());
     let context = data(&router, "/v1/conversation").await;
-    assert_eq!(context["context"]["session_usage"]["requests"], 3);
+    assert_eq!(context["context"]["session_usage"]["requests"], 2);
     assert!(context["context"]["session_usage"]["total_tokens"].is_null());
     assert!(
         context["context"]["session_usage"]["effective"]["total_tokens"]
@@ -287,7 +287,7 @@ async fn unsupported_stream_usage_falls_back_once_and_is_not_double_counted() {
     );
     assert_eq!(
         context["context"]["session_usage"]["estimated"]["total_tokens"],
-        3
+        2
     );
     assert!(context["context"]["tokens_estimated"].as_bool().unwrap());
     server.abort();

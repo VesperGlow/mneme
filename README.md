@@ -93,7 +93,7 @@ python3 scripts/chat.py
 
 先说“我现在住在成都，我喜欢不加糖的拿铁”，之后可继续询问住址或偏好；关闭终端、刷新页面、重启服务都会延续同一段对话。提取是异步的，不保证在回复结束瞬间已经可召回。`/health/ready` 返回队列的 `pending/running/dead` 数量；首次没有记忆时，检索索引会在第一条投影任务执行时创建。
 
-可在 Console 的 **Agent 页** 中修改名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话立即生效，重启后保留。输出格式可填写回复结构、Markdown 等要求，留空表示不额外约束。初始人格来自 `~/.config/mneme/config.toml` 的 `[persona]`；WebUI 保存的设置优先于文件，可用“填入配置文件默认值”后保存来恢复。人格指令每轮重新加入，不依赖可能被裁剪的历史消息。
+可在 Console 的 **Agent 页** 中修改名字、性格描述、交流方式、边界和输出格式 Prompt，保存后下一轮对话立即生效，重启后保留。输出格式可填写回复结构、Markdown 等要求，留空表示不额外约束。初始人格来自 `~/.config/mneme/config.toml` 的 `[persona]`；WebUI 保存的设置优先于文件，可用“填入配置文件默认值”后保存来恢复。已保存的角色背景随请求加入，不自动扩写、反思或重写；不依赖可能被裁剪的历史消息。旧版六维画像与行为进化记录只作为归档保留。临时连续信息复用原始历史和既有摘要，不生成独立心理状态；完整审计、Token数据和原始对话见[极简人格驱动改造](docs/reports/minimal-persona-2026-10-21.md)。
 
 Agent 页还可批量上传自己的 PNG、JPEG、WebP、GIF 表情包，上传后由当前多模态聊天模型自动理解画面、文案、动作与适用场景，无需手动打标签；支持搜索、启停和可选修正。表情库全局共享，网页、QQ 和 API 回复均可按语境选用，重启和重置对话后保留。QQ 同时支持接收图文 / 纯图片并交给现有多模态模型理解，也能回复表情包、已有图片和工具截图。上传与 QQ 看图需运行工具服务；配置与限制见 [Console 表情包说明](docs/console.md#自定义表情包) 和 [QQ 图片说明](docs/qq.md#图片与自定义表情包)。
 
@@ -127,7 +127,7 @@ Agent 页还可批量上传自己的 PNG、JPEG、WebP、GIF 表情包，上传�
 
 旧 `/v1/sessions` 接口保留兼容：创建请求始终返回同一对话 ID，旧 API 和 QQ 会话及图片、工具记录启动时合并，旧 ID 继续指向全局对话。图片上传可直接使用 `POST /v1/images`。
 
-SSE 事件包含 `meta`、可选的 `compaction`、每次模型请求的 `context`（本地估算）、`reasoning`（仅供应商返回的思考文本）、`usage`（API 用量快照）、多次 `delta` 与最终 `done`；失败时发送 `error`。`reasoning`、`usage` 以 `request_id` 区分同一轮中的多次工具模型请求；usage 是替换快照，不能按流事件累加。`meta` 包含 `memory_ids` 和 `retrieval_degraded`。`done.persisted=true` 表示完整回复与记忆任务已经提交，之前的 delta 都是暂时输出。客户端断开后服务继续完成本轮；可通过 GET turn 查询结果。同一 `request_id` 和相同消息重试会重放已完成回复，不重复生成或提取。未完成/失败的旧 ID 返回 409，需查询状态，重试生成使用新 UUID。
+SSE 事件包含 `meta`、可选的 `compaction`、每次模型请求的 `context`（本地估算）、`reasoning`（仅供应商返回的思考文本）、`usage`（API 用量快照）、多次 `delta` 与最终 `done`；失败时发送 `error`。`reasoning`、`usage` 以 `request_id` 区分同一轮中的多次工具模型请求；usage 是替换快照，不能按流事件累加。`meta` 包含 `memory_ids` 和 `retrieval_degraded`。`done.persisted=true` 表示完整回复与记忆任务已经提交，之前的 delta 都是暂时输出。工具调用或收尾重试时，`reply_reset` 要求清空本轮临时正文；可选的 `tool_progress` 仅为过程信息，不拼接进最终答复或历史。WebUI 支持撤回，终端客户端等待提交后打印最终正文。客户端断开后服务继续完成本轮；可通过 GET turn 查询结果。同一 `request_id` 和相同消息重试会重放已完成回复，不重复生成或提取。未完成/失败的旧 ID 返回 409，需查询状态，重试生成使用新 UUID。
 
 ## 长期记忆行为
 

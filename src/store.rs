@@ -535,6 +535,16 @@ impl Store {
         Ok(sqlx::query_as("SELECT * FROM memories WHERE status='active' AND (valid_until IS NULL OR valid_until>?) ORDER BY updated_at DESC,id LIMIT ?")
             .bind(now()).bind(limit).fetch_all(&self.pool).await?)
     }
+    /// Reuse already-read facts for immediate follow-ups, without another model
+    /// or a new cache. Access statistics are not refreshed by this carry-over.
+    pub(crate) async fn recent_recall_context(
+        &self,
+        session: &str,
+        limit: i64,
+    ) -> Result<Vec<Memory>> {
+        Ok(sqlx::query_as("SELECT * FROM memories WHERE status='active' AND (valid_until IS NULL OR valid_until>?) AND last_accessed_at>=? AND last_accessed_at>=(SELECT MIN(created_at) FROM (SELECT created_at FROM turns WHERE session_id=? AND status='complete' ORDER BY created_at DESC,rowid DESC LIMIT 6)) ORDER BY last_accessed_at DESC,id LIMIT ?")
+            .bind(now()).bind(now()-600).bind(session).bind(limit).fetch_all(&self.pool).await?)
+    }
     pub async fn list_memories(&self, limit: i64, offset: i64) -> Result<Vec<Memory>> {
         Ok(
             sqlx::query_as("SELECT * FROM memories ORDER BY created_at DESC,id LIMIT ? OFFSET ?")

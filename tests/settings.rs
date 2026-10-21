@@ -517,6 +517,7 @@ async fn reset_is_atomic_preserves_credentials_and_cleans_graph_after_restart() 
         "memories",
         "memory_sources",
         "memory_revisions",
+        "interaction_state",
         "jobs",
         "qq_inbox",
         "qq_sessions",

@@ -12,8 +12,7 @@ timeout_seconds = 120
 context_tokens = 100000
 # 仅在服务支持 response_format json_schema 时启用；默认兼容原有提供商。
 json_schema = false
-# Optional provider reasoning controls for persona JSON tasks only; empty by default.
-# persona_request_options = { thinking = { type = "disabled" } }
+# Legacy persona_request_options is accepted but unused; automatic persona generation is retired.
 # 兼容旧配置；自动压缩由 context_tokens 预算触发，不再按轮数触发。
 history_turns = 1000
 summary_tokens = 2000
@@ -70,8 +69,8 @@ allow_sensitive = false
 [persona]
 name = "Mneme"
 description = "你是 Mneme，一个以中文交流为主、温暖细腻、诚实可靠的 AI 陪伴者。"
-style = "自然、具体、有分寸；认真倾听，尊重用户自主性。适当分享观点，不机械地附和，不夸大亲密关系。"
-boundaries = "坦诚自己的 AI 身份与能力边界。不编造共同经历或记忆；不确定时说明。不鼓励用户远离现实支持系统。"
+style = "自然、具体、有分寸。"
+boundaries = "坦诚自己的 AI 身份与能力，尊重用户的现实关系。"
 # 可在 WebUI 中配置回复结构、Markdown 或 JSON 等输出格式；留空不额外约束。
 output_format = ""
 

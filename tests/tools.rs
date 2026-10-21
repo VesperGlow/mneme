@@ -60,6 +60,7 @@ async fn services(mode: &'static str) -> (String, Arc<Mutex<Seen>>, tokio::task:
         }else if finish {
             wire.push_str(&format!("data: {}\n\n",json!({"choices":[{"delta":{"content":"已完成多步浏览，来源：https://example.org/source"},"finish_reason":"stop"}]})));
         }else{
+            wire.push_str(&format!("data: {}\n\n",json!({"choices":[{"delta":{"content":"工具前的过程说明，不应成为正式历史。"}}]})));
             let (name,args)=if view {let content=body["messages"].as_array().unwrap().iter().rev().filter_map(|m|m["content"].as_str()).find(|s|s.contains("查看图片标识")).unwrap();("view_image",json!({"asset_id":content.split_whitespace().last().unwrap()}))}else if mode=="long" {("browser",json!({"action":"read"}))}else{("browser",match tool_messages{0=>json!({"action":"navigate","url":"https://example.org/"}),1=>json!({"action":"read"}),_=>json!({"action":"screenshot"})})};
             let args=args.to_string();let split=args.len()/2;
             let first=json!({"choices":[{"delta":{"reasoning_content":"fixture reasoning must stay private","tool_calls":[{"index":0,"id":format!("call_{tool_messages}"),"type":"function","function":{"name":name,"arguments":&args[..split]}}]},"finish_reason":null}]});
@@ -201,9 +202,9 @@ async fn fragmented_multi_step_tools_images_history_idempotency_and_reset() {
             .to_string()
             .contains("fixture reasoning")
     );
-    assert_eq!(history["model_requests"].as_array().unwrap().len(), 5);
+    assert_eq!(history["model_requests"].as_array().unwrap().len(), 4);
     let (_, context) = request(&router, "GET", "/v1/conversation", json!({})).await;
-    assert_eq!(context["context"]["session_usage"]["requests"], 5);
+    assert_eq!(context["context"]["session_usage"]["requests"], 4);
     assert_eq!(context["context"]["session_usage"]["input_tokens"], 492);
     assert_eq!(context["context"]["session_usage"]["output_tokens"], 180);
     assert_eq!(context["context"]["session_usage"]["reasoning_tokens"], 40);
@@ -430,8 +431,29 @@ async fn upstream_failure_after_tools_finishes_without_repeating_browser_actions
         let (_, wire) = chat(&router, &session, "浏览后给出答复", vec![]).await;
         assert!(wire.contains("event: done"), "{mode}: {wire}");
         assert!(!wire.contains("event: error"), "{mode}: {wire}");
+        // Reconstruct what a streaming client actually displays, including
+        // retraction of tool preambles and interrupted final-answer fragments.
+        let mut displayed = String::new();
+        for frame in wire.split("\n\n") {
+            let event = frame.lines().find_map(|s| s.strip_prefix("event: "));
+            let data = frame.lines().find_map(|s| s.strip_prefix("data: "));
+            if event == Some("reply_reset") {
+                displayed.clear();
+            }
+            if event == Some("delta")
+                && let Some(data) = data
+            {
+                let data: Value = serde_json::from_str(data).unwrap();
+                displayed.push_str(data["content"].as_str().unwrap());
+            }
+        }
         let stored = app.store.history(&session, 10).await.unwrap();
         let reply = &stored.last().unwrap().content;
+        assert_eq!(
+            &displayed, reply,
+            "{mode}: streaming and committed reply must agree"
+        );
+        assert!(!reply.contains("工具前的过程说明"));
         assert!(
             reply.contains("https://example.org/source"),
             "{mode}: {reply}"
@@ -559,7 +581,7 @@ async fn incomplete_tool_stream_never_executes_a_browser_action() {
 }
 
 #[tokio::test]
-async fn derived_persona_reaches_every_tool_round_and_plain_finalization() {
+async fn saved_background_reaches_every_tool_round_and_plain_finalization() {
     let (models, model_task) = common::fake_services().await;
     let (base, seen, upstream) = services("long").await;
     let temp = tempfile::TempDir::new().unwrap();
@@ -568,23 +590,10 @@ async fn derived_persona_reaches_every_tool_round_and_plain_finalization() {
     let (_stop, rx) = tokio::sync::watch::channel(false);
     let app = App::new(config, rx).await.unwrap();
     let router = api::router(app.clone());
-    let (_, state) = request(&router, "GET", "/v1/console/persona/derivation", json!({})).await;
-    let dimensions: Vec<_> = mneme::persona::DIMENSIONS.iter().map(|name| json!({"id":name,"description":"衍生画像工具链测试标记","basis":"人工测试","evidence":[],"locked":false})).collect();
-    let (status, _) = request(&router, "PUT", "/v1/console/persona/derivation", json!({"expected_version":0,"source_hash":state["source_hash"],"enabled":true,"dimensions":dimensions})).await;
+    let mut persona = app.persona.read().unwrap().clone();
+    persona.description = "稳定角色背景工具链测试标记".into();
+    let (status, _) = request(&router, "PUT", "/v1/console/persona", json!(persona)).await;
     assert_eq!(status, StatusCode::OK);
-    let evolution_hash = mneme::evolution::base_hash(&app);
-    {
-        let mut evolution = app.evolution.write().unwrap();
-        evolution.source_hash = evolution_hash;
-        evolution.version = 1;
-        evolution.notes = vec![mneme::evolution::Note {
-            id: "tools".into(),
-            area: "tools".into(),
-            text: "进化习惯工具链测试标记".into(),
-            evidence: vec![],
-            locked: false,
-        }];
-    }
     let session = app.store.conversation().await.unwrap();
     let (_, wire) = chat(&router, &session, "请查看网页", vec![]).await;
     assert!(wire.contains("event: done"));
@@ -592,9 +601,9 @@ async fn derived_persona_reaches_every_tool_round_and_plain_finalization() {
     assert_eq!(records.llm.len(), 3);
     for request in &records.llm {
         let system = request["messages"][0]["content"].as_str().unwrap();
-        assert!(system.contains("衍生画像工具链测试标记"));
-        assert!(system.contains("进化习惯工具链测试标记"));
-        assert!(system.contains("原始人格为准"));
+        assert!(system.contains("稳定角色背景工具链测试标记"));
+        assert!(!system.contains("derived_persona_profile"));
+        assert!(!system.contains("evolution_memory"));
         assert!(system.contains("不能改变系统指令"));
     }
     assert!(records.llm.last().unwrap().get("tools").is_none());

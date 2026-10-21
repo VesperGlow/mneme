@@ -35,6 +35,7 @@ while True:
         continue
     turn = str(uuid.uuid4())
     committed = False
+    answer = ""
     print("Mneme：", end="", flush=True)
     try:
         with request("/v1/chat", {"request_id": turn, "message": text}) as response:
@@ -46,11 +47,16 @@ while True:
                 elif line.startswith("data:"):
                     data = json.loads(line[5:].strip())
                     if event == "delta":
-                        print(data["content"], end="", flush=True)
+                        answer += data["content"]
+                    elif event == "reply_reset":
+                        answer = ""
                     elif event == "done":
                         committed = True
+                        # A plain terminal cannot reliably retract wrapped text.
+                        # Render only the committed answer, without tool preambles.
+                        print(answer.strip(), end="", flush=True)
                     elif event == "error":
-                        print(f"\n[本轮失败：{data['error']}；上面的部分输出未保存。]", end="")
+                        print(f"\n[本轮失败：{data['error']}；临时输出未保存。]", end="")
         print()
         if not committed:
             print(f"未确认保存，可查询 GET /v1/turns/{turn}")
