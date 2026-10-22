@@ -49,7 +49,7 @@ jobs:
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.22.1'
           cache: npm
           cache-dependency-path: services/tools/package-lock.json
       - run: npm ci --prefix services/tools --no-audit --no-fund
