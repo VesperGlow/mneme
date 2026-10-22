@@ -51,13 +51,13 @@
   }
   const send = (path, data, method = 'POST') => api(path, { method, body: JSON.stringify(data) });
   function errorText(error) {
-    const personaErrors = { interaction_turn_running: '当前正在回复，请等待本轮完成后清除临时状态。', persona_changed: '角色背景已变化，请刷新后重试。', persona_layer_retired: '旧版人格层已停用，记录仍可在归档中查看。', invalid_preview_message: '请输入 1–4000 字的示例消息。', persona_preview_failed: '预览未完成，请检查模型连接后重试。' };
+    const personaErrors = { interaction_turn_running: '当前正在回复，请等待本轮完成后清除临时状态。' };
     if (personaErrors[error.code]) return personaErrors[error.code];
     const stickerErrors = { invalid_sticker: '名字须为 1–40 字，使用场景最多 120 字。', invalid_sticker_image: '图片未能处理，请检查格式、动图帧数与工具服务；处理后的图片须小于 2 MiB。', sticker_catalog_full: '表情库已达到数量或上下文容量上限，请精简使用场景或删除部分表情。', sticker_storage_full: '表情图片存储已达到 64 MiB 上限。', sticker_not_found: '表情包已被删除，请刷新列表。', tools_disabled: '请先启用工具服务，再上传表情包。' };
     if (stickerErrors[error.code]) return stickerErrors[error.code];
     if (error.code === 'duplicate_memory') return '已有相同内容的有效记忆，请编辑已有记录。';
     if (error.code === 'memory_changed_reload') return '这条记忆已发生变化，请关闭窗口后重新打开，核对最新版本。';
-    if (error.code === 'invalid_persona') return '请填写名字（最多 80 字）；性格各项合计最多 6000 字，并须符合当前上下文容量。';
+    if (error.code === 'invalid_persona') return '性格描述过长，请精简后再保存。';
     if (error.code === 'invalid_password') return '新密码须为 10–128 个字符，且不能全部为空格。';
     if (error.code === 'current_password_incorrect') return '当前密码不正确，请重新输入。';
     if (error.code === 'agent_busy') return 'Agent 正在处理请求或后台任务，请稍后重试。';
@@ -680,29 +680,6 @@
       }
     };
   }
-  async function personaContextPanel(epoch) {
-    const data = await api('/v1/console/persona/context');
-    if (epoch !== state.epoch) return;
-    const host = $('#persona-context');
-    host.innerHTML = `<div class="panel-head"><h2>角色预览</h2><p class="subheading">仅使用上面保存的角色背景；不会自动生成人格规则。</p></div><div class="settings-form"><details><summary>实际系统提示 · ${fmt(data.system_tokens)} tokens（估算）</summary><pre class="prewrap">${esc(data.system_prompt)}</pre></details><form id="persona-preview" class="stack"><label class="field">试聊消息<textarea name="message" maxlength="4000" required></textarea></label><label class="check-label"><input type="checkbox" name="use_context">带入已有对话与相关记忆</label><button class="btn" type="submit">预览回复</button><div class="error-inline" role="alert"></div><p id="preview-answer" class="prewrap"></p></form><details id="persona-archive"><summary>旧版画像与行为记录归档</summary><p class="hint">保留供查看，不再参与对话。可将需要的内容手动整理到角色背景。</p><button type="button" class="btn" id="load-persona-archive">查看归档</button><pre class="prewrap"></pre></details></div>`;
-    $('#load-persona-archive').onclick = async event => {
-      event.target.disabled = true;
-      try { const archive = await api('/v1/console/persona/archive'); if (epoch === state.epoch) $('#persona-archive pre').textContent = JSON.stringify(archive, null, 2); }
-      catch (error) { if (epoch === state.epoch) $('#persona-archive pre').textContent = errorText(error); }
-      finally { event.target.disabled = false; }
-    };
-    $('#persona-preview').onsubmit = async event => {
-      event.preventDefault(); const form = event.currentTarget; const button = $('button', form);
-      const draft = Object.entries(data.persona).some(([key,value]) => $('#persona-form').elements[key]?.value !== value);
-      if (draft) { $('.error-inline', form).textContent = '请先保存角色背景，再预览。'; return; }
-      button.disabled = true; $('.error-inline', form).textContent = ''; $('#preview-answer').textContent = '正在生成预览…';
-      try { const reply = await send('/v1/console/persona/preview', { source_hash:data.source_hash, message:form.elements.message.value, use_context:form.elements.use_context.checked }); if (epoch === state.epoch) $('#preview-answer').textContent = reply.reply; }
-      catch (error) { if (epoch === state.epoch) { $('.error-inline', form).textContent = errorText(error); $('#preview-answer').textContent = ''; } }
-      finally { if (button.isConnected) button.disabled = false; }
-    };
-    return () => personaContextPanel(epoch);
-  }
-
   async function interactionPanel(epoch) {
     const host = $('#interaction-panel'); const data = await api('/v1/console/persona/state');
     if (epoch !== state.epoch) return;
@@ -718,26 +695,23 @@
   async function agentPage(epoch) {
     const [data, qq, conversation] = await Promise.all([api('/v1/console/settings'), api('/v1/qq/status'), api('/v1/conversation')]);
     if (epoch !== state.epoch) return;
-    const fields = [['name', '名字', 80, '希望怎样称呼 Agent'], ['description', '角色背景', 6000, '身份、核心性格、价值倾向与彼此关系'], ['style', '交流方式', 6000, '语气、表达习惯和回复偏好'], ['boundaries', '边界', 6000, '需要遵守的约定与能力边界'], ['output_format', '输出格式 Prompt', 6000, '例如：使用纯文本，分段回复，不使用 Markdown。留空表示不额外约束输出格式。']];
     $('#page').innerHTML = `<div class="agent-layout"><section class="panel agent-profile"><div class="agent-avatar">${icon('leaf')}</div><div><h2 id="agent-name">${esc(data.persona.name)}</h2><p>${esc(data.model)}</p></div><span class="badge green">全局共享对话</span></section><div class="agent-columns"><div class="settings-stack"><section class="panel" id="sticker-panel"></section><section class="panel"><div class="panel-head"><h2>Agent 性格</h2><p class="subheading">保存后从下一轮对话开始生效，重启后保留。</p></div>
-      <form id="persona-form" class="settings-form">${fields.map(([key, label, max, hint]) => `<label class="field" for="persona-${key}">${label}${key === 'name' ? `<input id="persona-${key}" name="${key}" maxlength="${max}" required value="${esc(data.persona[key])}">` : `<textarea id="persona-${key}" name="${key}" maxlength="${max}">${esc(data.persona[key])}</textarea>`}<span class="hint">${hint}</span></label>`).join('')}
-      <small>各项合计最多 6000 字，实际可用长度受上下文容量限制。</small><div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入配置文件默认值</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
-      <section class="panel" id="persona-context"></section>
+      <form id="persona-form" class="settings-form"><label class="field" for="persona-description">性格描述<textarea id="persona-description" name="description" maxlength="6000" rows="8">${esc(data.persona.description)}</textarea><span class="hint">用一段话描述性格、喜好和与你的关系。</span></label>
+      <div id="persona-error" class="error-inline" role="alert"></div><div class="settings-actions"><button type="button" class="btn" id="persona-defaults">填入默认描述</button><button type="submit" class="btn primary">保存性格${icon('arrow')}</button></div></form></section>
       <section class="panel" id="interaction-panel"></section>
       <section class="panel reset-panel"><div class="panel-head"><h2>重置 Agent</h2><p class="subheading">清空所有对话、长期记忆、修订历史、后台任务和 QQ 个人会话，从头开始。</p></div><div class="settings-form"><p class="subheading">服务连接配置、API Token 和 WebUI 密码会保留。默认保留当前性格，也可以在确认时恢复配置文件中的默认性格。此操作无法撤销，不会删除已有备份。</p>${data.graph_cleanup_pending ? '<div class="notice warn">图谱清理正在等待后台处理；旧记忆已停止参与召回，图谱服务恢复后会继续清理。</div>' : ''}<div class="settings-actions"><button class="btn danger" id="reset-agent">${icon('refresh')}重置 Agent</button></div></div></section></div><aside class="agent-aside">${qqCard(qq)}<section class="panel context-card"><div class="panel-head"><h2>上下文与记忆</h2></div><div class="context-facts"><div><small>上下文预算</small><strong>${fmt(conversation.context.context_tokens)} tokens</strong></div><div><small>下一轮上下文（估算）</small><strong>${fmt(conversation.context.context_used_tokens)} tokens</strong></div><div><small>定期提取记忆</small><strong>每 ${fmt(conversation.context.memory_extract_tokens)} tokens</strong></div><div><small>已压缩历史</small><strong>${fmt(conversation.context.compactions)} 次</strong></div></div><p class="hint">QQ、网页和 API 共用上下文。占用包含系统指令、历史、摘要、记忆和工具，按 Token 预算压缩历史。API 实际用量与本地估算、长期记忆提取独立统计，可在聊天底部查看。</p></section></aside></div></div>`;
     collapsibleSettings($('#persona-form').closest('.panel'), 'persona');
     collapsibleSettings($('.reset-panel'), 'reset');
     collapsibleSettings($('.agent-aside .job-card'), 'qq');
     collapsibleSettings($('.context-card'), 'context');
-    const refreshPersonaContext = await personaContextPanel(epoch); if (epoch !== state.epoch) return;
     await stickerPanel(epoch); if (epoch !== state.epoch) return;
     await interactionPanel(epoch); if (epoch !== state.epoch) return;
     const personaForm = $('#persona-form');
-    $('#persona-defaults').onclick = () => { for (const [key] of fields) personaForm.elements[key].value = data.default_persona[key]; toast('已填入默认性格，点击“保存性格”后生效。'); };
+    $('#persona-defaults').onclick = () => { personaForm.elements.description.value = data.default_persona.description; toast('已填入默认描述，点击“保存性格”后生效。'); };
     personaForm.onsubmit = async event => {
       event.preventDefault(); const button = $('button[type=submit]', personaForm); const errorEl = $('#persona-error'); button.disabled = true; errorEl.textContent = '';
-      const persona = Object.fromEntries(fields.map(([key]) => [key, personaForm.elements[key].value]));
-      try { await send('/v1/console/persona', persona, 'PUT'); if (epoch === state.epoch) { $('#agent-name').textContent = persona.name; await refreshPersonaContext(); await interactionPanel(epoch); toast('角色背景已保存，下一轮生效。'); } }
+      const persona = { ...data.persona, description: personaForm.elements.description.value };
+      try { const saved = await send('/v1/console/persona', persona, 'PUT'); if (epoch === state.epoch) { data.persona = saved.persona; toast('性格描述已保存，下一轮生效。'); } }
       catch (error) { if (error.name !== 'AbortError') errorEl.textContent = errorText(error); }
       finally { button.disabled = false; }
     };
