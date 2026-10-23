@@ -61,12 +61,23 @@ pub struct Memory {
     pub origin: String,
     pub deleted_at: Option<i64>,
     pub indexed_revision: i64,
+    pub tier: String,
+    pub evidence_type: String,
 }
 impl Memory {
     pub fn strength(&self, at: i64, half_life_days: f64) -> f64 {
         let elapsed = (at - self.updated_at).max(0) as f64 / 86400.0;
-        let half_life = half_life_days * (0.5 + self.importance * 2.0);
-        self.importance * self.confidence * 2f64.powf(-elapsed / half_life)
+        let (half_life, weight) = if self.tier == "episodic" {
+            // A modest observation must survive its admission threshold. Episodes
+            // fade faster than established knowledge, independently of access count.
+            (7.0, self.importance.max(0.5) * self.confidence)
+        } else {
+            (
+                half_life_days * (0.5 + self.importance * 2.0),
+                self.importance * self.confidence,
+            )
+        };
+        weight * 2f64.powf(-elapsed / half_life)
     }
     pub fn available(&self, at: i64) -> bool {
         self.deleted_at.is_none()
@@ -99,6 +110,10 @@ pub struct Candidate {
     pub relation: FactRelation,
     #[serde(default)]
     pub supersedes: Vec<String>,
+    #[serde(default = "long_term")]
+    pub tier: String,
+    #[serde(default = "explicit_fact")]
+    pub evidence_type: String,
 }
 
 #[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
@@ -147,4 +162,11 @@ pub struct Recall {
     pub memory: Memory,
     pub score: f64,
     pub channels: Vec<String>,
+}
+
+fn long_term() -> String {
+    "long_term".into()
+}
+fn explicit_fact() -> String {
+    "explicit_fact".into()
 }

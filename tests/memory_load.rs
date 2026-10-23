@@ -270,6 +270,8 @@ async fn isolated_write_matrix() {
                     attribute_of: None,
                     relation: Default::default(),
                     supersedes: Vec::new(),
+                    tier: "long_term".into(),
+                    evidence_type: "explicit_fact".into(),
                 };
                 memory::validate_candidate(&candidate, &source).unwrap();
                 expected.insert(candidate.key.clone(), candidate.content.clone());

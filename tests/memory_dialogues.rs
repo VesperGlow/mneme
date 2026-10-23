@@ -5,6 +5,27 @@ use mneme::{App, config::Config, domain::*, memory, store::BeginTurn};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap};
 
+// The frozen replay includes the old importance/confidence admission labels.
+// Under high-recall storage, low-value concrete expressions are retained and
+// uncertain interpretations become literal episodes instead of asserted tastes.
+fn expected_memory(case: &Value) -> Option<(String, String)> {
+    let key = case["key"].as_str()?;
+    if case["sensitive"] == true || case["expired"] == true {
+        return None;
+    }
+    let mut content = case["fact"].as_str()?.to_owned();
+    let quote = case["confidence"].as_f64().unwrap_or(0.95) < 0.7;
+    if quote {
+        content = format!("用户表示：“{}”", case["say"].as_str()?);
+    }
+    let key = if quote || matches!(case["kind"].as_str(), Some("event" | "emotion")) {
+        format!("user.episode.{}", &content_hash(&content)[..24])
+    } else {
+        key.to_owned()
+    };
+    Some((key, content))
+}
+
 #[tokio::test]
 async fn replay_256_natural_turns_with_labelled_writes_and_final_state() {
     let cases: Vec<Value> =
@@ -170,7 +191,7 @@ async fn replay_256_natural_turns_with_labelled_writes_and_final_state() {
                 .complete_turn(&source, "我听到了，会以你的最新表达为准。")
                 .await
                 .unwrap();
-            source.created_at = now() - (90 - index as i64 * 2) * 86400;
+            source.created_at = now() - (90 - index as i64 * 2) * 3600;
             sqlx::query("UPDATE messages SET created_at=? WHERE id=?")
                 .bind(source.created_at)
                 .bind(&source.id)
@@ -179,11 +200,8 @@ async fn replay_256_natural_turns_with_labelled_writes_and_final_state() {
                 .unwrap();
             sqlx::query("INSERT INTO jobs(id,kind,payload,available_at,created_at) VALUES(?,'extract',?,?,?)")
                 .bind(format!("replay:{index:03}" )).bind(&source.id).bind(now()).bind(now()).execute(&app.store.pool).await.unwrap();
-            if case["key"].is_string() && case["skip"] != true {
-                expected.insert(
-                    case["key"].as_str().unwrap().to_owned(),
-                    case["fact"].as_str().unwrap().to_owned(),
-                );
+            if let Some((key, content)) = expected_memory(case) {
+                expected.insert(key, content);
             }
             sources.push(source);
         }
@@ -206,11 +224,10 @@ async fn replay_256_natural_turns_with_labelled_writes_and_final_state() {
         for (case, source) in cases.iter().zip(sources) {
             let written:Vec<String>=sqlx::query_scalar("SELECT m.content FROM memories m JOIN memory_sources s ON s.memory_id=m.id WHERE s.message_id=?")
                 .bind(&source.id).fetch_all(&app.store.pool).await.unwrap();
-            let expected_write = if case["key"].is_string() && case["skip"] != true {
-                vec![case["fact"].as_str().unwrap().to_owned()]
-            } else {
-                vec![]
-            };
+            let expected_write: Vec<_> = expected_memory(case)
+                .map(|(_, content)| content)
+                .into_iter()
+                .collect();
             evaluated += 1;
             correct += usize::from(written == expected_write);
             *categories
@@ -233,7 +250,7 @@ async fn replay_256_natural_turns_with_labelled_writes_and_final_state() {
     }
     println!(
         "REPLAY {}",
-        json!({"turns":evaluated,"correct_write_decisions":correct,"profiles":8,"simulated_days":90,"categories":categories,"interpretation":"scripted model output; downstream validation only"})
+        json!({"turns":evaluated,"correct_write_decisions":correct,"profiles":8,"simulated_hours":90,"categories":categories,"interpretation":"scripted model output; downstream validation only"})
     );
     assert_eq!(evaluated, 256);
     llm.abort();

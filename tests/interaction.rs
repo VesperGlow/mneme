@@ -263,3 +263,38 @@ async fn immediate_followup_retains_read_fact_sources_but_not_expired_records() 
         task.abort();
     }
 }
+
+#[tokio::test]
+async fn unrelated_topic_does_not_bypass_strict_retrieval_via_recent_context() {
+    let (_temp, app, seen, tasks, _stop) = setup().await;
+    let router = api::router(app.clone());
+    let (status, _) = call(&router,"POST","/v1/memories",json!({"content":"用户的项目正式名称是纸桥。","kind":"fact","importance":0.9,"confidence":1.0,"entities":["纸桥"],"valid_until":null,"expected_revision":null})).await;
+    assert_eq!(status, StatusCode::CREATED);
+    chat(&router, "之前保存的我的项目叫什么？").await;
+    let memory = app.store.active_memories(1).await.unwrap().remove(0);
+    assert!(memory.last_accessed_at.is_some());
+    let mut unrelated = vec![0.0; 1024];
+    unrelated[0] = 1.0;
+    app.store
+        .save_embedding(&memory.id, memory.revision, &unrelated)
+        .await
+        .unwrap();
+    chat(&router, "量子纠缠是什么？").await;
+    let requests = seen.lock().unwrap();
+    let has_memory = requests.last().unwrap()["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| {
+            m["content"].as_str().is_some_and(|s| {
+                s.starts_with("<untrusted_long_term_memory>") && s.contains("纸桥")
+            })
+        });
+    assert!(
+        !has_memory,
+        "an unrelated request must not inherit facts rejected by strict retrieval"
+    );
+    for task in tasks {
+        task.abort();
+    }
+}

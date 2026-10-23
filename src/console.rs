@@ -52,6 +52,7 @@ pub fn protected_routes() -> Router<App> {
             get(|| async { Json(json!({"authenticated":true})) }),
         )
         .route("/v1/console/stats", get(stats))
+        .route("/v1/console/extraction", get(extraction))
         .route("/v1/console/messages", get(transcript))
         .route("/v1/console/retrieval", post(retrieval))
         .route("/v1/console/system", get(system))
@@ -239,4 +240,8 @@ async fn system(State(app): State<App>) -> ApiResult<Json<Value>> {
         },"cpu_threads":3,"dimensions":app.config.models.dimensions,"model_queue":models.0.as_ref().and_then(|v|v["queued"].as_u64()),"sqlite":"healthy"});
     *cache = Some((Instant::now(), value.clone()));
     Ok(Json(value))
+}
+
+async fn extraction(State(app): State<App>) -> ApiResult<Json<Value>> {
+    Ok(Json(app.store.extraction_diagnostics().await?))
 }

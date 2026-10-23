@@ -60,6 +60,8 @@ async fn real_chinese_models_and_neo4j_projection() {
             attribute_of: None,
             relation: Default::default(),
             supersedes: Vec::new(),
+            tier: "long_term".into(),
+            evidence_type: "explicit_fact".into(),
         };
         app.store
             .apply_candidates(

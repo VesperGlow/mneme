@@ -32,6 +32,8 @@ fn fact(key: &str, text: &str) -> Candidate {
         attribute_of: None,
         relation: FactRelation::Replace,
         supersedes: vec![],
+        tier: "long_term".into(),
+        evidence_type: "explicit_fact".into(),
     }
 }
 async fn source(app: &App, text: &str) -> Message {

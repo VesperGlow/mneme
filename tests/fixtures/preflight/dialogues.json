@@ -1,0 +1,2266 @@
+{
+  "version": 1,
+  "description": "120 labelled Chinese dialogue groups; lexical clauses are conservative audit labels, not an LLM judge.",
+  "cases": [
+    {
+      "id": "game_opinion-00",
+      "category": "game_opinion",
+      "turns": [
+        "终末地的剧情也太 ML 了，尤其是第1章。"
+      ],
+      "expected_clauses": [
+        [
+          "终末地",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-00",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去杭州河边散步，看到了第1次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "杭州",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-00",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝无糖燕麦拿铁。",
+        "还是无糖燕麦拿铁最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "无糖燕麦拿铁"
+        ],
+        [
+          "无糖燕麦拿铁"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-00",
+      "category": "ambiguous",
+      "turns": [
+        "终末地好像还挺对我胃口，不过才玩了1小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "终末地",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-00",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得终末地的战斗很无聊。",
+        "玩到第2章后我改观了，终末地的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "终末地",
+          "无聊"
+        ],
+        [
+          "终末地",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-00",
+      "category": "attribution",
+      "turns": [
+        "朋友林悦是兽医，我在杭州做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "林悦",
+          "兽医"
+        ],
+        [
+          "杭州",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-00",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-0 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-0",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-00",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《终末地设定集》的第1页。",
+        "今天又读了《终末地设定集》的第1页。"
+      ],
+      "expected_clauses": [
+        [
+          "终末地",
+          "1"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-00",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-00",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫林悦，现在住在杭州。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "林悦",
+          "杭州"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-00",
+      "category": "emotion",
+      "turns": [
+        "准备第1场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-00",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在杭州参加第1次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "杭州",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-01",
+      "category": "game_opinion",
+      "turns": [
+        "空洞骑士的剧情也太 ML 了，尤其是第2章。"
+      ],
+      "expected_clauses": [
+        [
+          "空洞骑士",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-01",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去成都河边散步，看到了第2次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "成都",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-01",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝冰美式。",
+        "还是冰美式最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "冰美式"
+        ],
+        [
+          "冰美式"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-01",
+      "category": "ambiguous",
+      "turns": [
+        "空洞骑士好像还挺对我胃口，不过才玩了2小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "空洞骑士",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-01",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得空洞骑士的战斗很无聊。",
+        "玩到第3章后我改观了，空洞骑士的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "空洞骑士",
+          "无聊"
+        ],
+        [
+          "空洞骑士",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-01",
+      "category": "attribution",
+      "turns": [
+        "朋友陈砚是兽医，我在成都做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "陈砚",
+          "兽医"
+        ],
+        [
+          "成都",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-01",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-1 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-1",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-01",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《空洞骑士设定集》的第2页。",
+        "今天又读了《空洞骑士设定集》的第2页。"
+      ],
+      "expected_clauses": [
+        [
+          "空洞骑士",
+          "2"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-01",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-01",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫陈砚，现在住在成都。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "陈砚",
+          "成都"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-01",
+      "category": "emotion",
+      "turns": [
+        "准备第2场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-01",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在成都参加第2次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "成都",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-02",
+      "category": "game_opinion",
+      "turns": [
+        "异度神剑的剧情也太 ML 了，尤其是第3章。"
+      ],
+      "expected_clauses": [
+        [
+          "异度神剑",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-02",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去苏州河边散步，看到了第3次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "苏州",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-02",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝乌龙茶。",
+        "还是乌龙茶最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "乌龙茶"
+        ],
+        [
+          "乌龙茶"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-02",
+      "category": "ambiguous",
+      "turns": [
+        "异度神剑好像还挺对我胃口，不过才玩了3小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "异度神剑",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-02",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得异度神剑的战斗很无聊。",
+        "玩到第4章后我改观了，异度神剑的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "异度神剑",
+          "无聊"
+        ],
+        [
+          "异度神剑",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-02",
+      "category": "attribution",
+      "turns": [
+        "朋友周宁是兽医，我在苏州做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "周宁",
+          "兽医"
+        ],
+        [
+          "苏州",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-02",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-2 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-2",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-02",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《异度神剑设定集》的第3页。",
+        "今天又读了《异度神剑设定集》的第3页。"
+      ],
+      "expected_clauses": [
+        [
+          "异度神剑",
+          "3"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-02",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-02",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫周宁，现在住在苏州。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "周宁",
+          "苏州"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-02",
+      "category": "emotion",
+      "turns": [
+        "准备第3场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-02",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在苏州参加第3次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "苏州",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-03",
+      "category": "game_opinion",
+      "turns": [
+        "星露谷物语的剧情也太 ML 了，尤其是第4章。"
+      ],
+      "expected_clauses": [
+        [
+          "星露谷物语",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-03",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去武汉河边散步，看到了第4次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "武汉",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-03",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝淡焙咖啡。",
+        "还是淡焙咖啡最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "淡焙咖啡"
+        ],
+        [
+          "淡焙咖啡"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-03",
+      "category": "ambiguous",
+      "turns": [
+        "星露谷物语好像还挺对我胃口，不过才玩了4小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "星露谷物语",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-03",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得星露谷物语的战斗很无聊。",
+        "玩到第5章后我改观了，星露谷物语的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "星露谷物语",
+          "无聊"
+        ],
+        [
+          "星露谷物语",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-03",
+      "category": "attribution",
+      "turns": [
+        "朋友苏澄是兽医，我在武汉做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "苏澄",
+          "兽医"
+        ],
+        [
+          "武汉",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-03",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-3 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-3",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-03",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《星露谷物语设定集》的第4页。",
+        "今天又读了《星露谷物语设定集》的第4页。"
+      ],
+      "expected_clauses": [
+        [
+          "星露谷物语",
+          "4"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-03",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-03",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫苏澄，现在住在武汉。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "苏澄",
+          "武汉"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-03",
+      "category": "emotion",
+      "turns": [
+        "准备第4场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-03",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在武汉参加第4次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "武汉",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-04",
+      "category": "game_opinion",
+      "turns": [
+        "博德之门3的剧情也太 ML 了，尤其是第5章。"
+      ],
+      "expected_clauses": [
+        [
+          "博德之门3",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-04",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去青岛河边散步，看到了第5次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "青岛",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-04",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝无糖豆浆。",
+        "还是无糖豆浆最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "无糖豆浆"
+        ],
+        [
+          "无糖豆浆"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-04",
+      "category": "ambiguous",
+      "turns": [
+        "博德之门3好像还挺对我胃口，不过才玩了5小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "博德之门3",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-04",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得博德之门3的战斗很无聊。",
+        "玩到第6章后我改观了，博德之门3的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "博德之门3",
+          "无聊"
+        ],
+        [
+          "博德之门3",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-04",
+      "category": "attribution",
+      "turns": [
+        "朋友乔鹿是兽医，我在青岛做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "乔鹿",
+          "兽医"
+        ],
+        [
+          "青岛",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-04",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-4 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-4",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-04",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《博德之门3设定集》的第5页。",
+        "今天又读了《博德之门3设定集》的第5页。"
+      ],
+      "expected_clauses": [
+        [
+          "博德之门3",
+          "5"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-04",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-04",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫乔鹿，现在住在青岛。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "乔鹿",
+          "青岛"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-04",
+      "category": "emotion",
+      "turns": [
+        "准备第5场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-04",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在青岛参加第5次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "青岛",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-05",
+      "category": "game_opinion",
+      "turns": [
+        "原神的剧情也太 ML 了，尤其是第6章。"
+      ],
+      "expected_clauses": [
+        [
+          "原神",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-05",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去厦门河边散步，看到了第6次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "厦门",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-05",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝温红茶。",
+        "还是温红茶最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "温红茶"
+        ],
+        [
+          "温红茶"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-05",
+      "category": "ambiguous",
+      "turns": [
+        "原神好像还挺对我胃口，不过才玩了6小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "原神",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-05",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得原神的战斗很无聊。",
+        "玩到第7章后我改观了，原神的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "原神",
+          "无聊"
+        ],
+        [
+          "原神",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-05",
+      "category": "attribution",
+      "turns": [
+        "朋友闻溪是兽医，我在厦门做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "闻溪",
+          "兽医"
+        ],
+        [
+          "厦门",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-05",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-5 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-5",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-05",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《原神设定集》的第6页。",
+        "今天又读了《原神设定集》的第6页。"
+      ],
+      "expected_clauses": [
+        [
+          "原神",
+          "6"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-05",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-05",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫闻溪，现在住在厦门。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "闻溪",
+          "厦门"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-05",
+      "category": "emotion",
+      "turns": [
+        "准备第6场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-05",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在厦门参加第6次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "厦门",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-06",
+      "category": "game_opinion",
+      "turns": [
+        "怪物猎人的剧情也太 ML 了，尤其是第7章。"
+      ],
+      "expected_clauses": [
+        [
+          "怪物猎人",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-06",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去昆明河边散步，看到了第7次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "昆明",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-06",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝抹茶拿铁。",
+        "还是抹茶拿铁最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "抹茶拿铁"
+        ],
+        [
+          "抹茶拿铁"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-06",
+      "category": "ambiguous",
+      "turns": [
+        "怪物猎人好像还挺对我胃口，不过才玩了7小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "怪物猎人",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-06",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得怪物猎人的战斗很无聊。",
+        "玩到第8章后我改观了，怪物猎人的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "怪物猎人",
+          "无聊"
+        ],
+        [
+          "怪物猎人",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-06",
+      "category": "attribution",
+      "turns": [
+        "朋友陆星是兽医，我在昆明做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "陆星",
+          "兽医"
+        ],
+        [
+          "昆明",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-06",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-6 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-6",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-06",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《怪物猎人设定集》的第7页。",
+        "今天又读了《怪物猎人设定集》的第7页。"
+      ],
+      "expected_clauses": [
+        [
+          "怪物猎人",
+          "7"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-06",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-06",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫陆星，现在住在昆明。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "陆星",
+          "昆明"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-06",
+      "category": "emotion",
+      "turns": [
+        "准备第7场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-06",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在昆明参加第7次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "昆明",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-07",
+      "category": "game_opinion",
+      "turns": [
+        "十三机兵防卫圈的剧情也太 ML 了，尤其是第8章。"
+      ],
+      "expected_clauses": [
+        [
+          "十三机兵防卫圈",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-07",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去南京河边散步，看到了第8次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "南京",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-07",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝低糖可可。",
+        "还是低糖可可最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "低糖可可"
+        ],
+        [
+          "低糖可可"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-07",
+      "category": "ambiguous",
+      "turns": [
+        "十三机兵防卫圈好像还挺对我胃口，不过才玩了8小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "十三机兵防卫圈",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-07",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得十三机兵防卫圈的战斗很无聊。",
+        "玩到第9章后我改观了，十三机兵防卫圈的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "十三机兵防卫圈",
+          "无聊"
+        ],
+        [
+          "十三机兵防卫圈",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-07",
+      "category": "attribution",
+      "turns": [
+        "朋友沈墨是兽医，我在南京做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "沈墨",
+          "兽医"
+        ],
+        [
+          "南京",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-07",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-7 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-7",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-07",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《十三机兵防卫圈设定集》的第8页。",
+        "今天又读了《十三机兵防卫圈设定集》的第8页。"
+      ],
+      "expected_clauses": [
+        [
+          "十三机兵防卫圈",
+          "8"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-07",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-07",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫沈墨，现在住在南京。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "沈墨",
+          "南京"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-07",
+      "category": "emotion",
+      "turns": [
+        "准备第8场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-07",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在南京参加第8次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "南京",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-08",
+      "category": "game_opinion",
+      "turns": [
+        "逆转裁判的剧情也太 ML 了，尤其是第9章。"
+      ],
+      "expected_clauses": [
+        [
+          "逆转裁判",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-08",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去天津河边散步，看到了第9次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "天津",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-08",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝茉莉花茶。",
+        "还是茉莉花茶最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "茉莉花茶"
+        ],
+        [
+          "茉莉花茶"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-08",
+      "category": "ambiguous",
+      "turns": [
+        "逆转裁判好像还挺对我胃口，不过才玩了9小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "逆转裁判",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-08",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得逆转裁判的战斗很无聊。",
+        "玩到第10章后我改观了，逆转裁判的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "逆转裁判",
+          "无聊"
+        ],
+        [
+          "逆转裁判",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-08",
+      "category": "attribution",
+      "turns": [
+        "朋友唐棠是兽医，我在天津做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "唐棠",
+          "兽医"
+        ],
+        [
+          "天津",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-08",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-8 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-8",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-08",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《逆转裁判设定集》的第9页。",
+        "今天又读了《逆转裁判设定集》的第9页。"
+      ],
+      "expected_clauses": [
+        [
+          "逆转裁判",
+          "9"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-08",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-08",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫唐棠，现在住在天津。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "唐棠",
+          "天津"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-08",
+      "category": "emotion",
+      "turns": [
+        "准备第9场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-08",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在天津参加第9次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "天津",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "game_opinion-09",
+      "category": "game_opinion",
+      "turns": [
+        "蔚蓝的剧情也太 ML 了，尤其是第10章。"
+      ],
+      "expected_clauses": [
+        [
+          "蔚蓝",
+          "ML"
+        ]
+      ],
+      "forbidden_assertions": [
+        "长期喜欢 ML",
+        "长期喜欢ML"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "daily_event-09",
+      "category": "daily_event",
+      "turns": [
+        "今天下班后去长沙河边散步，看到了第10次晚霞，心情好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "长沙",
+          "晚霞"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "explicit_preference-09",
+      "category": "explicit_preference",
+      "turns": [
+        "我一直最喜欢喝柠檬气泡水。",
+        "还是柠檬气泡水最合我口味，这个习惯已经很多年了。"
+      ],
+      "expected_clauses": [
+        [
+          "柠檬气泡水"
+        ],
+        [
+          "柠檬气泡水"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "ambiguous-09",
+      "category": "ambiguous",
+      "turns": [
+        "蔚蓝好像还挺对我胃口，不过才玩了10小时，再看看。"
+      ],
+      "expected_clauses": [
+        [
+          "蔚蓝",
+          "好像"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": true,
+      "expect_empty": false
+    },
+    {
+      "id": "changed_view-09",
+      "category": "changed_view",
+      "turns": [
+        "我最近觉得蔚蓝的战斗很无聊。",
+        "玩到第11章后我改观了，蔚蓝的战斗现在挺有意思。"
+      ],
+      "expected_clauses": [
+        [
+          "蔚蓝",
+          "无聊"
+        ],
+        [
+          "蔚蓝",
+          "意思"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "attribution-09",
+      "category": "attribution",
+      "turns": [
+        "朋友许遥是兽医，我在长沙做 Rust 后端开发。"
+      ],
+      "expected_clauses": [
+        [
+          "许遥",
+          "兽医"
+        ],
+        [
+          "长沙",
+          "Rust"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户是兽医",
+        "用户在做兽医"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "technical_entities-09",
+      "category": "technical_entities",
+      "turns": [
+        "项目 Mneme-9 里 tokio::sync::Notify 和 SQLite WAL 配合，Neo4j 5.26 的 HNSW 负责向量检索。"
+      ],
+      "expected_clauses": [
+        [
+          "Mneme-9",
+          "tokio::sync::Notify"
+        ],
+        [
+          "SQLite",
+          "WAL"
+        ],
+        [
+          "Neo4j",
+          "HNSW"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "repetition-09",
+      "category": "repetition",
+      "turns": [
+        "今天又读了《蔚蓝设定集》的第10页。",
+        "今天又读了《蔚蓝设定集》的第10页。"
+      ],
+      "expected_clauses": [
+        [
+          "蔚蓝",
+          "10"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "low_information-09",
+      "category": "low_information",
+      "turns": [
+        "嗯",
+        "好的，谢谢"
+      ],
+      "expected_clauses": [],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": true
+    },
+    {
+      "id": "cross_turn-09",
+      "category": "cross_turn",
+      "turns": [
+        "我妹妹叫许遥，现在住在长沙。",
+        "刚才说的妹妹最近在学习拍候鸟，我帮她挑了镜头。"
+      ],
+      "expected_clauses": [
+        [
+          "许遥",
+          "长沙"
+        ],
+        [
+          "妹妹",
+          "候鸟"
+        ]
+      ],
+      "forbidden_assertions": [
+        "用户在学习拍候鸟"
+      ],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "emotion-09",
+      "category": "emotion",
+      "turns": [
+        "准备第10场公开演讲之前有点紧张，排练了一遍后好多了。"
+      ],
+      "expected_clauses": [
+        [
+          "演讲",
+          "紧张"
+        ],
+        [
+          "排练"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    },
+    {
+      "id": "temporal-09",
+      "category": "temporal",
+      "turns": [
+        "明天下午三点我要在长沙参加第10次读书会，仅这次安排。"
+      ],
+      "expected_clauses": [
+        [
+          "长沙",
+          "读书会",
+          "三点"
+        ]
+      ],
+      "forbidden_assertions": [],
+      "uncertain": false,
+      "expect_empty": false
+    }
+  ]
+}

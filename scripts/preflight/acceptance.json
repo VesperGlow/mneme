@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "defined_before_live_evaluation": true,
+  "mandatory": {
+    "raw_dialogue_preservation": 1.0,
+    "eventual_extraction_receipts": 1.0,
+    "unrecovered_jobs": 0,
+    "duplicate_source_links": 0,
+    "background_fault_chat_completion": 1.0,
+    "literal_quote_validity": 1.0,
+    "wrong_attribution_flags": 0,
+    "uncertainty_failures": 0
+  },
+  "quality_targets": {
+    "live_gold_clause_coverage_min": 0.95,
+    "real_production_first_stage_recall_at_30_min": 0.95,
+    "real_final_recall_min": 0.90,
+    "real_final_mrr_min": 0.80,
+    "real_final_returned_precision_min": 0.90,
+    "real_negative_contamination_max": 0.0,
+    "real_degraded_queries_max": 0
+  },
+  "conventions": {
+    "precision_at_5": "unique relevant IDs in first five / 5, including short result sets; shown alongside returned_precision",
+    "recall_at_30": "macro average over positive queries only; negative queries have a separate contamination rate",
+    "mrr": "first relevant rank, averaged over positive queries only",
+    "mock_quality": "contract replay only; never evidence of real model semantic accuracy",
+    "load_backpressure": "HTTP 409/429 retries are counted and timed; only admitted/acknowledged requests count as accepted messages",
+    "go": "all mandatory and quality targets satisfied on final code; missing real-service evidence means NO-GO"
+  }
+}

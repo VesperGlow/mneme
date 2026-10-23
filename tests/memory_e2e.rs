@@ -837,6 +837,8 @@ async fn real_recall_replay() {
                 attribute_of: None,
                 relation: Default::default(),
                 supersedes: Vec::new(),
+                tier: "long_term".into(),
+                evidence_type: "explicit_fact".into(),
             };
             app.store
                 .apply_candidates(&user, vec![(candidate, vector, None)], "seed")

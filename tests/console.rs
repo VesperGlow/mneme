@@ -265,6 +265,8 @@ async fn manual_changes_defeat_stale_extractors_and_embedding_writes() {
         attribute_of: None,
         relation: Default::default(),
         supersedes: Vec::new(),
+        tier: "long_term".into(),
+        evidence_type: "explicit_fact".into(),
     };
     app.store
         .apply_candidates(&user, vec![(original.clone(), vec![1.0], None)], "initial")

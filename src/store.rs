@@ -15,6 +15,8 @@ pub struct Store {
     pub(crate) extract_every_tokens: usize,
     pub(crate) extract_max_delay_seconds: u64,
     pub(crate) tokens: crate::tokens::Counter,
+    pub(crate) preference_minimum_confidence: f64,
+    pub(crate) preference_minimum_importance: f64,
     pub(crate) job_notify: Arc<tokio::sync::Notify>,
     _lock: Arc<std::fs::File>,
     embeddings: Arc<std::sync::Mutex<std::collections::HashMap<String, CachedEmbedding>>>,
@@ -79,6 +81,8 @@ impl Store {
             job_notify: Default::default(),
             extract_max_delay_seconds: 120,
             tokens: Default::default(),
+            preference_minimum_confidence: 0.7,
+            preference_minimum_importance: 0.4,
             _lock: Arc::new(lock),
             embeddings: Default::default(),
         })
@@ -96,6 +100,12 @@ impl Store {
         sqlx::query("UPDATE sessions SET active_turn=NULL")
             .execute(&mut *tx)
             .await?;
+        sqlx::query(
+            "UPDATE extraction_runs SET status='interrupted',completed_at=? WHERE status='running'",
+        )
+        .bind(now())
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("UPDATE jobs SET status='pending' WHERE status='running'")
             .execute(&mut *tx)
             .await?;
@@ -573,9 +583,9 @@ impl Store {
         )
     }
     pub async fn sources(&self, memory_id: &str) -> Result<Vec<Value>> {
-        let rows = sqlx::query("SELECT s.message_id,s.quote,s.observed_at,m.session_id,m.turn_id,m.content FROM memory_sources s JOIN messages m ON m.id=s.message_id WHERE s.memory_id=? ORDER BY s.observed_at DESC LIMIT 100")
+        let rows = sqlx::query("SELECT s.message_id,s.quote,s.observed_at,s.evidence_type,s.confidence,s.valid_until,m.session_id,m.turn_id,m.content FROM memory_sources s JOIN messages m ON m.id=s.message_id WHERE s.memory_id=? ORDER BY s.observed_at DESC LIMIT 100")
             .bind(memory_id).fetch_all(&self.pool).await?;
-        Ok(rows.into_iter().map(|r| json!({"message_id":r.get::<String,_>("message_id"),"quote":r.get::<String,_>("quote"),"content":r.get::<String,_>("content"),"observed_at":r.get::<i64,_>("observed_at"),"session_id":r.get::<String,_>("session_id"),"turn_id":r.get::<String,_>("turn_id")})).collect())
+        Ok(rows.into_iter().map(|r| json!({"message_id":r.get::<String,_>("message_id"),"quote":r.get::<String,_>("quote"),"evidence_type":r.get::<String,_>("evidence_type"),"confidence":r.get::<f64,_>("confidence"),"valid_until":r.get::<Option<i64>,_>("valid_until"),"content":r.get::<String,_>("content"),"observed_at":r.get::<i64,_>("observed_at"),"session_id":r.get::<String,_>("session_id"),"turn_id":r.get::<String,_>("turn_id")})).collect())
     }
 
     /// Audit APIs retain the originals; prompts omit sources protected by a
@@ -599,7 +609,9 @@ impl Store {
         let start = std::time::Instant::now();
         let result = async {
             let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-            Self::apply_candidates_in(&mut tx, source, candidates, true).await?;
+            self.apply_candidates_in(&mut tx, source, candidates, true, job_id)
+                .await?;
+            Self::finish_extraction_in(&mut tx, job_id).await?;
             sqlx::query("DELETE FROM jobs WHERE id=?")
                 .bind(job_id)
                 .execute(&mut *tx)
@@ -616,9 +628,11 @@ impl Store {
         &self,
         source: &Message,
         candidates: MemoryRecords,
+        job_id: &str,
     ) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        Self::apply_candidates_in(&mut tx, source, candidates, false).await?;
+        self.apply_candidates_in(&mut tx, source, candidates, false, job_id)
+            .await?;
         tx.commit().await?;
         Ok(())
     }
@@ -643,7 +657,8 @@ impl Store {
             let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
             for (source, candidates) in records {
                 if retry_sources.contains(&source.id) {
-                    Self::apply_candidates_in(&mut tx, &source, candidates, false).await?;
+                    self.apply_candidates_in(&mut tx, &source, candidates, false, job_id)
+                        .await?;
                     // No receipt for an entirely rejected source. Persist its
                     // bounded single-source retry together with this batch ack.
                     enqueue(
@@ -654,9 +669,11 @@ impl Store {
                     )
                     .await?;
                 } else {
-                    Self::apply_candidates_in(&mut tx, &source, candidates, true).await?;
+                    self.apply_candidates_in(&mut tx, &source, candidates, true, job_id)
+                        .await?;
                 }
             }
+            Self::finish_extraction_in(&mut tx, job_id).await?;
             sqlx::query("DELETE FROM jobs WHERE id=?")
                 .bind(job_id)
                 .execute(&mut *tx)
@@ -670,10 +687,12 @@ impl Store {
     }
 
     async fn apply_candidates_in(
+        &self,
         tx: &mut Transaction<'_, Sqlite>,
         source: &Message,
         candidates: Vec<(Candidate, Vec<f32>, Option<i64>)>,
         mark_processed: bool,
+        job_id: &str,
     ) -> Result<()> {
         let processed: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)",
@@ -722,7 +741,8 @@ impl Store {
                 .await?;
             return Ok(());
         }
-        'candidates: for (mut candidate, embedding, valid_until) in candidates {
+        'candidates: for (mut candidate, embedding, mut valid_until) in candidates {
+            crate::memory::prepare_candidate(&mut candidate, source, &mut valid_until);
             if let Some(slot) = sqlx::query_scalar::<_, String>(
                 "SELECT slot FROM memory_slot_aliases WHERE alias=?",
             )
@@ -750,6 +770,16 @@ impl Store {
                         let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM forget_barriers WHERE slot=? AND (through_seq>=? OR (? IS NOT NULL AND through_qq>=?)))")
                             .bind(&old.slot).bind(source_seq).bind(source_qq).bind(source_qq).fetch_one(&mut **tx).await?;
                         if blocked || old.source_seq > source_seq {
+                            Self::decision_in(
+                                tx,
+                                job_id,
+                                source,
+                                &candidate,
+                                "rejected",
+                                "barrier_or_newer_evidence",
+                                None,
+                            )
+                            .await?;
                             continue 'candidates;
                         }
                         if old.status != "active" {
@@ -761,6 +791,16 @@ impl Store {
                                 .fetch_optional(&mut **tx)
                                 .await?;
                                 if later.is_some_and(|seq| seq > source_seq) {
+                                    Self::decision_in(
+                                        tx,
+                                        job_id,
+                                        source,
+                                        &candidate,
+                                        "rejected",
+                                        "newer_evidence",
+                                        None,
+                                    )
+                                    .await?;
                                     continue 'candidates;
                                 }
                             }
@@ -770,6 +810,16 @@ impl Store {
                         }
                         superseded.push(old);
                     } else {
+                        Self::decision_in(
+                            tx,
+                            job_id,
+                            source,
+                            &candidate,
+                            "rejected",
+                            "missing_reconciliation_target",
+                            None,
+                        )
+                        .await?;
                         continue 'candidates;
                     }
                 }
@@ -782,6 +832,16 @@ impl Store {
             if barrier
                 .is_some_and(|(seq, qq)| source_seq <= seq || source_qq.is_some_and(|s| s <= qq))
             {
+                Self::decision_in(
+                    tx,
+                    job_id,
+                    source,
+                    &candidate,
+                    "rejected",
+                    "forget_barrier",
+                    None,
+                )
+                .await?;
                 continue;
             }
             let hash = content_hash(&candidate.content);
@@ -794,6 +854,16 @@ impl Store {
             if content_barrier
                 .is_some_and(|(seq, qq)| source_seq <= seq || source_qq.is_some_and(|s| s <= qq))
             {
+                Self::decision_in(
+                    tx,
+                    job_id,
+                    source,
+                    &candidate,
+                    "rejected",
+                    "content_barrier",
+                    None,
+                )
+                .await?;
                 continue;
             }
             let exact: Option<Memory> =
@@ -810,6 +880,16 @@ impl Store {
             if current.as_ref().is_some_and(|m| m.source_seq > source_seq)
                 || exact.as_ref().is_some_and(|m| m.source_seq > source_seq)
             {
+                Self::decision_in(
+                    tx,
+                    job_id,
+                    source,
+                    &candidate,
+                    "rejected",
+                    "newer_evidence",
+                    None,
+                )
+                .await?;
                 continue;
             }
             let reinforce = exact.or_else(|| {
@@ -818,6 +898,7 @@ impl Store {
                     .filter(|m| candidate.equivalent_to.as_deref() == Some(&m.id))
                     .cloned()
             });
+            let reinforced = reinforce.is_some();
             let (memory_id, revision) = if let Some(memory) = reinforce {
                 if candidate.key != memory.slot {
                     // Flatten aliases when two formerly independent slots merge.
@@ -845,6 +926,16 @@ impl Store {
                 let already_observed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_sources WHERE memory_id=? AND message_id=?)")
                     .bind(&memory.id).bind(&source.id).fetch_one(&mut **tx).await?;
                 if already_observed {
+                    Self::decision_in(
+                        tx,
+                        job_id,
+                        source,
+                        &candidate,
+                        "stored",
+                        "already_observed",
+                        Some(&memory.id),
+                    )
+                    .await?;
                     continue;
                 }
                 let mut entities = candidate.entities.clone();
@@ -852,6 +943,16 @@ impl Store {
                     if entities.len() < 8 && !entities.contains(&entity) {
                         entities.push(entity);
                     }
+                }
+                if memory.tier == "long_term" && candidate.kind == "preference" {
+                    // A further confirmation must not reintroduce the temporary
+                    // TTL applied to a new preference candidate.
+                    valid_until = candidate
+                        .valid_until
+                        .as_ref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|d| d.timestamp())
+                        .or(memory.valid_until);
                 }
                 sqlx::query("UPDATE memories SET importance=MAX(importance,?),confidence=MAX(confidence,?),updated_at=?,source_seq=?,valid_until=?,entities=?,revision=revision+1 WHERE id=?")
                     .bind(candidate.importance).bind(candidate.confidence).bind(source.created_at).bind(source_seq).bind(valid_until.or(memory.valid_until.filter(|end|*end > source.created_at))).bind(serde_json::to_string(&entities)?).bind(&memory.id).execute(&mut **tx).await?;
@@ -869,10 +970,10 @@ impl Store {
                     )
                     .await?;
                 }
-                sqlx::query("INSERT INTO memories(id,slot,content,content_hash,kind,importance,confidence,entities,embedding,status,created_at,updated_at,source_seq,valid_until) VALUES(?,?,?,?,?,?,?,?,?,'active',?,?,?,?)")
+                sqlx::query("INSERT INTO memories(id,slot,content,content_hash,kind,importance,confidence,entities,embedding,status,created_at,updated_at,source_seq,valid_until,tier,evidence_type) VALUES(?,?,?,?,?,?,?,?,?,'active',?,?,?,?,?,?)")
                     .bind(&new_id).bind(&candidate.key).bind(&candidate.content).bind(hash).bind(&candidate.kind)
                     .bind(candidate.importance).bind(candidate.confidence).bind(serde_json::to_string(&candidate.entities)?)
-                    .bind(serde_json::to_string(&embedding)?).bind(source.created_at).bind(source.created_at).bind(source_seq).bind(valid_until)
+                    .bind(serde_json::to_string(&embedding)?).bind(source.created_at).bind(source.created_at).bind(source_seq).bind(valid_until).bind(&candidate.tier).bind(&candidate.evidence_type)
                     .execute(&mut **tx).await?;
                 (new_id, 1)
             };
@@ -889,8 +990,44 @@ impl Store {
                     .await?;
                 }
             }
-            sqlx::query("INSERT OR IGNORE INTO memory_sources(memory_id,message_id,quote,observed_at) VALUES(?,?,?,?)")
-                .bind(&memory_id).bind(&source.id).bind(&candidate.source_quote).bind(source.created_at).execute(&mut **tx).await?;
+            sqlx::query("INSERT OR IGNORE INTO memory_sources(memory_id,message_id,quote,observed_at,evidence_type,confidence,valid_until) VALUES(?,?,?,?,?,?,?)")
+                .bind(&memory_id).bind(&source.id).bind(&candidate.source_quote).bind(source.created_at).bind(&candidate.evidence_type).bind(candidate.confidence).bind(candidate.valid_until.as_ref().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|d| d.timestamp())).execute(&mut **tx).await?;
+            let mut revision = revision;
+            let confirmations: i64 = if candidate.kind == "preference"
+                && candidate.evidence_type == "explicit_fact"
+                && candidate.importance >= self.preference_minimum_importance
+            {
+                sqlx::query_scalar("SELECT COUNT(DISTINCT m.turn_id) FROM memory_sources s JOIN messages m ON m.id=s.message_id WHERE s.memory_id=? AND s.evidence_type='explicit_fact' AND s.confidence>=? AND NOT EXISTS(SELECT 1 FROM suppressed_sources p WHERE p.message_id=s.message_id)")
+                    .bind(&memory_id).bind(self.preference_minimum_confidence).fetch_one(&mut **tx).await?
+            } else {
+                0
+            };
+            if confirmations >= 2 {
+                // Promotion only strengthens the repeated, explicit proposition.
+                // It never generalizes a game comment into a taste or personality.
+                let promoted: Option<i64> = sqlx::query_scalar("UPDATE memories SET tier='long_term',valid_until=?,revision=revision+1 WHERE id=? AND tier='episodic' RETURNING revision")
+                    .bind(candidate.valid_until.as_ref().and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok()).map(|d| d.timestamp()))
+                    .bind(&memory_id).fetch_optional(&mut **tx).await?;
+                if let Some(next) = promoted {
+                    revision = next;
+                }
+            }
+            Self::decision_in(
+                tx,
+                job_id,
+                source,
+                &candidate,
+                "stored",
+                if confirmations >= 2 {
+                    "preference_confirmed"
+                } else if reinforced {
+                    "reinforced"
+                } else {
+                    "created"
+                },
+                Some(&memory_id),
+            )
+            .await?;
             enqueue(
                 tx,
                 &format!("project:{memory_id}:{revision}"),
@@ -899,6 +1036,7 @@ impl Store {
             )
             .await?;
         }
+        Self::trim_episodes_in(tx).await?;
         if mark_processed {
             sqlx::query("INSERT OR IGNORE INTO extracted_messages(message_id) VALUES(?)")
                 .bind(&source.id)
@@ -906,6 +1044,168 @@ impl Store {
                 .await?;
         }
         Ok(())
+    }
+
+    async fn trim_episodes_in(tx: &mut Transaction<'_, Sqlite>) -> Result<usize> {
+        let overflow: Vec<(String, i64)> = sqlx::query_as("SELECT id,revision FROM memories WHERE tier='episodic' AND status='active' ORDER BY updated_at DESC,source_seq DESC,id LIMIT -1 OFFSET 256")
+            .fetch_all(&mut **tx).await?;
+        let count = overflow.len();
+        for (memory_id, revision) in overflow {
+            sqlx::query("UPDATE memories SET status='forgotten',revision=revision+1 WHERE id=?")
+                .bind(&memory_id)
+                .execute(&mut **tx)
+                .await?;
+            enqueue(
+                tx,
+                &format!("project:{memory_id}:{}", revision + 1),
+                "project",
+                &memory_id,
+            )
+            .await?;
+        }
+        Ok(count)
+    }
+
+    /// Hourly evidence consolidation uses persisted, independent source turns.
+    /// It never guesses a preference from a similar topic or an inferred claim.
+    pub async fn consolidate_memories(&self) -> Result<Value> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let candidates: Vec<Memory> = sqlx::query_as("SELECT * FROM memories WHERE tier='episodic' AND kind='preference' AND evidence_type='explicit_fact' AND status='active' AND deleted_at IS NULL AND (valid_until IS NULL OR valid_until>?) AND importance>=? AND confidence>=?")
+            .bind(now()).bind(self.preference_minimum_importance).bind(self.preference_minimum_confidence).fetch_all(&mut *tx).await?;
+        let mut promoted = 0;
+        for memory in candidates {
+            let evidence: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT m.turn_id) FROM memory_sources s JOIN messages m ON m.id=s.message_id WHERE s.memory_id=? AND s.evidence_type='explicit_fact' AND s.confidence>=? AND NOT EXISTS(SELECT 1 FROM suppressed_sources p WHERE p.message_id=s.message_id)")
+                .bind(&memory.id).bind(self.preference_minimum_confidence).fetch_one(&mut *tx).await?;
+            if evidence < 2 {
+                continue;
+            }
+            // Keep an explicitly declared deadline; discard only our generated TTL.
+            let until: Option<i64> = sqlx::query_scalar("SELECT s.valid_until FROM memory_sources s JOIN messages m ON m.id=s.message_id WHERE s.memory_id=? ORDER BY m.seq DESC LIMIT 1")
+                .bind(&memory.id).fetch_optional(&mut *tx).await?.flatten();
+            sqlx::query(
+                "UPDATE memories SET tier='long_term',valid_until=?,revision=revision+1 WHERE id=?",
+            )
+            .bind(until)
+            .bind(&memory.id)
+            .execute(&mut *tx)
+            .await?;
+            enqueue(
+                &mut tx,
+                &format!("project:{}:{}", memory.id, memory.revision + 1),
+                "project",
+                &memory.id,
+            )
+            .await?;
+            promoted += 1;
+        }
+        let retired = Self::trim_episodes_in(&mut tx).await?;
+        let result = json!({"at":now(),"promoted":promoted,"retired":retired});
+        sqlx::query("INSERT INTO metadata(key,value) VALUES('memory.consolidation',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .bind(result.to_string()).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    pub(crate) async fn begin_extraction(&self, job: &Job) -> Result<()> {
+        let ids: Vec<String> = if job.payload.starts_with('{') {
+            serde_json::from_str::<Value>(&job.payload)?["message_ids"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|v| v.as_str().map(str::to_owned))
+                .collect()
+        } else {
+            vec![job.payload.clone()]
+        };
+        let mut tokens = 0;
+        for id in &ids {
+            let texts: Option<(String, String)> = sqlx::query_as("SELECT u.content,a.content FROM messages u JOIN messages a ON a.turn_id=u.turn_id AND a.role='assistant' WHERE u.id=?")
+                .bind(id).fetch_optional(&self.pool).await?;
+            if let Some((user, assistant)) = texts {
+                tokens += self.tokens.count(&user) + self.tokens.count(&assistant);
+            }
+        }
+        // Queue retries can reset attempts after a dead-letter retry. Audit
+        // attempts stay monotonic so the old failure is never overwritten.
+        sqlx::query("INSERT INTO extraction_runs(job_id,attempt,source_count,input_tokens) SELECT ?,COALESCE(MAX(attempt),0)+1,?,? FROM extraction_runs WHERE job_id=?")
+            .bind(&job.id).bind(ids.len() as i64).bind(tokens as i64).bind(&job.id).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    // A committed extraction receipt and its successful history entry share
+    // the same transaction, including across a crash before the worker returns.
+    async fn finish_extraction_in(tx: &mut Transaction<'_, Sqlite>, job_id: &str) -> Result<()> {
+        sqlx::query("UPDATE extraction_runs SET status='complete',completed_at=? WHERE job_id=? AND status='running'")
+            .bind(now()).bind(job_id).execute(&mut **tx).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn finish_extraction(&self, job: &Job) -> Result<()> {
+        let state: Option<String> = sqlx::query_scalar("SELECT status FROM jobs WHERE id=?")
+            .bind(&job.id)
+            .fetch_optional(&self.pool)
+            .await?;
+        sqlx::query(
+            "UPDATE extraction_runs SET status=?,completed_at=? WHERE job_id=? AND status='running'",
+        )
+        .bind(state.as_deref().unwrap_or("complete"))
+        .bind(now())
+        .bind(&job.id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn decision_in(
+        tx: &mut Transaction<'_, Sqlite>,
+        job: &str,
+        source: &Message,
+        candidate: &Candidate,
+        decision: &str,
+        reason: &str,
+        memory: Option<&str>,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO extraction_events(job_id,message_id,candidate,decision,reason,memory_id) VALUES(?,?,?,?,?,?)")
+            .bind(job).bind(&source.id).bind(serde_json::to_string(candidate)?).bind(decision).bind(reason).bind(memory).execute(&mut **tx).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn extraction_event(
+        &self,
+        job: &str,
+        source: Option<&str>,
+        candidate: Option<Value>,
+        decision: &str,
+        reason: &str,
+    ) -> Result<()> {
+        sqlx::query("INSERT INTO extraction_events(job_id,message_id,candidate,decision,reason) VALUES(?,?,?,?,?)")
+            .bind(job).bind(source).bind(candidate.map(|v| v.to_string())).bind(decision).bind(reason).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub async fn extraction_diagnostics(&self) -> Result<Value> {
+        let rows = sqlx::query("SELECT e.*,m.status,m.tier,m.revision,m.indexed_revision FROM extraction_events e LEFT JOIN memories m ON m.id=e.memory_id ORDER BY e.seq DESC LIMIT 100")
+            .fetch_all(&self.pool).await?;
+        let events: Vec<_> = rows.into_iter().map(|r| json!({
+            "seq":r.get::<i64,_>("seq"),"job_id":r.get::<String,_>("job_id"),"message_id":r.get::<Option<String>,_>("message_id"),
+            "candidate":r.get::<Option<String>,_>("candidate").and_then(|s| serde_json::from_str::<Value>(&s).ok()),
+            "decision":r.get::<String,_>("decision"),"reason":r.get::<String,_>("reason"),"memory_id":r.get::<Option<String>,_>("memory_id"),"created_at":r.get::<i64,_>("created_at"),
+            "storage_status":r.get::<Option<String>,_>("status"),"stored_tier":r.get::<Option<String>,_>("tier"),"revision":r.get::<Option<i64>,_>("revision"),"indexed_revision":r.get::<Option<i64>,_>("indexed_revision")
+        })).collect();
+        let queued = sqlx::query("SELECT id,kind,status,attempts,available_at,last_error FROM jobs ORDER BY created_at DESC,id LIMIT 50")
+            .fetch_all(&self.pool).await?;
+        let jobs: Vec<_> = queued.into_iter().map(|r| json!({"id":r.get::<String,_>("id"),"kind":r.get::<String,_>("kind"),"status":r.get::<String,_>("status"),"attempts":r.get::<i64,_>("attempts"),"available_at":r.get::<i64,_>("available_at"),"last_error":r.get::<Option<String>,_>("last_error")})).collect();
+        let runs: Vec<Value> = sqlx::query_scalar::<_, String>("SELECT json_object('job_id',job_id,'attempt',attempt,'status',status,'source_count',source_count,'input_tokens',input_tokens,'candidate_count',candidate_count,'stored_count',stored_count,'rejected_count',rejected_count,'started_at',started_at,'completed_at',completed_at) FROM extraction_runs ORDER BY seq DESC LIMIT 50")
+            .fetch_all(&self.pool).await?.into_iter().map(|s| serde_json::from_str(&s)).collect::<std::result::Result<_,_>>()?;
+        let counts: Vec<(String,i64)> = sqlx::query_as("SELECT tier,COUNT(*) FROM memories WHERE status='active' AND deleted_at IS NULL AND (valid_until IS NULL OR valid_until>?) GROUP BY tier")
+            .bind(now()).fetch_all(&self.pool).await?;
+        let consolidation: Option<String> =
+            sqlx::query_scalar("SELECT value FROM metadata WHERE key='memory.consolidation'")
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(
+            json!({"events":events,"jobs":jobs,"runs":runs,"counts":counts.into_iter().collect::<std::collections::BTreeMap<_,_>>(),"consolidation":consolidation.and_then(|s| serde_json::from_str::<Value>(&s).ok()),"pending_tokens":self.extraction_pending_tokens().await?,"extract_every_tokens":self.extract_every_tokens,"extract_max_delay_seconds":self.extract_max_delay_seconds}),
+        )
     }
 
     pub async fn forget(&self, memory_id: &str) -> Result<bool> {
@@ -946,10 +1246,13 @@ impl Store {
             .bind(now()).fetch_optional(&self.pool).await?)
     }
     pub async fn ack_job(&self, id: &str) -> Result<()> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        Self::finish_extraction_in(&mut tx, id).await?;
         sqlx::query("DELETE FROM jobs WHERE id=?")
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        tx.commit().await?;
         Ok(())
     }
     pub async fn retry_job(&self, job: &Job, max_attempts: i64) -> Result<()> {

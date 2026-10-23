@@ -39,6 +39,8 @@ fn fact(key: &str, text: &str) -> Candidate {
         attribute_of: None,
         relation: Default::default(),
         supersedes: Vec::new(),
+        tier: "long_term".into(),
+        evidence_type: "explicit_fact".into(),
     }
 }
 

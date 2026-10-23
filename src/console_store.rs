@@ -198,7 +198,7 @@ impl Store {
             } else {
                 "[]".into()
             };
-            sqlx::query("UPDATE memories SET content=?,content_hash=?,kind=?,importance=?,confidence=?,entities=?,embedding=?,valid_until=?,origin='manual',updated_at=?,source_seq=?,revision=revision+1 WHERE id=?")
+            sqlx::query("UPDATE memories SET content=?,content_hash=?,kind=?,importance=?,confidence=?,entities=?,embedding=?,valid_until=?,tier='long_term',evidence_type='explicit_fact',origin='manual',updated_at=?,source_seq=?,revision=revision+1 WHERE id=?")
                 .bind(input.content.trim()).bind(&hash).bind(&input.kind).bind(input.importance).bind(input.confidence)
                 .bind(serde_json::to_string(&entities)?).bind(embedding).bind(input.valid_until).bind(at).bind(seq).bind(&m.id).execute(&mut *tx).await?;
             m.id

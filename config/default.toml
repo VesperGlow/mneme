@@ -44,8 +44,10 @@ extract_max_delay_seconds = 120
 candidate_limit = 32
 recall_limit = 6
 context_tokens = 4000
+# 以下两个门槛仅用于长期偏好确认；情景压缩不按价值过滤。
 minimum_importance = 0.4
 minimum_confidence = 0.7
+# 情景层允许日常观点和经历；30 天有效期、7 天半衰期，最多 256 条有效情景。
 half_life_days = 180.0
 forget_below = 0.12
 max_attempts = 8

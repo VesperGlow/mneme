@@ -63,6 +63,8 @@ impl App {
         let mut store = store::Store::open(&config.database).await?;
         store.extract_every_tokens = config.memory.extract_every_tokens;
         store.extract_max_delay_seconds = config.memory.extract_max_delay_seconds;
+        store.preference_minimum_confidence = config.memory.minimum_confidence;
+        store.preference_minimum_importance = config.memory.minimum_importance;
         store.recover().await?;
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions)")
             .fetch_one(&store.pool)
