@@ -211,6 +211,7 @@ async fn compaction_preserves_summary_raw_evidence_and_durable_memory_jobs_acros
     );
     assert!(app.store.active_memories(10).await.unwrap().is_empty());
     let before = data(&router, "/v1/conversation").await;
+    let captured_at = std::time::Instant::now();
     assert_eq!(before["context"]["compactions"], 1);
     assert!(
         before["context"]["summary"]
@@ -235,7 +236,21 @@ async fn compaction_preserves_summary_raw_evidence_and_durable_memory_jobs_acros
     drop(app);
     let app = App::new(c, rx).await.unwrap();
     let router = api::router(app.clone());
-    assert_eq!(data(&router, "/v1/conversation").await, before);
+    let mut after = data(&router, "/v1/conversation").await;
+    // Elapsed wall time is computed on each read and may cross a second during
+    // restart. All persisted context must still match exactly.
+    let before_elapsed = before["context"]["conversation_time"]["seconds_since_previous_exchange"]
+        .as_u64()
+        .unwrap();
+    let after_elapsed = after["context"]["conversation_time"]["seconds_since_previous_exchange"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        (before_elapsed..=before_elapsed + captured_at.elapsed().as_secs() + 2)
+            .contains(&after_elapsed)
+    );
+    after["context"]["conversation_time"] = before["context"]["conversation_time"].clone();
+    assert_eq!(after, before);
     let worker = tokio::spawn(mneme::memory::worker(app.clone()));
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
