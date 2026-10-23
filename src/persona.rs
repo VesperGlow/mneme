@@ -168,6 +168,8 @@ async fn preview(State(app): State<App>, Json(input): Json<Preview>) -> ApiResul
     let mut user = preview_user(&input.message);
     if input.use_context {
         user.session_id = app.store.conversation().await?;
+        app.conversation_clock =
+            Some(crate::temporal::ConversationClock::load(&app.store, &user.session_id, "").await?);
         let state: Option<(String, i64)> = sqlx::query_as(
             "SELECT summary,through_seq FROM conversation_context WHERE session_id=?",
         )

@@ -64,6 +64,31 @@ podman logs -f mneme-models
 
 自建镜像可添加 `--build-arg MNEME_MODEL_SOURCES=modelscope,huggingface` 调整构建下载源，或仅填 `modelscope`。不要把 `HF_ENDPOINT` 设置为魔搭地址，两者的下载 URL/API 格式不同。直接在 Python 环境运行时，未设置 `MNEME_BUNDLED_MODEL_CACHE` 才会使用原有的下载及持久卷缓存路径；`HF_HUB_OFFLINE=1` 可要求仅使用已有缓存。
 
+## 自动备份与检查
+
+完整 `scripts/install.sh` 会安装并启用 `mneme-backup.timer`。定时器每天按宿主机时区 03:30 后随机延迟最多 30 分钟运行，错过时补做。单服务更新保持既有定时器；从旧版升级启用它需执行一次完整安装。检查和手动触发：
+
+```bash
+systemctl --user list-timers mneme-backup.timer
+systemctl --user start mneme-backup.service
+journalctl --user -u mneme-backup.service -n 30
+```
+
+快照位于 `~/.local/state/mneme/backups/mneme-时间-随机串/`，包含 `mneme.sqlite3`、`config/` 和 SHA-256 清单 `manifest.json`。配置备份包含密钥，目录权限 0700、文件 0600。默认保留最近 14 份成功快照，只清理本脚本创建并带清单的目录；失败时不删除此前备份。符号链接配置会明确报错，不沿链接读取其他文件。
+
+每次备份先通过 SQLite 在线备份 API 保存已提交 WAL，再恢复到独立临时数据库检查完整性、外键和所有表行数，成功后才发布快照。它验证 SQLite 可恢复，不替代整套 Pod/图谱重建的验收。恢复快照时，使用下文步骤指定其中的 `mneme.sqlite3`；需要恢复部署配置时另行核对 `config/`，不会自动覆盖当前配置。
+
+本地原生部署也可运行：
+
+```bash
+python3 scripts/backup-scheduled.py --database data/mneme.sqlite3 \
+  --config ~/.config/mneme --destination ~/.local/state/mneme/backups --retain 14
+```
+
+自定义部署布局可重复传入 `--config-file /path/to/file`，明确选择 TOML、环境文件和 Quadlet 文件，替代整个配置目录；文件名须互不重复。
+
+停止后续自动备份可执行 `systemctl --user disable --now mneme-backup.timer`，既有快照保留。
+
 ## 从 SQLite 备份恢复
 
 先用 `scripts/backup.py` 生成并检查备份。恢复时停止整个 target，确保没有 SQLite 写者，保留现有数据以便回滚。

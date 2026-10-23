@@ -60,7 +60,30 @@ def build_inputs():
     paths += sorted((ROOT/'src').glob('*.rs'))
     paths += sorted((ROOT/'services/models').glob('*.py'))
     paths += sorted((ROOT/'tests/fixtures/memory').glob('*.json'))
+    paths += sorted((ROOT/'migrations').glob('*.sql'))
+    paths += [ROOT/'scripts/memory-e2e-report.py']
     return {str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}
+
+
+def verify_frozen_fixtures(directory):
+    """Verify author-frozen holdouts without exposing their gold to the agent."""
+    verified = {}
+    manifests = sorted(Path(directory).glob('e2e-blind*.manifest.json'))
+    if not manifests:
+        raise ValueError('No frozen holdout manifests found')
+    for path in manifests:
+        manifest = json.loads(path.read_text())
+        dataset = path.with_name(path.name.replace('.manifest.json', '.json'))
+        digest = hashlib.sha256(dataset.read_bytes()).hexdigest()
+        if digest != manifest['sha256']:
+            raise ValueError(f'Frozen holdout changed: {dataset.name}')
+        profiles = json.loads(dataset.read_text())['profiles']
+        turns = sum(len(p['turns']) for p in profiles)
+        queries = sum(len(p['queries']) for p in profiles)
+        if turns != manifest['turns'] or queries != manifest['queries']:
+            raise ValueError(f'Frozen holdout coverage mismatch: {dataset.name}')
+        verified[dataset.name] = {'sha256': digest, 'turns': turns, 'queries': queries}
+    return verified
 
 
 def main():
@@ -71,6 +94,7 @@ def main():
     parser.add_argument("--download-free-model", action="store_true")
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--require-quality", action="store_true", help="Return failure when measured gold quality thresholds are missed")
+    parser.add_argument("--verify-fixtures-only", action="store_true", help="Verify frozen holdout hashes and coverage without models, containers or API calls")
     parser.add_argument("--generation-model", choices=MODELS, default="qwen3-0.6b")
     parser.add_argument("--deepseek-relay", action="store_true", help="Use only the owned official-provider test relay, with its shared budget")
     parser.add_argument("--split", choices=("dev", "heldout", "unseen", "confirm", "blind", "blind2", "blind3", "blind4", "blind5", "combined", "core", "quality", "full", "all"), default="all")
@@ -82,6 +106,12 @@ def main():
     parser.add_argument("--frozen-test-binary", type=Path, help="Optional checksum-verified pre-fix evaluator; never a production binary")
     parser.add_argument("--test", default="real_local_e2e", choices=("real_local_e2e", "real_local_api", "real_local_load", "real_local_batch", "real_local_unknown", "real_recall_replay"))
     args = parser.parse_args()
+    frozen_fixtures = verify_frozen_fixtures(ROOT/'tests/fixtures/memory')
+    if args.verify_fixtures_only:
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output/'fixture-integrity.json').write_text(json.dumps({'status':'integrity_verified_only','quality_evaluated':False,'fixtures':frozen_fixtures},indent=2)+'\n')
+        print('Frozen holdout hashes and coverage verified; no inference or quality measurement performed.')
+        return
     args.models_source=args.models_source.resolve()
     if not all((args.models_source/name).is_file() for name in ('app.py','engine.py','artifacts.py')):
         parser.error('model source must contain app.py, engine.py and artifacts.py')
@@ -123,6 +153,7 @@ def main():
             raise SystemExit('Evaluation inputs changed during compilation; run again with a stable source tree')
     containers, generation = [], None
     meta = {"run": run, "split": args.split, "runtime": [FILES[0], MODELS[args.generation_model]], "cpus": os.cpu_count(), "available_kib": available,
+            "frozen_fixtures": frozen_fixtures,
             "source_sha256": hashlib.sha256(b''.join(p.read_bytes() for p in sorted((ROOT/'src').glob('*.rs')))).hexdigest(),
             "gold_sha256": hashlib.sha256((ROOT/'tests/fixtures/memory/e2e.json').read_bytes()).hexdigest(),
             "unseen_gold_sha256": hashlib.sha256((ROOT/'tests/fixtures/memory/e2e-unseen.json').read_bytes()).hexdigest(),
@@ -216,7 +247,7 @@ def main():
             summary=report.summarize(out)
             (out/'summary.json').write_text(json.dumps(summary,ensure_ascii=False,indent=2))
             print(json.dumps({k:summary[k] for k in ('writes','retrieval','answers','quality_gate')},ensure_ascii=False),flush=True)
-            if args.require_quality and not summary['quality_gate']['passed']:
+            if (args.require_quality or args.split.startswith('blind')) and not summary['quality_gate']['passed']:
                 raise SystemExit('Measured quality gate failed; inspect summary.json and raw cases')
     finally:
         for name in reversed(containers):

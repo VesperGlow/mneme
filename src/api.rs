@@ -40,6 +40,7 @@ pub fn router(app: App) -> Router {
         .route("/v1/sessions/{id}/messages", get(history))
         .route("/v1/sessions/{id}/chat", post(chat))
         .route("/v1/turns/{id}", get(turn))
+        .route("/v1/turns/{id}/cancel", post(cancel_turn))
         .route(
             "/v1/memories",
             get(list_memories).post(crate::console::create_memory),
@@ -51,6 +52,7 @@ pub fn router(app: App) -> Router {
                 .delete(forget),
         )
         .merge(crate::console::protected_routes())
+        .merge(crate::forgetting::routes())
         .merge(crate::settings::protected_routes())
         .merge(crate::persona::routes())
         .merge(crate::tools::routes())
@@ -302,14 +304,16 @@ async fn chat(
             tokio::spawn(async move {
                 let _activity = activity;
                 let _permit = permit;
-                let mut shutdown = app.shutdown.clone();
-                let generation = crate::chat::generate(&app, &user, &output);
-                let result = tokio::select! {
-                    result = generation => result,
-                    _ = shutdown.changed() => Err(anyhow::anyhow!("shutdown")),
-                };
+                let result = crate::generation::run(&app, &user, &output).await;
                 if let Err(error) = result {
-                    crate::diagnostics::warn("http.generate", &error);
+                    let cancelled = app
+                        .store
+                        .turn_cancelled(&user.turn_id)
+                        .await
+                        .unwrap_or(false);
+                    if !cancelled {
+                        crate::diagnostics::warn("http.generate", &error);
+                    }
                     // Partial deltas are provisional; only done means committed output.
                     if app
                         .store
@@ -322,7 +326,7 @@ async fn chat(
                     let _ = emit(
                         &output,
                         "error",
-                        json!({"turn_id":user.turn_id,"error":"generation_failed","persisted":false}),
+                        json!({"turn_id":user.turn_id,"error":if cancelled {"cancelled"} else {"generation_failed"},"persisted":false}),
                     );
                     tracing::warn!(turn_id=%user.turn_id,"generation failed");
                 }
@@ -339,6 +343,21 @@ async fn chat(
             )
             .into_response(),
     )
+}
+
+async fn cancel_turn(State(app): State<App>, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    valid_id(&id)?;
+    let (status, error) = app
+        .store
+        .cancel_turn(&id)
+        .await?
+        .ok_or(ApiError(StatusCode::NOT_FOUND, "turn_not_found"))?;
+    if error.as_deref() == Some("cancelled") {
+        app.cancellations.cancel(&id);
+    }
+    Ok(Json(
+        json!({"id":id,"status":if error.as_deref()==Some("cancelled") {"cancelled"} else {&status},"persisted":status=="complete"}),
+    ))
 }
 
 async fn turn(State(app): State<App>, Path(id): Path<String>) -> ApiResult<Json<Value>> {

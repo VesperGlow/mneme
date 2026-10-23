@@ -55,6 +55,10 @@ pub(crate) async fn generate(
         .map(|r| r.memory.id.clone())
         .collect();
     let mut with_sources = app.clone();
+    with_sources.conversation_clock = Some(
+        crate::temporal::ConversationClock::load(&app.store, &user.session_id, &user.turn_id)
+            .await?,
+    );
     attach_recall_sources(&mut with_sources, &recalled.memories).await?;
     let app = &with_sources;
     emit(
@@ -183,10 +187,15 @@ pub(crate) fn context_with_summary(
     }
     system.push_str(&app.stickers.read().unwrap().prompt());
     let offset = app.config.timezone.parse::<chrono::FixedOffset>().unwrap();
+    let clock = app
+        .conversation_clock
+        .clone()
+        .unwrap_or_else(|| crate::temporal::ConversationClock::from_history(&history));
     let situation = json!({
         "now": chrono::Utc::now().with_timezone(&offset).to_rfc3339(),
         "timezone": app.config.timezone,
         "current_message": {"sent_at":timestamp(user.created_at, offset)},
+        "conversation_time": clock.context(now()),
     });
     let mut messages = vec![ChatMessage {
         role: "system".into(),
@@ -296,7 +305,7 @@ pub(crate) async fn attach_recall_sources(
 ) -> anyhow::Result<()> {
     app.recall_sources.clear();
     for recall in memories {
-        let sources: Vec<_> = app.store.sources(&recall.memory.id).await?.into_iter().take(2)
+        let sources: Vec<_> = app.store.prompt_sources(&recall.memory.id).await?.into_iter().take(2)
             .map(|s| json!({"message_id":s["message_id"],"quote":truncate(s["quote"].as_str().unwrap_or(""),96),"sent_at":s["observed_at"]}))
             .collect();
         app.recall_sources

@@ -12,6 +12,9 @@ mkdir -p "$mneme_quadlet_dir" "$mneme_systemd_dir"
 if [ "$#" = 0 ]; then
     cp deploy/quadlet/* "$mneme_quadlet_dir/"
     cp deploy/systemd/mneme.target "$mneme_systemd_dir/"
+    cp deploy/systemd/mneme-backup.service deploy/systemd/mneme-backup.timer "$mneme_systemd_dir/"
+    mkdir -p "$HOME/.local/lib/mneme"
+    cp scripts/backup.py scripts/backup-scheduled.py "$HOME/.local/lib/mneme/"
 fi
 for mneme_service in "${mneme_services[@]}"; do
     cp "deploy/quadlet/mneme-$mneme_service.container" "$mneme_quadlet_dir/"
@@ -21,5 +24,6 @@ done
 systemctl --user daemon-reload
 if [ "$#" = 0 ]; then
     systemctl --user enable --now mneme.target
+    systemctl --user enable --now mneme-backup.timer
     systemctl --user --no-pager status mneme.target
 fi

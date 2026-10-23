@@ -51,6 +51,8 @@
   }
   const send = (path, data, method = 'POST') => api(path, { method, body: JSON.stringify(data) });
   function errorText(error) {
+    const forgetErrors = { forget_preview_expired: '预览已过期，请重新查找并核对。', forget_preview_not_found: '预览已过期，请重新查找。', forget_context_changed: '预览后对话已变化，请重新查找并核对影响范围。', stop_generation_before_forgetting: '请先停止当前回复，再确认遗忘。', memory_not_in_preview: '所选记录不属于本次预览，请重新查找。', invalid_forget_confirmation: '请至少选择一条记忆并确认操作。' };
+    if (forgetErrors[error.code]) return forgetErrors[error.code];
     const personaErrors = { interaction_turn_running: '当前正在回复，请等待本轮完成后清除临时状态。' };
     if (personaErrors[error.code]) return personaErrors[error.code];
     const stickerErrors = { invalid_sticker: '名字须为 1–40 字，使用场景最多 120 字。', invalid_sticker_image: '图片未能处理，请检查格式、动图帧数与工具服务；处理后的图片须小于 2 MiB。', sticker_catalog_full: '表情库已达到数量或上下文容量上限，请精简使用场景或删除部分表情。', sticker_storage_full: '表情图片存储已达到 64 MiB 上限。', sticker_not_found: '表情包已被删除，请刷新列表。', tools_disabled: '请先启用工具服务，再上传表情包。' };
@@ -70,7 +72,7 @@
   }
   function empty(title, description, action = '') { return `<div class="empty"><div class="empty-icon">${icon('leaf')}</div><h3>${esc(title)}</h3><p>${esc(description)}</p>${action}</div>`; }
   const loading = text => `<div class="loading" role="status"><span class="spinner"></span>${esc(text || '正在读取记忆…')}</div>`;
-  const newButton = () => `<button class="btn primary" data-new>${icon('plus')}新增记忆</button>`;
+  const newButton = () => `<button class="btn" data-forget>按内容遗忘</button><button class="btn primary" data-new>${icon('plus')}新增记忆</button>`;
   function login() {
     $('#app').innerHTML = `<main class="login"><section class="login-story"><a class="brand" href="/console/" aria-label="Mneme Console"><img src="/console/icon.svg" alt=""><div class="brand-text"><div class="brand-name">mneme</div><div class="brand-caption">CONSOLE</div></div></a><div class="login-copy"><div class="eyebrow">A SPACE FOR WHAT MATTERS</div><h1 class="serif">每一段记忆，<br>都值得被好好保管。</h1><p>在这里，整理那些值得留下的片段，<br>让每一次回想，都有迹可循。</p></div><div class="login-footer">PRIVATE BY DEFAULT · BUILT WITH CARE</div><div class="login-decoration"></div></section><section class="login-form-wrap"><form id="login-form" class="login-card"><div class="eyebrow">YOUR PRIVATE CONSOLE</div><h2>进入你的记忆空间</h2><p class="subheading">使用 WebUI 密码验证身份。</p><label class="field" for="password">登录密码<input id="password" name="password" type="password" placeholder="输入你的 WebUI 密码" autocomplete="current-password" minlength="10" maxlength="128" required autofocus></label><button class="btn primary" type="submit">解锁控制台${icon('arrow')}</button><div id="login-error" class="error-inline" role="alert"></div><div class="login-note">${icon('shield')}<span>登录状态安全保存在浏览器中，刷新或重新打开页面后可继续使用。主动退出或登录过期后需重新验证。</span></div></form></section></main>`;
     api('/v1/console/login').then(data => {
@@ -379,7 +381,7 @@
     return JSON.stringify([message, assistant && index.requests.get(message.turn_id), assistant && history.turn_usage?.[message.turn_id], assistant && index.tools.get(message.turn_id), index.assets.get(message.id), index.stickers.get(message.id)]);
   }
   function messageMarkup(history, message, index) {
-    return `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small>${message.role === 'assistant' ? reasoningMarkup(index.requests.get(message.turn_id) || []) : ''}<div class="${message.role === 'assistant' ? 'answer-body' : 'prewrap'}">${message.role === 'assistant' ? answerMarkup(message.content) : esc(message.content)}</div><div class="chat-stickers">${(index.stickers.get(message.id) || []).map(s => `<img class="chat-sticker" src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy">`).join('')}</div><div class="chat-assets">${(index.assets.get(message.id) || []).map(a => `<button class="btn small" data-image="${esc(a.id)}">${message.role === 'assistant' ? '查看回复图片' : '查看上传图片'}</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${(index.tools.get(message.turn_id) || []).map(toolMarkup).join('')}</div>${turnUsageMarkup(history.turn_usage?.[message.turn_id], (index.requests.get(message.turn_id) || []), message.turn_id)}` : ''}</article>`;
+    return `<article class="chat-message ${message.role}" data-message-id="${esc(message.id)}"><small>${message.role === 'user' ? '你' : 'Mneme'} · ${message.channel === 'qq' ? 'QQ' : '网页/API'} · ${date(message.created_at, true)}${message.error_code === 'cancelled' ? ' · 已停止生成' : message.status === 'failed' ? ' · 本轮未完成' : message.status === 'generating' ? ' · 正在回复' : ''}</small>${message.role === 'assistant' ? reasoningMarkup(index.requests.get(message.turn_id) || []) : ''}<div class="${message.role === 'assistant' ? 'answer-body' : 'prewrap'}">${message.role === 'assistant' ? answerMarkup(message.content) : esc(message.content)}</div><div class="chat-stickers">${(index.stickers.get(message.id) || []).map(s => `<img class="chat-sticker" src="/v1/sticker-images/${esc(s.image_id)}" alt="${esc(s.name)}" loading="lazy">`).join('')}</div><div class="chat-assets">${(index.assets.get(message.id) || []).map(a => `<button class="btn small" data-image="${esc(a.id)}">${message.role === 'assistant' ? '查看回复图片' : '查看上传图片'}</button>`).join('')}</div>${message.role === 'assistant' ? `<div class="chat-tools">${(index.tools.get(message.turn_id) || []).map(toolMarkup).join('')}</div>${turnUsageMarkup(history.turn_usage?.[message.turn_id], (index.requests.get(message.turn_id) || []), message.turn_id)}` : ''}</article>`;
   }
   function transcriptMarkup(history, index = transcriptIndex(history)) {
     return history.messages.map(message => messageMarkup(history, message, index)).join('') || `<div class="chat-welcome"><img src="/console/icon.svg" alt=""><h2>今天，想聊些什么？</h2><p>从这一刻开始，延续每一段交流。</p></div>`;
@@ -407,21 +409,68 @@
       previous = node;
     }
   }
+  async function forgetPreview(query = '') {
+    const epoch = state.epoch;
+    const dialog = openDialog('confirm', `<form id="forget-form"><header class="dialog-head"><h2>确认遗忘范围</h2><button type="button" class="icon-btn" data-close="confirm" aria-label="关闭">${icon('close')}</button></header><div class="dialog-body stack"><label class="field">查找相关记忆<input id="forget-query" maxlength="500" required value="${esc(query)}" placeholder="例如：咖啡偏好"></label><button type="button" class="btn" id="forget-search">查找记忆</button><div id="forget-candidates"></div><label class="field">遗忘范围<select id="forget-scope"><option value="memory">仅移除所选长期记忆</option><option value="context">同时清空摘要，停止使用此前全部对话作为聊天历史</option></select></label><p class="hint">仅移除长期记忆时，历史和摘要仍可能包含相关内容。第二种范围会隔离此前全部对话，其他长期记忆保留。两种范围均保留原始记录、审计和备份。</p><div class="error-inline" id="forget-error" role="alert"></div></div><footer class="dialog-footer"><button type="button" class="btn" data-close="confirm">取消</button><button class="btn danger" id="forget-submit" disabled>确认遗忘所选记忆</button></footer></form>`);
+    let plan = null; let sequence = 0;
+    const valid = () => epoch === state.epoch && dialog.open;
+    const search = async () => {
+      const request = ++sequence; const query = $('#forget-query').value.trim();
+      plan = null; $('#forget-submit').disabled = true; $('#forget-candidates').textContent = ''; $('#forget-error').textContent = '';
+      if (!query) return;
+      $('#forget-search').disabled = true;
+      try {
+        const next = await send('/v1/memories/forget/preview', { query });
+        if (!valid() || request !== sequence) return;
+        plan = next;
+        $('#forget-candidates').innerHTML = next.candidates.length ? `<p class="hint">以下是候选，尚未删除。请逐项选择；预览 5 分钟内有效。${next.degraded ? '当前检索已降级，结果可能不完整。' : ''}</p>${next.candidates.map(m => `<label class="check-label"><input type="checkbox" name="forget-memory" value="${esc(m.id)}"><span>${esc(m.content)}<small> · ${fmt(m.source_count)} 条来源</small></span></label>`).join('')}<p class="hint">选择第二种范围会隔离此前 ${fmt(next.context_messages)} 条消息，并清空摘要。</p>` : '<p>没有找到匹配的长期记忆，未执行删除。</p>';
+        $$('[name="forget-memory"]').forEach(box => { box.onchange = () => { $('#forget-submit').disabled = !$$('[name="forget-memory"]:checked').length; }; });
+      } catch (error) { if (valid() && request === sequence) $('#forget-error').textContent = errorText(error); }
+      finally { if (valid() && request === sequence) $('#forget-search').disabled = false; }
+    };
+    $('#forget-search').onclick = search;
+    $('#forget-query').oninput = () => { sequence++; plan = null; $('#forget-submit').disabled = true; $('#forget-search').disabled = false; $('#forget-candidates').textContent = ''; };
+    $('#forget-form').onsubmit = async event => {
+      event.preventDefault(); if (!plan) { await search(); return; }
+      const memory_ids = $$('[name="forget-memory"]:checked').map(box => box.value); if (!memory_ids.length) return;
+      $('#forget-submit').disabled = true;
+      try {
+        await send('/v1/memories/forget/confirm', { token: plan.token, memory_ids, scope: $('#forget-scope').value, confirmation: 'FORGET' });
+        if (!valid()) return;
+        closeDialog('confirm'); closeDialog('detail');
+        toast('所选记忆已移除，原始记录和备份保留。'); await route();
+      } catch (error) { if (valid()) { $('#forget-error').textContent = errorText(error); $('#forget-submit').disabled = false; } }
+    };
+    if (query) await search();
+  }
   async function chatPage(epoch) {
     const [tools, history] = await Promise.all([api('/v1/console/tools'), api('/v1/console/messages')]); if (epoch !== state.epoch) return;
     const data = history.conversation;
     lazyDetails.clear();
     const index = transcriptIndex(history);
     const signatures = new Map(history.messages.map(message => [message.id, messageState(history, message, index)]));
-    $('#page').innerHTML = `<section class="chat-panel" aria-label="与 Mneme 对话"><div id="chat-messages" class="chat-messages" role="log" aria-label="对话记录">${transcriptMarkup(history, index)}</div><div class="composer-wrap">${data.active_turn ? '<p class="chat-resuming" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" rows="1" maxlength="4000" placeholder="给 Mneme 发消息…"></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="composer-actions"><label class="icon-btn image-upload" title="上传图片 · 最多 4 张，每张 8 MiB">${icon('plus')}<span class="sr-only">上传图片</span><input id="chat-files" type="file" aria-label="上传图片" accept="image/png,image/jpeg,image/webp" multiple></label><span class="composer-hint">Enter 发送 · Shift + Enter 换行</span><button class="send-button" id="send-chat" aria-label="发送" title="发送">${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form><details class="chat-context-details"><summary id="chat-context">${esc(contextUsage(data.context))}</summary><div class="context-popover" id="chat-context-popover">${contextDetails(data.context)}</div></details></div></section>`;
-    const uploads = []; let uploading = false;
+    $('#page').innerHTML = `<section class="chat-panel" aria-label="与 Mneme 对话"><div id="chat-messages" class="chat-messages" role="log" aria-label="对话记录">${transcriptMarkup(history, index)}</div><div class="composer-wrap">${data.active_turn ? '<p class="chat-resuming" role="status">上一轮回复正在继续生成，完成后会自动显示。</p>' : ''}<form id="chat-form" class="chat-composer"><label class="sr-only" for="chat-message">消息</label><textarea id="chat-message" rows="1" maxlength="4000" placeholder="给 Mneme 发消息…"></textarea><div id="chat-attachments" class="chat-attachments"></div><div class="composer-actions"><label class="icon-btn image-upload" title="上传图片 · 最多 4 张，每张 8 MiB">${icon('plus')}<span class="sr-only">上传图片</span><input id="chat-files" type="file" aria-label="上传图片" accept="image/png,image/jpeg,image/webp" multiple></label><span class="composer-hint">Enter 发送 · Shift + Enter 换行</span><button type="button" class="btn small" id="stop-chat" hidden>停止生成</button><button class="send-button" id="send-chat" aria-label="发送" title="发送">${icon('arrow')}</button></div><div id="chat-error" class="error-inline" role="alert"></div></form><details class="chat-context-details"><summary id="chat-context">${esc(contextUsage(data.context))}</summary><div class="context-popover" id="chat-context-popover">${contextDetails(data.context)}</div></details></div></section>`;
+    const uploads = []; let uploading = false; let localTurn = null; let stopping = false;
     const composer = $('#chat-message');
     const updateComposer = () => {
       const locked = state.chatBusy || Boolean(data.active_turn) || uploading;
       composer.disabled = locked;
       $('#send-chat').disabled = locked || (!composer.value.trim() && !uploads.length);
       $('#chat-files').disabled = locked || !tools.enabled;
+      $('#stop-chat').hidden = !(localTurn || data.active_turn);
+      $('#stop-chat').disabled = stopping;
       $$('[data-remove-upload]').forEach(button => { button.disabled = locked; });
+    };
+    $('#stop-chat').onclick = async () => {
+      const turn = localTurn || data.active_turn; if (!turn || stopping) return;
+      stopping = true; updateComposer();
+      try {
+        const result = await api(`/v1/turns/${encodeURIComponent(turn)}/cancel`, { method: 'POST' });
+        if (epoch !== state.epoch) return;
+        toast(result.status === 'cancelled' ? '已停止生成，临时回复未保存。' : '本轮已经结束。');
+        if (!state.chatBusy) await route();
+      } catch (error) { if (epoch === state.epoch) toast(errorText(error), true); }
+      finally { stopping = false; if (epoch === state.epoch) updateComposer(); }
     };
     composer.oninput = () => { composer.style.height = 'auto'; composer.style.height = `${Math.min(composer.scrollHeight, 240)}px`; updateComposer(); };
     composer.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing && event.keyCode !== 229) { event.preventDefault(); if (!$('#send-chat').disabled) $('#chat-form').requestSubmit(); } };
@@ -438,12 +487,14 @@
     $('#chat-form').onsubmit = async event => {
       event.preventDefault(); if (state.chatBusy || data.active_turn || uploading) return;
       const message = $('#chat-message').value.trim() || (uploads.length ? '请查看我上传的图片。' : ''); if (!message) return;
+      const forgetMatch = !uploads.length && message.match(/^(?:\/忘记\s+|请忘记|请忘掉|忘记|忘掉)(.+)$/s);
+      if (forgetMatch) { await forgetPreview(forgetMatch[1].trim().replace(/[。！!]+$/, '')); return; }
       const assets = [...uploads]; const requestId = crypto.randomUUID(); const errorEl = $('#chat-error'); errorEl.textContent = ''; state.chatBusy = true;
       updateComposer();
       const messages = $('#chat-messages'); $('.chat-welcome', messages)?.remove();
       messages.insertAdjacentHTML('beforeend', `<article class="chat-message user"><small>你</small><div class="prewrap">${esc(message)}</div></article><article class="chat-message assistant" id="chat-current"><small>Mneme</small><div id="chat-live-requests"></div><div class="answer-body" id="chat-answer"></div><div class="chat-tools" id="chat-live-tools"></div><div id="chat-live-usage"></div><small id="chat-progress">正在思考…</small></article>`);
       messages.scrollTop = messages.scrollHeight;
-      let persisted = false; let failed = false; let answer = ''; let liveTurnUsage; const liveRequests = new Map();
+      let persisted = false; let failed = false; let cancelled = false; let answer = ''; let liveTurnUsage; const liveRequests = new Map();
       let renderFrame = 0; let answerDirty = false; let usageDirty = false;
       const dirtyRequests = new Set(); const dirtyTools = new Map();
       const flushRender = () => {
@@ -478,6 +529,7 @@
       try {
         const response = await fetch('/v1/chat', { method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: state.controller.signal, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ request_id: requestId, message, assets }) });
         if (!response.ok) { if (response.status === 401) clearLogin(); throw new ApiFailure(response.status, (await response.json()).error); }
+        localTurn = requestId; updateComposer();
         const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
         while (true) {
           const { value, done } = await reader.read(); buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n');
@@ -486,7 +538,7 @@
             const frame = buffer.slice(0, split); buffer = buffer.slice(split + 2);
             const name = frame.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim();
             const raw = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n'); if (!raw) continue;
-            const data = JSON.parse(raw); if (name === 'done') persisted = data.persisted; if (name === 'error') failed = true;
+            const data = JSON.parse(raw); if (name === 'done') persisted = data.persisted; if (name === 'error') { failed = true; cancelled = data.error === 'cancelled'; }
             if (epoch !== state.epoch) continue;
             if (name === 'compaction') $('#chat-progress').textContent = data.status === 'running' ? '正在整理历史，延续对话…' : '历史已整理，正在思考…';
             if (name === 'context') {
@@ -509,19 +561,19 @@
             if (name === 'reply_reset') { answer = ''; answerDirty = true; $('#chat-progress').textContent = '正在继续…'; }
             if (name === 'delta') { answer += data.content; answerDirty = true; $('#chat-progress').textContent = '正在回复…'; }
             if (name === 'tool') { dirtyTools.set(data.id, data); $('#chat-progress').textContent = data.status === 'running' ? `正在${toolLabels[data.action] || '执行工具'}…` : '正在继续思考…'; }
-            if (name === 'error') $('#chat-progress').textContent = '本轮失败，临时输出未保存。';
+            if (name === 'error') $('#chat-progress').textContent = cancelled ? '已停止生成，临时回复未保存。' : '本轮失败，临时输出未保存。';
             scheduleRender();
           }
           if (done) break;
         }
         flushRender();
-        if (!persisted) throw new Error(failed ? 'generation_failed' : 'stream_interrupted');
+        if (!persisted && !cancelled) throw new Error(failed ? 'generation_failed' : 'stream_interrupted');
       } catch (error) { if (epoch === state.epoch && error.name !== 'AbortError') errorEl.textContent = `本轮未确认完成，可稍后刷新会话检查。${errorText(error)}`; }
       finally {
         flushRender();
-        state.chatBusy = false;
+        state.chatBusy = false; localTurn = null;
         if (epoch === state.epoch && state.authenticated) {
-          if (persisted) {
+          if (persisted || cancelled) {
             const open = new Set($$('details[data-detail-key][open]', messages).map(detail => detail.dataset.detailKey));
             const follow = messages.scrollHeight - messages.scrollTop - messages.clientHeight < 100;
             const scrollTop = messages.scrollTop;
@@ -750,6 +802,7 @@
   document.addEventListener('click', event => {
     const target = event.target.closest('button,[data-detail]'); if (!target || target.disabled) return;
     if (target.dataset.image) { target.disabled = true; showImage(target.dataset.image, target.parentElement).catch(error => { toast(errorText(error), true); target.disabled = false; }); }
+    else if (target.hasAttribute('data-forget')) forgetPreview(state.filter.q || '');
     else if (target.hasAttribute('data-new')) edit();
     else if (target.dataset.detail) detail(target.dataset.detail);
     else if (target.dataset.edit) edit(target.dataset.edit);

@@ -1423,7 +1423,8 @@ async fn extract(app: &App, job: &Job) -> Result<()> {
         return extract_batch(app, job).await;
     }
     let processed: bool =
-        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)")
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=? UNION ALL SELECT 1 FROM suppressed_sources WHERE message_id=?)")
+            .bind(&job.payload)
             .bind(&job.payload)
             .fetch_one(&app.store.pool)
             .await?;
@@ -1524,8 +1525,9 @@ async fn extract_batch(app: &App, job: &Job) -> Result<()> {
     let mut sources = Vec::new();
     for id in batch.message_ids {
         let processed: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=?)",
+            "SELECT EXISTS(SELECT 1 FROM extracted_messages WHERE message_id=? UNION ALL SELECT 1 FROM suppressed_sources WHERE message_id=?)",
         )
+        .bind(&id)
         .bind(&id)
         .fetch_one(&app.store.pool)
         .await?;

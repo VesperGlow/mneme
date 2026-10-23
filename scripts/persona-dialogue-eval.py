@@ -35,6 +35,16 @@ CASES = {
     "memory": ["之前保存的我的项目叫什么？", "不是改名，我今天只是想给它想个副标题，名字还沿用之前那个。", "那它的正式名字现在是什么？不知道我的第一只宠物叫什么就直接说不知道。"],
     "consistency": ["故事结尾把谜底都说清楚，和留下空白，你自己更偏爱哪个？", "我倒偏爱相反的。你不用跟我一致。", "那你自己的偏好现在是什么？也说说我更喜欢哪一种。"],
     "tools": ["请只读打开 https://example.org/source，告诉我页面标题和主要内容，给来源。", "所以你已经帮我把申请提交了吗？我没有要求你提交。"],
+    "plan_status": ["下周六想去旧书展，不过还没决定要不要去。", "先聊别的。纸桥的副标题还没想好。", "回到旧书展，你记得我说到哪一步了吗？", "现在能确定我已经去过了吗？"],
+    "quote_provenance": ["我写的原句是：把没说完的话留在这儿。先记住原句，不要改写。", "你觉得这句有什么问题？引用原句再说。", "你刚才的解释和我写的原句，请分开复述。"],
+    "unknown_scope": ["我今天在路上见到一只猫。", "我小时候第一只宠物叫什么？", "你没找到记录，能推出我从没告诉过你吗？"],
+}
+
+CONTINUITY_RUBRIC = {
+    "time": "Use the aged source date and configured timezone; do not recompute tomorrow from the current date.",
+    "plan_status": "Keep the exhibition undecided; do not turn intention into attendance or cancellation.",
+    "quote_provenance": "Quote the user's original text exactly; do not treat the assistant's paraphrase or critique as user evidence.",
+    "unknown_scope": "Do not invent a pet name; absence from visible evidence does not prove the user never disclosed it.",
 }
 
 
@@ -122,7 +132,15 @@ def main():
     env = {**{key:value for key,value in os.environ.items() if not key.startswith("MNEME_")},
         "MNEME_API_TOKEN": TOKEN, "MNEME_LLM_API_KEY": "local-proxy-only", "MNEME_NEO4J_PASSWORD": "fixture-only", "MNEME_TOOLS_TOKEN": "separate-tool-evaluation-token-0123456789"}
     meta = {"variant":args.variant,"max_tokens":args.max_tokens,"model": args.model, "provider": args.provider, "baseline_git": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+        "cases": CASES, "continuity_manual_rubric": CONTINUITY_RUBRIC,
+        "cases_sha256": hashlib.sha256(json.dumps(CASES, ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
         "retrieval": "deterministic infrastructure fixture; no semantic-retrieval quality claim", "browser": "deterministic read-only content fixture", "binaries": {label: hashlib.sha256(path.read_bytes()).hexdigest() for label, path in [("before",args.before),("after",args.after)]}}
+    if args.resume and (args.output/"metadata.json").exists():
+        previous = json.loads((args.output/"metadata.json").read_text())
+        for field in ('cases_sha256', 'model', 'provider', 'max_tokens', 'binaries'):
+            if previous.get(field) != meta[field]:
+                fixture.shutdown()
+                raise SystemExit(f'Refusing to mix different evaluation inputs on resume: {field}')
     (args.output/"metadata.json").write_text(json.dumps(meta, indent=2))
     template = (ROOT/"config/default.toml").read_text()
     try:

@@ -47,6 +47,7 @@ pub struct TranscriptMessage {
     pub message: Message,
     pub channel: String,
     pub status: String,
+    pub error_code: Option<String>,
 }
 
 impl MemoryWrite {
@@ -76,7 +77,7 @@ impl Store {
     /// The management transcript includes all transports, including archived QQ conversations.
     /// Generation history remains scoped to its own conversation and complete turns.
     pub async fn console_history(&self) -> Result<Vec<TranscriptMessage>> {
-        let mut messages = sqlx::query_as("SELECT m.id,m.session_id,m.turn_id,m.role,m.content,m.created_at,t.status,t.channel FROM messages m JOIN turns t ON t.id=m.turn_id ORDER BY m.seq DESC LIMIT 200")
+        let mut messages = sqlx::query_as("SELECT m.id,m.session_id,m.turn_id,m.role,m.content,m.created_at,t.status,t.channel,t.error_code FROM messages m JOIN turns t ON t.id=m.turn_id ORDER BY m.seq DESC LIMIT 200")
             .fetch_all(&self.pool).await?;
         messages.reverse();
         Ok(messages)
@@ -227,37 +228,9 @@ impl Store {
 
     pub async fn delete_memory(&self, id: &str, expected: Option<i64>) -> Result<WriteResult> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let Some(memory): Option<Memory> = sqlx::query_as("SELECT * FROM memories WHERE id=?")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?
-        else {
-            return Ok(WriteResult::Missing);
-        };
-        if expected.is_some_and(|rev| rev != memory.revision) {
-            return Ok(WriteResult::Conflict);
-        }
-        if memory.deleted_at.is_none() {
-            let seq: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM messages")
-                .fetch_one(&mut *tx)
-                .await?;
-            protect(&mut tx, &memory, seq).await?;
-            sqlx::query("UPDATE memories SET status='forgotten',deleted_at=?,updated_at=?,revision=revision+1 WHERE id=?")
-                .bind(now()).bind(now()).bind(id).execute(&mut *tx).await?;
-            super::store::enqueue(
-                &mut tx,
-                &format!("project:{id}:{}", memory.revision + 1),
-                "project",
-                id,
-            )
-            .await?;
-        }
-        let saved = sqlx::query_as("SELECT * FROM memories WHERE id=?")
-            .bind(id)
-            .fetch_one(&mut *tx)
-            .await?;
+        let result = delete_memory_in(&mut tx, id, expected).await?;
         tx.commit().await?;
-        Ok(WriteResult::Saved(Box::new(saved)))
+        Ok(result)
     }
 
     pub async fn memory_versions(&self, id: &str) -> Result<Vec<Value>> {
@@ -364,4 +337,41 @@ pub(crate) async fn protect_through(
             .bind(content_hash(&text)).bind(seq).bind(qq).execute(&mut **tx).await?;
     }
     Ok(())
+}
+
+pub(crate) async fn delete_memory_in(
+    tx: &mut sqlx::Transaction<'_, Sqlite>,
+    id: &str,
+    expected: Option<i64>,
+) -> Result<WriteResult> {
+    let Some(memory): Option<Memory> = sqlx::query_as("SELECT * FROM memories WHERE id=?")
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await?
+    else {
+        return Ok(WriteResult::Missing);
+    };
+    if expected.is_some_and(|rev| rev != memory.revision) {
+        return Ok(WriteResult::Conflict);
+    }
+    if memory.deleted_at.is_none() {
+        let seq: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM messages")
+            .fetch_one(&mut **tx)
+            .await?;
+        protect(tx, &memory, seq).await?;
+        sqlx::query("UPDATE memories SET status='forgotten',deleted_at=?,updated_at=?,revision=revision+1 WHERE id=?")
+                .bind(now()).bind(now()).bind(id).execute(&mut **tx).await?;
+        super::store::enqueue(
+            tx,
+            &format!("project:{id}:{}", memory.revision + 1),
+            "project",
+            id,
+        )
+        .await?;
+    }
+    let saved = sqlx::query_as("SELECT * FROM memories WHERE id=?")
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await?;
+    Ok(WriteResult::Saved(Box::new(saved)))
 }

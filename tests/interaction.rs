@@ -15,6 +15,90 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 const TOKEN: &str = "source-context-token-01234567890123456789";
+
+#[tokio::test]
+async fn elapsed_time_uses_the_last_completed_exchange_even_after_compaction() {
+    let (_temp, app, seen, tasks, _stop) = setup().await;
+    let session = app.store.conversation().await.unwrap();
+    let mneme::store::BeginTurn::Started(source) = app
+        .store
+        .begin_turn(&session, &id(), "明天想去展览，还没有决定。")
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    app.store.complete_turn(&source, "先放着。").await.unwrap();
+    let previous = now() - 86400;
+    sqlx::query("UPDATE messages SET created_at=? WHERE turn_id=?")
+        .bind(previous)
+        .bind(&source.turn_id)
+        .execute(&app.store.pool)
+        .await
+        .unwrap();
+    // A fresh summary timestamp must not make yesterday's exchange look recent.
+    sqlx::query("INSERT INTO conversation_context(session_id,summary,through_seq,updated_at) VALUES(?,'曾计划去看展，尚未确认。',(SELECT MAX(seq) FROM messages),?)")
+        .bind(&session).bind(now()).execute(&app.store.pool).await.unwrap();
+    let mneme::store::BeginTurn::Started(interrupted) = app
+        .store
+        .begin_turn(&session, &id(), "取消的临时输入")
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    app.store.cancel_turn(&interrupted.turn_id).await.unwrap();
+    let router = api::router(app.clone());
+    let (_, wire) = chat(&router, "今天想聊点别的。").await;
+    assert!(wire.contains("event: done"));
+    let request = seen.lock().unwrap().last().unwrap().clone();
+    let situation = |request: &Value| -> Value {
+        let text = request["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find_map(|m| {
+                m["content"]
+                    .as_str()
+                    .filter(|text| text.starts_with("<untrusted_situation>"))
+            })
+            .unwrap();
+        serde_json::from_str(
+            text.trim_start_matches("<untrusted_situation>\n")
+                .trim_end_matches("\n</untrusted_situation>"),
+        )
+        .unwrap()
+    };
+    let first = situation(&request);
+    let current = chrono::DateTime::parse_from_rfc3339(first["now"].as_str().unwrap()).unwrap();
+    let gap = first["conversation_time"]["seconds_since_previous_exchange"]
+        .as_i64()
+        .unwrap();
+    assert!((gap - (current.timestamp() - previous)).abs() <= 1);
+    assert!(gap >= 86400);
+    assert!(!request["messages"].to_string().contains("取消的临时输入"));
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "clock facts need no extra model call"
+    );
+    chat(&router, "继续这次的话题。").await;
+    let next = seen.lock().unwrap().last().unwrap().clone();
+    let next_gap = situation(&next)["conversation_time"]["seconds_since_previous_exchange"]
+        .as_i64()
+        .unwrap();
+    assert!(
+        next_gap < 10,
+        "each request must read the latest exchange instead of retaining yesterday's gap"
+    );
+    assert_eq!(
+        request["messages"][0], next["messages"][0],
+        "elapsed time belongs to context data, not changing persona instructions"
+    );
+    for task in tasks {
+        task.abort();
+    }
+}
 async fn setup() -> (
     tempfile::TempDir,
     App,

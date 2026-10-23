@@ -28,6 +28,7 @@ pub struct Incoming {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Acceptance {
     Queued,
+    Cancelled(String),
     Duplicate,
     OtherAccount,
 }
@@ -118,13 +119,27 @@ impl Store {
         .bind(app_id)
         .fetch_one(&mut *tx)
         .await?;
-        ensure!(queued < 256, "QQ queue full");
+        ensure!(queued < 256 || text == "/停止", "QQ queue full");
         let session = Self::conversation_in(&mut tx).await?;
+        let cancelled: Option<String> = if text == "/停止" {
+            let active: Option<String> =
+                sqlx::query_scalar("SELECT active_turn FROM sessions WHERE id=?")
+                    .bind(&session)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            if let Some(turn) = &active {
+                crate::store::cancel_turn_in(&mut tx, turn).await?;
+            }
+            active
+        } else {
+            None
+        };
         sqlx::query("INSERT INTO qq_sessions(app_id,user_openid,session_id) VALUES(?,?,?) ON CONFLICT(app_id,user_openid) DO UPDATE SET session_id=excluded.session_id")
             .bind(app_id).bind(&message.sender).bind(&session).execute(&mut *tx).await?;
         let reply: Option<String> = match text {
+                "/停止" => Some(if cancelled.is_some() {"已停止当前回复，临时内容未保存。"} else {"当前没有正在生成的回复。"}.into()),
                 "/新会话" => Some("QQ、网页和 API 始终延续同一段对话，无需开启新会话。".into()),
-                "/帮助" => Some("直接发送文字或图片即可聊天。\nQQ、网页和 API 共用同一份持续上下文。\n记忆管理与遗忘请使用本机 Mneme Console。".into()),
+                "/帮助" => Some("直接发送文字或图片即可聊天。\nQQ、网页和 API 共用同一份持续上下文。\n/停止：停止当前回复。\n/忘记 关键词：预览相关记忆，再按提示确认。\n也可在 Mneme Console 管理记忆。".into()),
                 // Do not put an obsolete pairing code in history or send it to the LLM.
                 _ if text == "/绑定" || text.starts_with("/绑定 ") => Some("无需绑定，直接发送文字即可聊天。".into()),
                 _ if images.len() > 4 => Some("每条消息最多支持 4 张图片，请分开发送。".into()),
@@ -137,7 +152,9 @@ impl Store {
             .bind(if reply.is_some(){""}else{text}).bind(session).bind(reply)
             .bind(now()).bind(message.expires_at).bind(now()).bind(serde_json::to_string(images)?).execute(&mut *tx).await?;
         tx.commit().await?;
-        Ok(Acceptance::Queued)
+        Ok(cancelled
+            .map(Acceptance::Cancelled)
+            .unwrap_or(Acceptance::Queued))
     }
 
     pub async fn qq_claim(&self, app_id: &str) -> Result<Option<Delivery>> {

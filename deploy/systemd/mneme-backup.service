@@ -1,0 +1,8 @@
+[Unit]
+Description=Mneme private backup and SQLite restore verification
+
+[Service]
+Type=oneshot
+UMask=0077
+ExecStart=/usr/bin/python3 %h/.local/lib/mneme/backup-scheduled.py
+TimeoutStartSec=30min

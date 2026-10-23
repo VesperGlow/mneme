@@ -19,6 +19,9 @@ async fn main() -> anyhow::Result<()> {
     config.neo4j_password = "fixture-only".into();
     config.database = temp.path().join("db").to_string_lossy().into();
     config.llm.base_url = base.clone();
+    if let Ok(base) = std::env::var("MNEME_LLM_UI_URL") {
+        config.llm.base_url = base;
+    }
     config.models.base_url = base.clone();
     config.neo4j.base_url = base;
     config.memory.poll_seconds = 1;

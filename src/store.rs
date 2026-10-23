@@ -388,6 +388,24 @@ impl Store {
         Ok(())
     }
 
+    /// The completion and cancellation transactions compete for the same row.
+    /// Whichever commits first wins; a committed reply is never retracted.
+    pub async fn cancel_turn(&self, turn: &str) -> Result<Option<(String, Option<String>)>> {
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let state = cancel_turn_in(&mut tx, turn).await?;
+        tx.commit().await?;
+        Ok(state)
+    }
+
+    pub async fn turn_cancelled(&self, turn: &str) -> Result<bool> {
+        Ok(sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM turns WHERE id=? AND error_code='cancelled')",
+        )
+        .bind(turn)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
     /// Count full conversation tokens, then enqueue completed intervals or an aged partial batch.
     /// A single long turn stays whole. The cursor and its job commit with the reply.
     pub(crate) async fn schedule_extraction(&self, tx: &mut Transaction<'_, Sqlite>) -> Result<()> {
@@ -558,6 +576,17 @@ impl Store {
         let rows = sqlx::query("SELECT s.message_id,s.quote,s.observed_at,m.session_id,m.turn_id,m.content FROM memory_sources s JOIN messages m ON m.id=s.message_id WHERE s.memory_id=? ORDER BY s.observed_at DESC LIMIT 100")
             .bind(memory_id).fetch_all(&self.pool).await?;
         Ok(rows.into_iter().map(|r| json!({"message_id":r.get::<String,_>("message_id"),"quote":r.get::<String,_>("quote"),"content":r.get::<String,_>("content"),"observed_at":r.get::<i64,_>("observed_at"),"session_id":r.get::<String,_>("session_id"),"turn_id":r.get::<String,_>("turn_id")})).collect())
+    }
+
+    /// Audit APIs retain the originals; prompts omit sources protected by a
+    /// manual edit or deletion, including when shared by another active fact.
+    pub(crate) async fn prompt_sources(&self, memory_id: &str) -> Result<Vec<Value>> {
+        let rows: Vec<(String, String, i64)> = sqlx::query_as("SELECT s.message_id,s.quote,s.observed_at FROM memory_sources s WHERE s.memory_id=? AND NOT EXISTS(SELECT 1 FROM suppressed_sources p WHERE p.message_id=s.message_id) ORDER BY s.observed_at DESC,s.message_id LIMIT 2")
+            .bind(memory_id).fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, quote, at)| json!({"message_id":id,"quote":quote,"observed_at":at}))
+            .collect())
     }
 
     /// All extracted facts and job acknowledgement commit together; retries cannot create versions twice.
@@ -1032,4 +1061,34 @@ pub(crate) async fn enqueue(
     .execute(&mut **tx)
     .await?;
     Ok(())
+}
+
+pub(crate) async fn cancel_turn_in(
+    tx: &mut Transaction<'_, Sqlite>,
+    turn: &str,
+) -> Result<Option<(String, Option<String>)>> {
+    let session: Option<String> = sqlx::query_scalar("UPDATE turns SET status='failed',error_code='cancelled',completed_at=? WHERE id=? AND status='generating' RETURNING session_id")
+            .bind(now()).bind(turn).fetch_optional(&mut **tx).await?;
+    if let Some(session) = session {
+        sqlx::query(
+            "UPDATE model_requests SET status='interrupted' WHERE turn_id=? AND status='running'",
+        )
+        .bind(turn)
+        .execute(&mut **tx)
+        .await?;
+        sqlx::query("UPDATE tool_calls SET status='failed',error='turn_cancelled',completed_at=? WHERE turn_id=? AND status='running'")
+                .bind(now()).bind(turn).execute(&mut **tx).await?;
+        sqlx::query("UPDATE sessions SET active_turn=NULL WHERE id=? AND active_turn=?")
+            .bind(session)
+            .bind(turn)
+            .execute(&mut **tx)
+            .await?;
+        sqlx::query("UPDATE qq_inbox SET status='dead',last_error='cancelled' WHERE id=? AND status IN ('pending','running')")
+                .bind(turn).execute(&mut **tx).await?;
+    }
+    let state = sqlx::query_as("SELECT status,error_code FROM turns WHERE id=?")
+        .bind(turn)
+        .fetch_optional(&mut **tx)
+        .await?;
+    Ok(state)
 }

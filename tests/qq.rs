@@ -22,6 +22,152 @@ const APP_ID: &str = "12345678";
 const SECRET: &str = "qq-fixture-secret-only";
 const TOKEN: &str = "qq-test-console-token-01234567890123456789";
 
+#[tokio::test]
+async fn qq_forgetting_previews_before_confirmation_and_replays_without_regeneration() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, upstream) = common::fake_services().await;
+    let (platform, qq_base, server) = platform().await;
+    let (stop, rx) = watch::channel(false);
+    let app = App::new(config(&temp, &base, &qq_base), rx).await.unwrap();
+    let mneme::console_store::WriteResult::Saved(saved) = app
+        .store
+        .manual_memory(
+            None,
+            &mneme::console_store::MemoryWrite {
+                content: "用户住在成都。".into(),
+                kind: "fact".into(),
+                importance: 0.8,
+                confidence: 1.0,
+                entities: vec![],
+                valid_until: None,
+                expected_revision: None,
+            },
+        )
+        .await
+        .unwrap()
+    else {
+        panic!()
+    };
+    let callbacks = qq::router(app.clone());
+    let worker = tokio::spawn(qq::worker(app.clone()));
+    message(&callbacks, "forget-preview", "owner", "请忘记成都").await;
+    wait_sent(&app, 1).await;
+    assert!(
+        app.store
+            .memory(&saved.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .deleted_at
+            .is_none()
+    );
+    let content = platform.sent.lock().await[0]["content"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(content.contains("尚未删除"));
+    let token = content
+        .split("/确认忘记 ")
+        .nth(1)
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap();
+    let command = format!("/确认忘记 {token} 1");
+    message(&callbacks, "forget-confirm", "owner", &command).await;
+    wait_sent(&app, 2).await;
+    let deleted = app.store.memory(&saved.id).await.unwrap().unwrap();
+    assert!(deleted.deleted_at.is_some());
+    message(&callbacks, "forget-confirm-replay", "owner", &command).await;
+    wait_sent(&app, 3).await;
+    assert_eq!(
+        app.store.memory(&saved.id).await.unwrap().unwrap().revision,
+        deleted.revision
+    );
+    let calls: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM model_requests WHERE purpose IN ('chat','memory')",
+    )
+    .fetch_one(&app.store.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        calls, 0,
+        "control commands must not enter generated history or extraction"
+    );
+    assert!(app.store.console_history().await.unwrap().is_empty());
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    upstream.abort();
+    server.abort();
+}
+
+#[tokio::test]
+async fn owner_stop_bypasses_the_delivery_queue_and_other_accounts_cannot_cancel() {
+    let temp = tempfile::TempDir::new().unwrap();
+    let (base, upstream) = common::fake_services().await;
+    let (platform, qq_base, server) = platform().await;
+    let started = Arc::new(tokio::sync::Notify::new());
+    let signal = started.clone();
+    let slow = Router::new().route(
+        "/chat/completions",
+        post(move || {
+            let signal = signal.clone();
+            async move {
+                signal.notify_one();
+                std::future::pending::<()>().await;
+                Json(json!({}))
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut cfg = config(&temp, &base, &qq_base);
+    cfg.llm.model = "fixture-model".into();
+    cfg.llm.base_url = format!("http://{}", listener.local_addr().unwrap());
+    let slow = tokio::spawn(async move { axum::serve(listener, slow).await.unwrap() });
+    let (stop, rx) = watch::channel(false);
+    let app = App::new(cfg, rx).await.unwrap();
+    let callbacks = qq::router(app.clone());
+    let worker = tokio::spawn(qq::worker(app.clone()));
+    message(&callbacks, "blocked-turn", "owner", "先慢慢想").await;
+    tokio::time::timeout(Duration::from_secs(5), started.notified())
+        .await
+        .unwrap();
+    let turn = mneme::qq_store::delivery_id(APP_ID, "blocked-turn");
+    message(&callbacks, "intruder-stop", "someone-else", "/停止").await;
+    assert!(!app.store.turn_cancelled(&turn).await.unwrap());
+    message(&callbacks, "owner-stop", "owner", "/停止").await;
+    wait_sent(&app, 1).await;
+    let sent = platform.sent.lock().await;
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["content"], "已停止当前回复，临时内容未保存。");
+    drop(sent);
+    let state: (String, String) =
+        sqlx::query_as("SELECT status,last_error FROM qq_inbox WHERE id=?")
+            .bind(&turn)
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(state, ("dead".into(), "cancelled".into()));
+    let assistants: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE turn_id=? AND role='assistant'")
+            .bind(&turn)
+            .fetch_one(&app.store.pool)
+            .await
+            .unwrap();
+    assert_eq!(assistants, 0);
+    // Platform redelivery cannot execute a second stop command.
+    message(&callbacks, "owner-stop", "owner", "/停止").await;
+    assert_eq!(
+        app.store.qq_status(APP_ID).await.unwrap()["queue"]["sent"],
+        1
+    );
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    for task in [slow, upstream, server] {
+        task.abort();
+    }
+}
+
 #[derive(Clone, Default)]
 struct Platform {
     sent: Arc<Mutex<Vec<Value>>>,

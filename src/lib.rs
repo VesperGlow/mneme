@@ -7,6 +7,8 @@ pub mod console_store;
 pub mod continuity;
 pub mod diagnostics;
 pub mod domain;
+pub mod forgetting;
+pub mod generation;
 pub mod graph;
 pub mod llm;
 pub mod memory;
@@ -18,6 +20,7 @@ pub mod settings;
 pub mod stickers;
 pub mod store;
 pub mod telemetry;
+pub mod temporal;
 pub mod tokens;
 pub mod tools;
 pub mod usage;
@@ -35,6 +38,7 @@ pub struct App {
     pub tokens: tokens::Counter,
     pub graph: graph::Graph,
     pub generation_slots: Arc<tokio::sync::Semaphore>,
+    pub cancellations: generation::Cancellations,
     pub shutdown: tokio::sync::watch::Receiver<bool>,
     pub started_at: std::time::Instant,
     pub status_cache: Arc<tokio::sync::Mutex<Option<(std::time::Instant, serde_json::Value)>>>,
@@ -43,6 +47,8 @@ pub struct App {
     pub persona: Arc<std::sync::RwLock<config::Persona>>,
     /// Bounded provenance attached to recalled facts for this request only.
     pub recall_sources: std::collections::HashMap<String, serde_json::Value>,
+    /// Source timestamps loaded for a single request, never an inferred user state.
+    pub conversation_clock: Option<temporal::ConversationClock>,
     pub console_security: Arc<tokio::sync::Mutex<settings::ConsoleSecurity>>,
     pub maintenance: Arc<tokio::sync::RwLock<()>>,
     pub settings_lock: Arc<tokio::sync::Mutex<()>>,
@@ -104,9 +110,11 @@ impl App {
                 None
             },
             generation_slots: Arc::new(tokio::sync::Semaphore::new(4)),
+            cancellations: Default::default(),
             stickers: Arc::new(std::sync::RwLock::new(stickers::load(&store).await?)),
             persona: Arc::new(std::sync::RwLock::new(persona)),
             recall_sources: Default::default(),
+            conversation_clock: None,
             console_security: Arc::new(tokio::sync::Mutex::new(security)),
             maintenance: Default::default(),
             settings_lock: Default::default(),

@@ -401,6 +401,7 @@ async fn reset(State(app): State<App>, Json(input): Json<Reset>) -> ApiResult<Js
         "DELETE FROM qq_inbox",
         "DELETE FROM qq_sessions",
         "DELETE FROM memory_sources",
+        "DELETE FROM forget_requests",
         "DELETE FROM memory_revisions",
         "DELETE FROM suppressed_sources",
         "DELETE FROM memories",

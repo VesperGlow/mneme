@@ -393,6 +393,9 @@ async fn webhook(
                             .await
                         {
                             Ok(outcome) => {
+                                if let crate::qq_store::Acceptance::Cancelled(turn) = &outcome {
+                                    app.cancellations.cancel(turn);
+                                }
                                 tracing::info!(outcome=?outcome, "QQ private message received")
                             }
                             Err(_) => {
@@ -486,6 +489,9 @@ async fn process(
     }
     let reply = if let Some(reply) = &item.reply {
         reply.clone()
+    } else if let Some(reply) = crate::forgetting::qq_command(app, &item.content).await {
+        app.store.qq_reply(&item.id, &reply).await?;
+        reply
     } else {
         let permit = app.generation_slots.clone().acquire_owned().await?;
         if now() >= item.expires_at {
@@ -502,9 +508,12 @@ async fn process(
                     tracing::info!(delivery=%item.id, "QQ reply generation started");
                     let (output, receiver) = mpsc::channel(1);
                     drop(receiver);
-                    match crate::chat::generate(app, &user, &output).await {
+                    match crate::generation::run(app, &user, &output).await {
                         Ok(reply) => reply,
                         Err(error) => {
+                            if app.store.turn_cancelled(&user.turn_id).await? {
+                                return Ok(Ok(()));
+                            }
                             crate::diagnostics::warn("qq.generate", &error);
                             tracing::warn!(delivery=%item.id, "QQ reply generation failed");
                             app.store.fail_turn(&user, "generation_failed").await?;
